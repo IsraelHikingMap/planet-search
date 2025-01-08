@@ -13,7 +13,8 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <maven.compiler.release>21</maven.compiler.release>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
   </properties>
 
   <dependencyManagement>
@@ -29,6 +30,11 @@
   </dependencyManagement>
 
   <dependencies>
+    <dependency>
+      <groupId>com.onthegomap.planetiler</groupId>
+      <artifactId>planetiler-core</artifactId>
+      <version>0.8.3</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter-api</artifactId>
