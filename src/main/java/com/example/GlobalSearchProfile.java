@@ -14,7 +14,6 @@ import java.util.stream.Collectors;
 
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.LineString;
-import org.locationtech.jts.operation.linemerge.LineMerger;
 
 import com.onthegomap.planetiler.FeatureCollector;
 import com.onthegomap.planetiler.Profile;
@@ -25,25 +24,38 @@ import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+
 public class GlobalSearchProfile implements Profile {
   private PlanetilerConfig config;
+  private ElasticsearchClient esClient;
 
-  public GlobalSearchProfile(PlanetilerConfig config) {
+  public static final String POINTS_LAYER_NAME = "global_points";
+
+  private static final Map<String, SinglesIds> Singles = new HashMap<>();
+  private static final ConcurrentMap<Long, MergedLinesHelper> RelationLineMergers = new ConcurrentHashMap<>();
+  private static final ConcurrentMap<Long, MergedLinesHelper> SinglesLineMergers = new ConcurrentHashMap<>();
+
+  public GlobalSearchProfile(PlanetilerConfig config, ElasticsearchClient esClient) {
     this.config = config;
+    this.esClient = esClient;
   }
 
   /*
    * The processing happens in 3 steps:
    * 1. On the first pass through the input file, store relevant information from applicable OSM route relations and ways with mtb:name tag.
    * 2. On the second pass, emit points for relation and mtb:name ways. Emit a point by merging all the ways and using the first point of the merged linestring.
-   */
-
-  /*
+   * 
    * Step 1)
    *
    * Planetiler processes the .osm.pbf input file in two passes. The first pass stores node locations, and invokes
    * preprocessOsmRelation for reach relation and stores information the profile needs during the second pass when we
    * emit map feature for ways contained in that relation.
+   * 
+   * Step 2)
+   *
+   * On the second pass through the input .osm.pbf file, for each way in a relation that we stored data about, emit a
+   * point with attributes derived from the relation as well as for ways with mtb:name tag.
    */
 
   // Minimal container for data we extract from OSM route relations. This is held in RAM so keep it small.
@@ -71,27 +83,6 @@ public class GlobalSearchProfile implements Profile {
     Long first_member_id,
     List<Long> member_ids
   ) implements OsmRelationInfo {}
-
-  private class SinglesIds {
-    List<Long> ids;
-    long minId;
-    SinglesIds(List<Long> ids, long minId) {
-      this.ids = ids;
-      this.minId = minId;
-    }
-  }
-
-  private class MergedLinesHelper {
-    LineMerger lineMerger;
-    SourceFeature feature;
-    MergedLinesHelper() {
-      this.lineMerger = new LineMerger();
-    }
-  }
-
-  static private final Map<String, SinglesIds> Singles = new HashMap<>();
-  static private final ConcurrentMap<Long, MergedLinesHelper> RelationLineMergers = new ConcurrentHashMap<>();
-  static private final ConcurrentMap<Long, MergedLinesHelper> SinglesLineMergers = new ConcurrentHashMap<>();
 
   static private final String Coalesce(String... strings) {
     return Arrays.stream(strings)
@@ -124,7 +115,6 @@ public class GlobalSearchProfile implements Profile {
     if (members_ids.size() == 0) {
       return null;
     }
-    // LOGGER.debug("The first member of route relation {}: way {}", relation.id(), members_ids.get(0));
     return List.of(new RouteRelationInfo(
       relation.id(),
       relation.getString("name"),
@@ -147,13 +137,6 @@ public class GlobalSearchProfile implements Profile {
     ));
   }
 
-  /*
-   * Step 2)
-   *
-   * On the second pass through the input .osm.pbf file, for each way in a relation that we stored data about, emit a
-   * point with attributes derived from the relation as well as for ways with mtb:name tag.
-   */
-
   @Override
   public void preprocessOsmWay(OsmElement.Way way) {
     if (!way.hasTag("mtb:name")) {
@@ -172,16 +155,14 @@ public class GlobalSearchProfile implements Profile {
     }
   }
 
-  private static final String trailPoisLayerName = "global_points";
-  private static final String trailLayerName = "trail";
-
   @Override
   public void processFeature(SourceFeature sourceFeature, FeatureCollector features) {
     // ignore nodes and ways that should only be treated as polygons
     if (sourceFeature.canBeLine()) {
       processOsmRelationFeature(sourceFeature, features);
       processMtbNameFeature(sourceFeature, features);
-      processTrailFeature(sourceFeature, features);
+    } else {
+      processOtherPoints(sourceFeature, features);
     }
   }
 
@@ -214,40 +195,52 @@ public class GlobalSearchProfile implements Profile {
           // All relation members were reached. Add a POI element for trail relation
           // The first segment of the members' linestrings merge
           var mergedLineStrings = mergedLines.lineMerger.getMergedLineStrings();
-          // LOGGER.debug("Route relation {} was merged into {} LineStrings", relation.id(), mergedLineStrings.size());
           var firstLineString = (LineString) mergedLineStrings.iterator().next();
           // The first point in the first segment of the merge - the default location of the poi
           var point = firstLineString.getCoordinate();
           // The last point in the the first segment of the merge - the alternative location of the poi
           var lastMergedPoint = firstLineString.getCoordinateN(firstLineString.getNumPoints() - 1);
-          // LOGGER.debug("The first merged segment of route relation {} starts at {} and ends at {}", relation.id(), point, lastMergedPoint);
           // The first node of the relation's first member
           var firstMemberGeometry = (LineString) mergedLines.feature.line();
           var firstMemberStart = firstMemberGeometry.getCoordinate();
           // The last node of the relation's first member
           var firstMemberEnd = firstMemberGeometry.getCoordinateN(firstMemberGeometry.getNumPoints() - 1);
-          // LOGGER.debug("The first member of route relation {} starts at {} and end at {}", relation.id(), firstMemberStart, firstMemberEnd);
-          if ( ! point.equals(firstMemberStart) &&
-	      (lastMergedPoint.equals(firstMemberStart) || lastMergedPoint.equals(firstMemberEnd))) {
+          if (!point.equals(firstMemberStart) && (lastMergedPoint.equals(firstMemberStart) || lastMergedPoint.equals(firstMemberEnd))) {
             // Place the poi at the last point in the the first segment of the merge
             point = lastMergedPoint;
-            // LOGGER.debug("The poi for route relation {} was changed to {}", relation.id(), point);
           }
-          features.geometry(trailPoisLayerName, GeoUtils.point(point))
-            .setAttr("name", relation.name)
-            .setAttr("name:he", Coalesce(relation.name_he, relation.name))
-            .setAttr("name:en", Coalesce(relation.name_en, relation.name))
-            .setAttr("description", relation.description)
-            .setAttr("description:he", Coalesce(relation.description_he, relation.description))
-            .setAttr("description:en", Coalesce(relation.description_en, relation.description))
-            .setAttr("wikidata", relation.wikidata)
-            .setAttr("image", relation.image)
+
+          var pointDocument = new PointDocument();
+          pointDocument.name = relation.name;
+          pointDocument.name_he = Coalesce(relation.name_he, relation.name);
+          pointDocument.name_en = Coalesce(relation.name_en, relation.name);
+          pointDocument.description = relation.description;
+          pointDocument.description_he = Coalesce(relation.description_he, relation.description);
+          pointDocument.description_en = Coalesce(relation.description_en, relation.description);
+          pointDocument.wikidata = relation.wikidata;
+          pointDocument.image = relation.image;
+          pointDocument.wikimedia_commons = relation.wikimedia_commons;
+          pointDocument.poiCategory = relation.route_type;
+          pointDocument.poiIcon = relation.route_type == "Bicycle" ? "icon-bike" : "icon-hike";
+          pointDocument.poiIconColor = "black";
+
+          insertToElasticsearch(pointDocument, "OSM_relation_" + relation.id);
+
+          features.geometry(POINTS_LAYER_NAME, GeoUtils.point(point))
+            .setAttr("name", pointDocument.name)
+            .setAttr("name:he", pointDocument.name_he)
+            .setAttr("name:en", pointDocument.name_en)
+            .setAttr("description", pointDocument.description)
+            .setAttr("description:he", pointDocument.description_he)
+            .setAttr("description:en", pointDocument.description_en)
+            .setAttr("wikidata", pointDocument.wikidata)
+            .setAttr("image", pointDocument.image)
             .setAttr("wikimedia_commons", relation.wikimedia_commons)
             .setAttr("route", relation.route)
             .setAttr("network", relation.network)
-            .setAttr("poiCategory", relation.route_type)
-            .setAttr("poiIcon", relation.route_type == "Bicycle" ? "icon-bike" : "icon-hike")
-            .setAttr("poiIconColor", "black")
+            .setAttr("poiCategory", pointDocument.poiCategory)
+            .setAttr("poiIcon", pointDocument.poiIcon)
+            .setAttr("poiIconColor", pointDocument.poiIconColor)
             .setZoomRange(10, 14)
             .setId(relation.vectorTileFeatureId(config.featureSourceIdMultiplier()));
         } catch (GeometryException e) {
@@ -283,25 +276,41 @@ public class GlobalSearchProfile implements Profile {
           return;
         }
         var feature = mergedLines.feature;
+
+        var pointDocument = new PointDocument();
+        pointDocument.name = feature.getString("mtb:name");
+        pointDocument.name_he = Coalesce(feature.getString("name:he"), feature.getString("name"), feature.getString("mtb:name:he"), feature.getString("mtb:name"));
+        pointDocument.name_en = Coalesce(feature.getString("name:en"), feature.getString("name"), feature.getString("mtb:name:en"), feature.getString("mtb:name"));
+        pointDocument.description = feature.getString("description");
+        pointDocument.description_he = Coalesce(feature.getString("description:he"), feature.getString("description"));
+        pointDocument.description_en = Coalesce(feature.getString("description:en"), feature.getString("description"));
+        pointDocument.wikidata = feature.getString("wikidata");
+        pointDocument.image = feature.getString("image");
+        pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+        pointDocument.poiCategory = "Bicycle";
+        pointDocument.poiIcon = "icon-bike";
+        pointDocument.poiIconColor = "gray";
+
+        insertToElasticsearch(pointDocument, "OSM_way_" + minId);
         // This was the last way with the same mtb:name, so we can merge the lines and add the feature
         // Add a POI element for a SingleTrack
         var point = GeoUtils.point(((Geometry)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
-        features.geometry(trailPoisLayerName, point)
+        features.geometry(POINTS_LAYER_NAME, point)
           .setAttr("mtb:name", mtbName)
           .setAttr("mtb:name:he", feature.getString("mtb:name:he"))
           .setAttr("mtb:name:en", feature.getString("mtb:name:en"))
-          .setAttr("name", feature.getString("name"))
-          .setAttr("name:he", Coalesce(feature.getString("name:he"), feature.getString("name"), feature.getString("mtb:name:he"), feature.getString("mtb:name")))
-          .setAttr("name:en", Coalesce(feature.getString("name:en"), feature.getString("name"), feature.getString("mtb:name:en"), feature.getString("mtb:name")))
-          .setAttr("description", feature.getString("description"))
-          .setAttr("description:he", Coalesce(feature.getString("description:he"), feature.getString("description")))
-          .setAttr("description:en", Coalesce(feature.getString("description:en"), feature.getString("description")))
-          .setAttr("wikidata", feature.getString("wikidata"))
+          .setAttr("name", pointDocument.name)
+          .setAttr("name:he", pointDocument.name_he)
+          .setAttr("name:en", pointDocument.name_en)
+          .setAttr("description", pointDocument.description)
+          .setAttr("description:he", pointDocument.description_he)
+          .setAttr("description:en", pointDocument.description_en)
+          .setAttr("wikidata", pointDocument.wikidata)
           .setAttr("wikimedia_commons", feature.getString("wikimedia_commons"))
-          .setAttr("image", feature.getString("image"))
-          .setAttr("poiIcon", "icon-bike")
-          .setAttr("poiIconColor", "gray")
-          .setAttr("poiCategory", "Bicycle")
+          .setAttr("image", pointDocument.image)
+          .setAttr("poiIcon", pointDocument.poiIcon)
+          .setAttr("poiIconColor", pointDocument.poiIconColor)
+          .setAttr("poiCategory", pointDocument.poiCategory)
           .setZoomRange(10, 14)
           // Override the feature id with the minimal id of the group
           .setId(feature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
@@ -311,43 +320,245 @@ public class GlobalSearchProfile implements Profile {
     }
   }
 
-  private String wayColour(String wayColour, String OsmcSymbol) {
-    if (OsmcSymbol == null || wayColour == null) {
-      return null;
+  private void processOtherPoints(SourceFeature feature, FeatureCollector features) {
+    if (!feature.hasTag("name") && 
+        !feature.hasTag("wikidata") && 
+        !feature.hasTag("image") && 
+        !feature.hasTag("description") &&
+        !feature.hasTag("ref:IL:inature")) {
+      return;
     }
-    if (OsmcSymbol.equals(wayColour + ":white:" + wayColour + "_stripe")) {
-      return wayColour;
-    }
-    return null;
-  }
+    
+    try {
+        var pointDocument = new PointDocument();
+        pointDocument.name = feature.getString("name");
+        pointDocument.name_he = Coalesce(feature.getString("name:he"), feature.getString("name"));
+        pointDocument.name_en = Coalesce(feature.getString("name:en"), feature.getString("name"));
+        pointDocument.description = feature.getString("description");
+        pointDocument.description_he = Coalesce(feature.getString("description:he"), feature.getString("description"));
+        pointDocument.description_en = Coalesce(feature.getString("description:en"), feature.getString("description"));
+        pointDocument.wikidata = feature.getString("wikidata");
+        pointDocument.image = feature.getString("image");
+        pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+        setIconColorCategory(pointDocument, feature);
 
-  private void processTrailFeature(SourceFeature sourceFeature, FeatureCollector features) {
-    // get all the RouteRelationInfo instances we returned from preprocessOsmRelation that
-    // this way belongs to
-    for (var routeInfo : sourceFeature.relationInfo(RouteRelationInfo.class)) {
-      // (routeInfo.role() also has the "role" of this relation member if needed)
-      RouteRelationInfo relation = routeInfo.relation();
-      // Add route segment element
-      try {
-        features.geometry(trailLayerName, sourceFeature.line())
-          .setAttr("class", relation.route)
-          .setAttr("network", relation.network)
-          .setAttr("name", relation.name)
-          .setAttr("name:he", Coalesce(relation.name_he, relation.name))
-          .setAttr("name:en", Coalesce(relation.name_en, relation.name))
-          .setAttr("ref", relation.ref)
-          .setAttr("osmc_symbol", relation.osmc_symbol)
-          .setAttr("colour", relation.colour)
-          .setAttr("way_colour", wayColour(sourceFeature.getString("colour"), relation.osmc_symbol))
-          .setAttr("highway", sourceFeature.getString("highway"))
-          .setZoomRange(7, 14)
-          .setId(relation.vectorTileFeatureId(config.featureSourceIdMultiplier()));
-      } catch (GeometryException e) {
+        var tileId = feature.vectorTileFeatureId(config.featureSourceIdMultiplier());
+        var docId = "OSM_" + (String.valueOf(tileId).endsWith("1") ? "node_" : String.valueOf(tileId).endsWith("2") ? "way_" : "relation_") + feature.id();
+        insertToElasticsearch(pointDocument, docId);
+
+        var point = feature.centroidIfConvex();
+        features.geometry(POINTS_LAYER_NAME, point)
+            .setAttr("name", pointDocument.name)
+            .setAttr("name:he", pointDocument.name_he)
+            .setAttr("name:en", pointDocument.name_en)
+            .setAttr("description", pointDocument.description)
+            .setAttr("description:he", pointDocument.description_he)
+            .setAttr("description:en", pointDocument.description_en)
+            .setAttr("wikidata", pointDocument.wikidata)
+            .setAttr("wikimedia_commons", pointDocument.wikimedia_commons)
+            .setAttr("image", pointDocument.image)
+            .setAttr("poiIcon", pointDocument.poiIcon)
+            .setAttr("poiIconColor", pointDocument.poiIconColor)
+            .setAttr("poiCategory", pointDocument.poiCategory)
+            .setZoomRange(10, 14)
+            .setId(tileId);
+    } catch (GeometryException e) {
         throw new RuntimeException(e);
-      }
     }
   }
 
+  private void insertToElasticsearch(PointDocument pointDocument, String docId) {
+    try {
+      esClient.index(i -> i
+          .index("points")
+          .id(docId)
+          .document(pointDocument)
+      );
+    } catch (Exception e) {
+      // swallow
+    }
+  }
+
+
+  private void setIconColorCategory(PointDocument pointDocument, SourceFeature feature) {
+    if (feature.getString("boundary") == "protected_area" || 
+        feature.getString("boundary") == "national_park" ||
+        feature.getString("leisure") == "nature_reserve") {
+            pointDocument.poiIconColor = "#008000";
+            pointDocument.poiIcon = "icon-nature-reserve";
+            pointDocument.poiCategory = "Other";
+        return;
+    }
+    if (feature.getString("network") != null) {
+        switch (feature.getString("network")) {
+            case "lcn":
+            case "rcn":
+                pointDocument.poiIconColor = "black";
+                pointDocument.poiIcon = "icon-bike";
+                pointDocument.poiCategory = "Bicycle";
+                return;
+            case "lwn":
+            case "rwn":
+                pointDocument.poiIconColor = "black";
+                pointDocument.poiIcon = "icon-hike";
+                pointDocument.poiCategory = "Hiking";
+                return;
+        }
+    }
+    if (feature.getString("route") != null) {
+        switch (feature.getString("route")) {
+            case "hiking":
+                pointDocument.poiIconColor = "black";
+                pointDocument.poiIcon = "icon-hike";
+                pointDocument.poiCategory = "Hiking";
+                return;
+            case "bicycle":
+                pointDocument.poiIconColor = "black";
+                pointDocument.poiIcon = "icon-bike";
+                pointDocument.poiCategory = "Bicycle";
+                return;
+        }
+    }
+    if (feature.getString("historic") != null) {
+        pointDocument.poiIconColor = "#666666";
+        pointDocument.poiCategory = "Historic";
+        switch (feature.getString("historic")) {
+            case "ruins":
+                pointDocument.poiIcon = "icon-ruins";
+                return;
+            case "archaeological_site":
+                pointDocument.poiIcon = "icon-archaeological";
+                return;
+            case "memorial":
+            case "monument":
+                pointDocument.poiIcon = "icon-memorial";
+                return;
+            case "tomb":
+                pointDocument.poiIconColor = "black";
+                pointDocument.poiIcon = "icon-cave";
+                pointDocument.poiCategory = "Natural";
+                return;
+        }
+    }
+    if (feature.getString("leisure") == "picnic_table" || 
+        feature.getString("tourism") == "picnic_site" || 
+        feature.getString("amenity") == "picnic") {
+        pointDocument.poiIconColor = "#734a08";
+        pointDocument.poiIcon = "icon-picnic";
+        pointDocument.poiCategory = "Camping";
+        return;
+    }
+
+    if (feature.getString("natural") != null) {
+        switch (feature.getString("natural")) {
+            case "cave_entrance":
+                pointDocument.poiIconColor = "black";
+                pointDocument.poiIcon = "icon-cave";
+                pointDocument.poiCategory = "Natural";
+                return;
+            case "spring":
+                pointDocument.poiIconColor = "blue";
+                pointDocument.poiIcon = "icon-tint";
+                pointDocument.poiCategory = "Water";
+                return;
+            case "tree":
+                pointDocument.poiIconColor = "#008000";
+                pointDocument.poiIcon = "icon-tree";
+                pointDocument.poiCategory = "Natural";
+                return;
+            case "flowers":
+                pointDocument.poiIconColor = "#008000";
+                pointDocument.poiIcon = "icon-flowers";
+                pointDocument.poiCategory = "Natural";
+                return;
+            case "waterhole":
+                pointDocument.poiIconColor = "blue";
+                pointDocument.poiIcon = "icon-waterhole";
+                pointDocument.poiCategory = "Water";
+                return;
+        }
+    }
+
+    if (feature.getString("water") == "reservoir" || 
+        feature.getString("water") == "pond") {
+        pointDocument.poiIconColor = "blue";
+        pointDocument.poiIcon = "icon-tint";
+        pointDocument.poiCategory = "Water";
+        return;
+    }
+
+    if (feature.getString("man_made") != null) {
+        pointDocument.poiIconColor = "blue";
+        pointDocument.poiCategory = "Water";
+        switch (feature.getString("man_made")) {
+            case "water_well":
+                pointDocument.poiIcon = "icon-water-well";
+                return;
+            case "cistern":
+                pointDocument.poiIcon = "icon-cistern";
+                return;
+        }
+    }
+
+    if (feature.getString("waterway") == "waterfall") {
+        pointDocument.poiIconColor = "blue";
+        pointDocument.poiIcon = "icon-waterfall";
+        pointDocument.poiCategory = "Water";
+        return;
+    }
+
+    if (feature.getString("place") != null) {
+        pointDocument.poiIconColor = "black";
+        pointDocument.poiIcon = "icon-home";
+        pointDocument.poiCategory = "Wikipedia";
+        return;
+    }
+
+    if (feature.getString("tourism") != null) {
+        switch (feature.getString("tourism")) {
+            case "viewpoint":
+                pointDocument.poiIconColor = "#008000";
+                pointDocument.poiIcon = "icon-viewpoint";
+                pointDocument.poiCategory = "Viewpoint";
+                return;
+            case "camp_site":
+                pointDocument.poiIconColor = "#734a08";
+                pointDocument.poiIcon = "icon-campsite";
+                pointDocument.poiCategory = "Camping";
+                return;
+            case "attraction":
+                pointDocument.poiIconColor = "#ffb800";
+                pointDocument.poiIcon = "icon-star";
+                pointDocument.poiCategory = "Other";
+                return;
+        }
+    }
+
+    if (feature.getString("natural") == "peak") {
+        pointDocument.poiIconColor = "black";
+        pointDocument.poiIcon = "icon-peak";
+        pointDocument.poiCategory = "Natural";
+        return;
+    }
+
+    if (feature.getString("ref:IL:inature") != null) {
+        pointDocument.poiIconColor = "#116C00";
+        pointDocument.poiIcon = "icon-inature";
+        pointDocument.poiCategory = "iNature";
+        return;
+    }
+
+    if (feature.getString("wikidata") != null || feature.getString("wikipedia") != null) {
+        pointDocument.poiIconColor = "black";
+        pointDocument.poiIcon = "icon-wikipedia-w";
+        pointDocument.poiCategory = "Wikipedia";
+        return;
+    }
+
+    pointDocument.poiIconColor = "black";
+    pointDocument.poiIcon = "icon-search";
+    pointDocument.poiCategory = "Other";
+  }
 
   /*
    * Hooks to override metadata values in the output mbtiles file. Only name is required, the rest are optional. Bounds,

@@ -2,7 +2,16 @@ package com.example;
 
 import com.onthegomap.planetiler.Planetiler;
 import com.onthegomap.planetiler.config.Arguments;
+
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.json.jackson.JacksonJsonpMapper;
+import co.elastic.clients.transport.ElasticsearchTransport;
+import co.elastic.clients.transport.rest_client.RestClientTransport;
+
 import java.nio.file.Path;
+
+import org.apache.http.HttpHost;
+import org.elasticsearch.client.RestClient;
 
 
 
@@ -24,11 +33,35 @@ public class MainClass {
         // Planetiler is a convenience wrapper around the lower-level API for the most common use-cases.
         // See ToiletsOverlayLowLevelApi for an example using the lower-level API
         Planetiler planetiler = Planetiler.create(args);
-        planetiler.setProfile(new GlobalSearchProfile(planetiler.config()))
+
+
+        RestClient restClient = RestClient
+            .builder(HttpHost.create("http://localhost:9200"))
+            .build();
+
+        ElasticsearchTransport transport = new RestClientTransport(
+            restClient, new JacksonJsonpMapper());
+
+        ElasticsearchClient esClient = new ElasticsearchClient(transport);
+
+        esClient.indices().delete(c -> c
+            .index("points")
+        );
+
+        esClient.indices().create(c -> c
+            .index("points")
+        );
+
+
+        var profile = new GlobalSearchProfile(planetiler.config(), esClient);
+
+        planetiler.setProfile(profile)
           // override this default with osm_path="path/to/data.osm.pbf"
           .addOsmSource("osm", Path.of("data", "sources", area + ".osm.pbf"), "geofabrik:" + area)
           // override this default with mbtiles="path/to/output.mbtiles"
-          .overwriteOutput(Path.of("data", "global_points.pmtiles"))
+          .overwriteOutput(Path.of("data", GlobalSearchProfile.POINTS_LAYER_NAME + ".pmtiles"))
           .run();
+
+        esClient.close();
     }
 }
