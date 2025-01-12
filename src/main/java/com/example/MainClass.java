@@ -13,10 +13,11 @@ import java.nio.file.Path;
 import org.apache.http.HttpHost;
 import org.elasticsearch.client.RestClient;
 
-
+import java.util.logging.Logger;
+import java.util.logging.Level;
 
 /**
- * Hello world!
+ * The main entry point
  */
 public class MainClass {
 
@@ -33,7 +34,8 @@ public class MainClass {
         // Planetiler is a convenience wrapper around the lower-level API for the most common use-cases.
         // See ToiletsOverlayLowLevelApi for an example using the lower-level API
         Planetiler planetiler = Planetiler.create(args);
-
+        
+        Logger.getLogger("org.elasticsearch.client.RestClient").setLevel(Level.OFF);
 
         RestClient restClient = RestClient
             .builder(HttpHost.create("http://localhost:9200"))

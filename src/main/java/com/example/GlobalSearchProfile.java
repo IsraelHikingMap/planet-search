@@ -26,7 +26,11 @@ import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class GlobalSearchProfile implements Profile {
+  private static final Logger LOGGER = LoggerFactory.getLogger(GlobalSearchProfile.class);
   private PlanetilerConfig config;
   private ElasticsearchClient esClient;
 
@@ -278,9 +282,9 @@ public class GlobalSearchProfile implements Profile {
         var feature = mergedLines.feature;
 
         var pointDocument = new PointDocument();
-        pointDocument.name = feature.getString("mtb:name");
-        pointDocument.name_he = Coalesce(feature.getString("name:he"), feature.getString("name"), feature.getString("mtb:name:he"), feature.getString("mtb:name"));
-        pointDocument.name_en = Coalesce(feature.getString("name:en"), feature.getString("name"), feature.getString("mtb:name:en"), feature.getString("mtb:name"));
+        pointDocument.name = mtbName;
+        pointDocument.name_he = Coalesce(feature.getString("name:he"), feature.getString("mtb:name:he"), feature.getString("name"), feature.getString("mtb:name"));
+        pointDocument.name_en = Coalesce(feature.getString("name:en"), feature.getString("mtb:name:en"), feature.getString("name"), feature.getString("mtb:name"));
         pointDocument.description = feature.getString("description");
         pointDocument.description_he = Coalesce(feature.getString("description:he"), feature.getString("description"));
         pointDocument.description_en = Coalesce(feature.getString("description:en"), feature.getString("description"));
@@ -328,7 +332,9 @@ public class GlobalSearchProfile implements Profile {
         !feature.hasTag("ref:IL:inature")) {
       return;
     }
-    
+
+    var tileId = feature.vectorTileFeatureId(config.featureSourceIdMultiplier());
+    var docId = "OSM_" + (String.valueOf(tileId).endsWith("1") ? "node_" : String.valueOf(tileId).endsWith("2") ? "way_" : "relation_") + feature.id();
     try {
         var pointDocument = new PointDocument();
         pointDocument.name = feature.getString("name");
@@ -342,8 +348,10 @@ public class GlobalSearchProfile implements Profile {
         pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
         setIconColorCategory(pointDocument, feature);
 
-        var tileId = feature.vectorTileFeatureId(config.featureSourceIdMultiplier());
-        var docId = "OSM_" + (String.valueOf(tileId).endsWith("1") ? "node_" : String.valueOf(tileId).endsWith("2") ? "way_" : "relation_") + feature.id();
+        if (pointDocument.poiIcon == "icon-search") {
+            return;
+        }
+
         insertToElasticsearch(pointDocument, docId);
 
         var point = feature.centroidIfConvex();
@@ -363,7 +371,7 @@ public class GlobalSearchProfile implements Profile {
             .setZoomRange(10, 14)
             .setId(tileId);
     } catch (GeometryException e) {
-        throw new RuntimeException(e);
+        LOGGER.warn("Failed to process feature: {}", docId);
     }
   }
 
@@ -381,9 +389,9 @@ public class GlobalSearchProfile implements Profile {
 
 
   private void setIconColorCategory(PointDocument pointDocument, SourceFeature feature) {
-    if (feature.getString("boundary") == "protected_area" || 
-        feature.getString("boundary") == "national_park" ||
-        feature.getString("leisure") == "nature_reserve") {
+    if ("protected_area".equals(feature.getString("boundary")) || 
+        "national_park".equals(feature.getString("boundary")) ||
+        "nature_reserve".equals(feature.getString("leisure"))) {
             pointDocument.poiIconColor = "#008000";
             pointDocument.poiIcon = "icon-nature-reserve";
             pointDocument.poiCategory = "Other";
@@ -440,9 +448,9 @@ public class GlobalSearchProfile implements Profile {
                 return;
         }
     }
-    if (feature.getString("leisure") == "picnic_table" || 
-        feature.getString("tourism") == "picnic_site" || 
-        feature.getString("amenity") == "picnic") {
+    if ("picnic_table".equals(feature.getString("leisure")) || 
+        "picnic_site".equals(feature.getString("tourism")) || 
+        "picnic".equals(feature.getString("amenity"))) {
         pointDocument.poiIconColor = "#734a08";
         pointDocument.poiIcon = "icon-picnic";
         pointDocument.poiCategory = "Camping";
@@ -479,8 +487,8 @@ public class GlobalSearchProfile implements Profile {
         }
     }
 
-    if (feature.getString("water") == "reservoir" || 
-        feature.getString("water") == "pond") {
+    if ("reservoir".equals(feature.getString("water")) || 
+        "pond".equals(feature.getString("water"))) {
         pointDocument.poiIconColor = "blue";
         pointDocument.poiIcon = "icon-tint";
         pointDocument.poiCategory = "Water";
@@ -500,7 +508,7 @@ public class GlobalSearchProfile implements Profile {
         }
     }
 
-    if (feature.getString("waterway") == "waterfall") {
+    if ("waterfall".equals(feature.getString("waterway"))) {
         pointDocument.poiIconColor = "blue";
         pointDocument.poiIcon = "icon-waterfall";
         pointDocument.poiCategory = "Water";
@@ -534,7 +542,7 @@ public class GlobalSearchProfile implements Profile {
         }
     }
 
-    if (feature.getString("natural") == "peak") {
+    if ("peak".equals(feature.getString("natural"))) {
         pointDocument.poiIconColor = "black";
         pointDocument.poiIcon = "icon-peak";
         pointDocument.poiCategory = "Natural";
