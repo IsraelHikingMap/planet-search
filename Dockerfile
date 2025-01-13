@@ -12,8 +12,8 @@ ENV JAVA_OPTS "-Xmx1g -Xms1g"
 
 WORKDIR /app
 
-COPY --from=build /app/web/target/*.jar ./
+COPY --from=build /app/target/global-search-1.0-SNAPSHOT-jar-with-dependencies.jar ./
 
 VOLUME [ "/data" ]
 
-ENTRYPOINT [ "java", "-jar", "*.jar" ]
+CMD java $JAVA_OPTS -jar global-search-1.0-SNAPSHOT-jar-with-dependencies.jar
