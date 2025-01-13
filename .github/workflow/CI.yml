@@ -1,10 +1,10 @@
 name: Build and publish docker image
 
 on:
-  schedule:
-     - cron: 0 1 * * *
-
-  # Allows you to run this workflow manually from the Actions tab
+  push:
+    branches:
+      - main
+  pull_request:
   workflow_dispatch:
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
