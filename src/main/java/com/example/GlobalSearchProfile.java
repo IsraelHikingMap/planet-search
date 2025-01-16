@@ -2,7 +2,6 @@ package com.example;
 
 import static com.onthegomap.planetiler.reader.osm.OsmElement.Type.WAY;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -14,6 +13,7 @@ import java.util.stream.Collectors;
 
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.LineString;
+import org.locationtech.jts.geom.Point;
 
 import com.onthegomap.planetiler.FeatureCollector;
 import com.onthegomap.planetiler.Profile;
@@ -36,9 +36,10 @@ public class GlobalSearchProfile implements Profile {
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
-  private static final Map<String, SinglesIds> Singles = new HashMap<>();
+  private static final Map<String, MinWayIdFinder> Singles = new HashMap<>();
+  private static final Map<String, MinWayIdFinder> Waterways = new HashMap<>();
   private static final ConcurrentMap<Long, MergedLinesHelper> RelationLineMergers = new ConcurrentHashMap<>();
-  private static final ConcurrentMap<Long, MergedLinesHelper> SinglesLineMergers = new ConcurrentHashMap<>();
+  private static final ConcurrentMap<Long, MergedLinesHelper> WaysLineMergers = new ConcurrentHashMap<>();
 
   public GlobalSearchProfile(PlanetilerConfig config, ElasticsearchClient esClient) {
     this.config = config;
@@ -143,20 +144,28 @@ public class GlobalSearchProfile implements Profile {
 
   @Override
   public void preprocessOsmWay(OsmElement.Way way) {
-    if (!way.hasTag("mtb:name")) {
+    if (way.hasTag("mtb:name")) {
+      String mtbName = way.getString("mtb:name");
+      if (!Singles.containsKey(mtbName)) {
+        var finder = new MinWayIdFinder();
+        finder.addWayId(way.id());
+        Singles.put(mtbName, finder);
+      } else {
+        Singles.get(mtbName).addWayId(way.id());
+      }
       return;
     }
-    String mtbName = way.getString("mtb:name");
-    if (!Singles.containsKey(mtbName)) {
-      var list = new ArrayList<Long>();
-      list.add(way.id());
-      Singles.put(mtbName, new SinglesIds(list, way.id()));
-    } else {
-      Singles.get(mtbName).ids.add(way.id());
-      if (way.id() < Singles.get(mtbName).minId) {
-        Singles.get(mtbName).minId = way.id();
+    if (way.hasTag("waterway")) {
+      String waterway = way.getString("waterway");
+      if (!Waterways.containsKey(waterway)) {
+        var finder = new MinWayIdFinder();
+        finder.addWayId(way.id());
+        Waterways.put(waterway, finder);
+      } else {
+        Waterways.get(waterway).addWayId(way.id());
       }
     }
+    
   }
 
   @Override
@@ -165,6 +174,7 @@ public class GlobalSearchProfile implements Profile {
     if (sourceFeature.canBeLine()) {
       processOsmRelationFeature(sourceFeature, features);
       processMtbNameFeature(sourceFeature, features);
+      processWaterwayFeature(sourceFeature, features);
     } else {
       processOtherPoints(sourceFeature, features);
     }
@@ -197,22 +207,7 @@ public class GlobalSearchProfile implements Profile {
             continue;
           }
           // All relation members were reached. Add a POI element for trail relation
-          // The first segment of the members' linestrings merge
-          var mergedLineStrings = mergedLines.lineMerger.getMergedLineStrings();
-          var firstLineString = (LineString) mergedLineStrings.iterator().next();
-          // The first point in the first segment of the merge - the default location of the poi
-          var point = firstLineString.getCoordinate();
-          // The last point in the the first segment of the merge - the alternative location of the poi
-          var lastMergedPoint = firstLineString.getCoordinateN(firstLineString.getNumPoints() - 1);
-          // The first node of the relation's first member
-          var firstMemberGeometry = (LineString) mergedLines.feature.line();
-          var firstMemberStart = firstMemberGeometry.getCoordinate();
-          // The last node of the relation's first member
-          var firstMemberEnd = firstMemberGeometry.getCoordinateN(firstMemberGeometry.getNumPoints() - 1);
-          if (!point.equals(firstMemberStart) && (lastMergedPoint.equals(firstMemberStart) || lastMergedPoint.equals(firstMemberEnd))) {
-            // Place the poi at the last point in the the first segment of the merge
-            point = lastMergedPoint;
-          }
+          var point = getFirstPointOfTrailRelation(mergedLines);
 
           var pointDocument = new PointDocument();
           pointDocument.name = relation.name;
@@ -227,10 +222,11 @@ public class GlobalSearchProfile implements Profile {
           pointDocument.poiCategory = relation.route_type;
           pointDocument.poiIcon = relation.route_type == "Bicycle" ? "icon-bike" : "icon-hike";
           pointDocument.poiIconColor = "black";
+          pointDocument.location = List.of(point.getX(), point.getY());
 
           insertToElasticsearch(pointDocument, "OSM_relation_" + relation.id);
 
-          features.geometry(POINTS_LAYER_NAME, GeoUtils.point(point))
+          features.geometry(POINTS_LAYER_NAME, point)
             .setAttr("name", pointDocument.name)
             .setAttr("name:he", pointDocument.name_he)
             .setAttr("name:en", pointDocument.name_en)
@@ -263,10 +259,10 @@ public class GlobalSearchProfile implements Profile {
       return;
     }
     var minId = Singles.get(mtbName).minId;
-    if (!SinglesLineMergers.containsKey(minId)) {
-      SinglesLineMergers.put(minId, new MergedLinesHelper());
+    if (!WaysLineMergers.containsKey(minId)) {
+      WaysLineMergers.put(minId, new MergedLinesHelper());
     }
-    var mergedLines = SinglesLineMergers.get(minId);
+    var mergedLines = WaysLineMergers.get(minId);
     synchronized(mergedLines) {
       try {
 
@@ -280,6 +276,7 @@ public class GlobalSearchProfile implements Profile {
           return;
         }
         var feature = mergedLines.feature;
+        var point = GeoUtils.point(((Geometry)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
 
         var pointDocument = new PointDocument();
         pointDocument.name = mtbName;
@@ -294,11 +291,11 @@ public class GlobalSearchProfile implements Profile {
         pointDocument.poiCategory = "Bicycle";
         pointDocument.poiIcon = "icon-bike";
         pointDocument.poiIconColor = "gray";
+        pointDocument.location = List.of(point.getX(), point.getY());
 
         insertToElasticsearch(pointDocument, "OSM_way_" + minId);
         // This was the last way with the same mtb:name, so we can merge the lines and add the feature
         // Add a POI element for a SingleTrack
-        var point = GeoUtils.point(((Geometry)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
         features.geometry(POINTS_LAYER_NAME, point)
           .setAttr("mtb:name", mtbName)
           .setAttr("mtb:name:he", feature.getString("mtb:name:he"))
@@ -310,7 +307,78 @@ public class GlobalSearchProfile implements Profile {
           .setAttr("description:he", pointDocument.description_he)
           .setAttr("description:en", pointDocument.description_en)
           .setAttr("wikidata", pointDocument.wikidata)
-          .setAttr("wikimedia_commons", feature.getString("wikimedia_commons"))
+          .setAttr("wikimedia_commons", pointDocument.wikimedia_commons)
+          .setAttr("image", pointDocument.image)
+          .setAttr("poiIcon", pointDocument.poiIcon)
+          .setAttr("poiIconColor", pointDocument.poiIconColor)
+          .setAttr("poiCategory", pointDocument.poiCategory)
+          .setZoomRange(10, 14)
+          // Override the feature id with the minimal id of the group
+          .setId(feature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
+      } catch (GeometryException e) {
+        throw new RuntimeException(e);
+      }
+    }
+  }
+
+  private void processWaterwayFeature(SourceFeature sourceFeature, FeatureCollector features) {
+    if (!sourceFeature.hasTag("waterway")) {
+      return;
+    }
+    String name = sourceFeature.getString("name");
+    if (!Waterways.containsKey(name)) {
+      return;
+    }
+    var minId = Waterways.get(name).minId;
+    if (!WaysLineMergers.containsKey(minId)) {
+      WaysLineMergers.put(minId, new MergedLinesHelper());
+    }
+    var mergedLines = WaysLineMergers.get(minId);
+    synchronized(mergedLines) {
+      try {
+
+        mergedLines.lineMerger.add(sourceFeature.worldGeometry());
+        Waterways.get(name).ids.remove(sourceFeature.id());
+
+        if (minId == sourceFeature.id()) {
+          mergedLines.feature = sourceFeature;
+        }
+        if (!Waterways.get(name).ids.isEmpty()) {
+          return;
+        }
+        var feature = mergedLines.feature;
+        var point = GeoUtils.point(((Geometry)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
+
+        var pointDocument = new PointDocument();
+        pointDocument.name = name;
+        pointDocument.name_he = Coalesce(feature.getString("name:he"), feature.getString("name"));
+        pointDocument.name_en = Coalesce(feature.getString("name:en"), feature.getString("name"));
+        pointDocument.description = feature.getString("description");
+        pointDocument.description_he = Coalesce(feature.getString("description:he"), feature.getString("description"));
+        pointDocument.description_en = Coalesce(feature.getString("description:en"), feature.getString("description"));
+        pointDocument.wikidata = feature.getString("wikidata");
+        pointDocument.image = feature.getString("image");
+        pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+        pointDocument.poiCategory = "Water";
+        pointDocument.poiIcon = "icon-waterfall";
+        pointDocument.poiIconColor = "blue";
+        pointDocument.location = List.of(point.getX(), point.getY());
+
+        insertToElasticsearch(pointDocument, "OSM_way_" + minId);
+        if (!isInterestingPoint(pointDocument)) {
+          // Skip adding features without any description or image to tiles
+          return;
+        }
+        
+        features.geometry(POINTS_LAYER_NAME, point)
+          .setAttr("name", pointDocument.name)
+          .setAttr("name:he", pointDocument.name_he)
+          .setAttr("name:en", pointDocument.name_en)
+          .setAttr("description", pointDocument.description)
+          .setAttr("description:he", pointDocument.description_he)
+          .setAttr("description:en", pointDocument.description_en)
+          .setAttr("wikidata", pointDocument.wikidata)
+          .setAttr("wikimedia_commons", pointDocument.wikimedia_commons)
           .setAttr("image", pointDocument.image)
           .setAttr("poiIcon", pointDocument.poiIcon)
           .setAttr("poiIconColor", pointDocument.poiIconColor)
@@ -335,44 +403,59 @@ public class GlobalSearchProfile implements Profile {
 
     var tileId = feature.vectorTileFeatureId(config.featureSourceIdMultiplier());
     var docId = "OSM_" + (String.valueOf(tileId).endsWith("1") ? "node_" : String.valueOf(tileId).endsWith("2") ? "way_" : "relation_") + feature.id();
+    Point point;
+    
     try {
-        var pointDocument = new PointDocument();
-        pointDocument.name = feature.getString("name");
-        pointDocument.name_he = Coalesce(feature.getString("name:he"), feature.getString("name"));
-        pointDocument.name_en = Coalesce(feature.getString("name:en"), feature.getString("name"));
-        pointDocument.description = feature.getString("description");
-        pointDocument.description_he = Coalesce(feature.getString("description:he"), feature.getString("description"));
-        pointDocument.description_en = Coalesce(feature.getString("description:en"), feature.getString("description"));
-        pointDocument.wikidata = feature.getString("wikidata");
-        pointDocument.image = feature.getString("image");
-        pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
-        setIconColorCategory(pointDocument, feature);
-
-        if (pointDocument.poiIcon == "icon-search") {
-            return;
-        }
-
-        insertToElasticsearch(pointDocument, docId);
-
-        var point = feature.centroidIfConvex();
-        features.geometry(POINTS_LAYER_NAME, point)
-            .setAttr("name", pointDocument.name)
-            .setAttr("name:he", pointDocument.name_he)
-            .setAttr("name:en", pointDocument.name_en)
-            .setAttr("description", pointDocument.description)
-            .setAttr("description:he", pointDocument.description_he)
-            .setAttr("description:en", pointDocument.description_en)
-            .setAttr("wikidata", pointDocument.wikidata)
-            .setAttr("wikimedia_commons", pointDocument.wikimedia_commons)
-            .setAttr("image", pointDocument.image)
-            .setAttr("poiIcon", pointDocument.poiIcon)
-            .setAttr("poiIconColor", pointDocument.poiIconColor)
-            .setAttr("poiCategory", pointDocument.poiCategory)
-            .setZoomRange(10, 14)
-            .setId(tileId);
+        point = (Point)feature.centroidIfConvex();
     } catch (GeometryException e) {
-        LOGGER.warn("Failed to process feature: {}", docId);
+      try {
+        point = GeoUtils.point(feature.worldGeometry().getCoordinate());
+      } catch (GeometryException e2) {
+        LOGGER.warn("Failed to process feature: {} (this is usually a relations outside the area)", docId);
+        return;
+      }
     }
+
+    var pointDocument = new PointDocument();
+    pointDocument.name = feature.getString("name");
+    pointDocument.name_he = Coalesce(feature.getString("name:he"), feature.getString("name"));
+    pointDocument.name_en = Coalesce(feature.getString("name:en"), feature.getString("name"));
+    pointDocument.description = feature.getString("description");
+    pointDocument.description_he = Coalesce(feature.getString("description:he"), feature.getString("description"));
+    pointDocument.description_en = Coalesce(feature.getString("description:en"), feature.getString("description"));
+    pointDocument.wikidata = feature.getString("wikidata");
+    pointDocument.image = feature.getString("image");
+    pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+    pointDocument.location = List.of(point.getX(), point.getY());
+
+    setIconColorCategory(pointDocument, feature);
+
+    if (pointDocument.poiIcon == "icon-search") {
+        return;
+    }
+
+    insertToElasticsearch(pointDocument, docId);
+
+    if (pointDocument.poiIcon == "icon-peak" && !isInterestingPoint(pointDocument)) {
+        return;
+    }
+
+    features.geometry(POINTS_LAYER_NAME, point)
+        .setAttr("name", pointDocument.name)
+        .setAttr("name:he", pointDocument.name_he)
+        .setAttr("name:en", pointDocument.name_en)
+        .setAttr("description", pointDocument.description)
+        .setAttr("description:he", pointDocument.description_he)
+        .setAttr("description:en", pointDocument.description_en)
+        .setAttr("wikidata", pointDocument.wikidata)
+        .setAttr("wikimedia_commons", pointDocument.wikimedia_commons)
+        .setAttr("image", pointDocument.image)
+        .setAttr("poiIcon", pointDocument.poiIcon)
+        .setAttr("poiIconColor", pointDocument.poiIconColor)
+        .setAttr("poiCategory", pointDocument.poiCategory)
+        .setZoomRange(10, 14)
+        .setId(tileId);
+    
   }
 
   private void insertToElasticsearch(PointDocument pointDocument, String docId) {
@@ -385,6 +468,42 @@ public class GlobalSearchProfile implements Profile {
     } catch (Exception e) {
       // swallow
     }
+  }
+
+  /**
+   * Get the first point of the trail relation by checking some heuristics related to the relation's first member
+   * @param mergedLines - the merged lines helper
+   * @return the first point of the trail relation
+   * @throws GeometryException
+   */
+  private Point getFirstPointOfTrailRelation(MergedLinesHelper mergedLines) throws GeometryException {
+    var firstMergedLineString = (LineString) mergedLines.lineMerger.getMergedLineStrings().iterator().next();
+    var firstMergedLineCoordinate = firstMergedLineString.getCoordinate();
+    var lastMergedLineCoordinate = firstMergedLineString.getCoordinateN(firstMergedLineString.getNumPoints() - 1);
+    
+    var firstMemberGeometry = (LineString) mergedLines.feature.line();
+    var firstMemberStartCoordinate = firstMemberGeometry.getCoordinate();
+    var firstMemberEndCoordinate = firstMemberGeometry.getCoordinateN(firstMemberGeometry.getNumPoints() - 1);
+
+    if (firstMergedLineCoordinate.equals(firstMemberStartCoordinate)) {
+      // The direction of the related's first memeber and the merged lines is the same
+      return GeoUtils.point(firstMergedLineCoordinate);  
+    }
+
+    if (lastMergedLineCoordinate.equals(firstMemberStartCoordinate) || lastMergedLineCoordinate.equals(firstMemberEndCoordinate)) {
+      // The direction of the related's first memeber and the merged lines is the opposite
+      return GeoUtils.point(lastMergedLineCoordinate);
+    }
+    // Otherwise, return the first point of the merged line
+    return GeoUtils.point(firstMergedLineCoordinate);
+  }
+
+  private boolean isInterestingPoint(PointDocument pointDocument) {
+    return pointDocument.description != null || 
+      pointDocument.description_en != null || 
+      pointDocument.description_he != null ||
+      pointDocument.wikidata != null ||
+      pointDocument.image != null;
   }
 
 
