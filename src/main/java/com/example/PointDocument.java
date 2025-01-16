@@ -13,4 +13,5 @@ class PointDocument {
     public String poiCategory;
     public String poiIcon;
     public String poiIconColor;
+    public double[] location;
   }

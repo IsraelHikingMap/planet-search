@@ -63,32 +63,6 @@ public class GlobalSearchProfile implements Profile {
    * point with attributes derived from the relation as well as for ways with mtb:name tag.
    */
 
-  // Minimal container for data we extract from OSM route relations. This is held in RAM so keep it small.
-  private record RouteRelationInfo(
-    // OSM ID of the relation (required):
-    @Override long id,
-    // Values for tags extracted from the OSM relation:
-    String name,
-    String name_he,
-    String name_en,
-    String route, // a.k.a. class
-    String network,
-    // For route segments only
-    String ref,
-    String osmc_symbol,
-    String colour,
-    // For POIs only
-    String description,
-    String description_he,
-    String description_en,
-    String wikidata,
-    String image,
-    String wikimedia_commons,
-    String route_type,
-    Long first_member_id,
-    List<Long> member_ids
-  ) implements OsmRelationInfo {}
-
   static private final String Coalesce(String... strings) {
     return Arrays.stream(strings)
         .filter(Objects::nonNull)
@@ -100,14 +74,23 @@ public class GlobalSearchProfile implements Profile {
   @Override
   public List<OsmRelationInfo> preprocessOsmRelation(OsmElement.Relation relation) {
     // If this is a "route" relation ...
-    if (!relation.hasTag("type", "route")) {
-      return null;
+    String color = null;
+    String icon = null;
+    String category = null;
+    if (relation.hasTag("type", "route") &&
+      relation.hasTag("route", "mtb", "bicycle", "hiking", "foot") &&
+      !relation.hasTag("state", "proposed")
+      ) {
+      color = "black";
+      icon = relation.hasTag("route", "mtb", "bicycle") ? "icon-bike" : "icon-hike";
+      category = relation.hasTag("route", "mtb", "bicycle") ? "Bicycle" : "Hiking";
     }
-    // where route=mtb/bicycle/hiking/foot ...
-    if (!relation.hasTag("route", "mtb", "bicycle", "hiking", "foot")) {
-      return null;
+    if (relation.hasTag("waterway")) {
+      color = "blue";
+      icon = "icon-waterfall";
+      category = "Water";
     }
-    if (relation.hasTag("state", "proposed")) {
+    if (color == null) {
       return null;
     }
     // then store a RouteRelationInfo instance with tags we'll need later
@@ -120,26 +103,25 @@ public class GlobalSearchProfile implements Profile {
     if (members_ids.size() == 0) {
       return null;
     }
-    return List.of(new RouteRelationInfo(
-      relation.id(),
-      relation.getString("name"),
-      relation.getString("name:he"),
-      relation.getString("name:en"),
-      relation.getString("route"),
-      relation.getString("network"),
-      relation.getString("ref"),
-      relation.getString("osmc:symbol"),
-      relation.getString("colour"),
-      relation.getString("description"),
-      relation.getString("description:he"),
-      relation.getString("description:en"),
-      relation.getString("wikidata"),
-      relation.getString("image"),
-      relation.getString("wikimedia_commons"),
-      relation.hasTag("route", "mtb", "bicycle") ? "Bicycle" : "Hiking",
-      members_ids.isEmpty() ? -1L : members_ids.get(0),
-      members_ids
-    ));
+    var info = new RelationInfo(relation.id());
+    var pointDocument = new PointDocument();
+    pointDocument.name = relation.getString("name");
+    pointDocument.name_he = Coalesce(relation.getString("name:he"), relation.getString("name"));
+    pointDocument.name_en = Coalesce(relation.getString("name:en"), relation.getString("name"));
+    pointDocument.description = relation.getString("description");
+    pointDocument.description_he = Coalesce(relation.getString("description:he"), relation.getString("description"));
+    pointDocument.description_en = Coalesce(relation.getString("description:en"), relation.getString("description"));
+    pointDocument.wikidata = relation.getString("wikidata");
+    pointDocument.image = relation.getString("image");
+    pointDocument.wikimedia_commons = relation.getString("wikimedia_commons");
+    pointDocument.poiCategory = category;
+    pointDocument.poiIcon = icon;
+    pointDocument.poiIconColor = color;
+    info.pointDocument = pointDocument;
+    info.firstMemberId = members_ids.isEmpty() ? -1L : members_ids.get(0);
+    info.memberIds = members_ids;
+
+    return List.of(info);
   }
 
   @Override
@@ -183,10 +165,10 @@ public class GlobalSearchProfile implements Profile {
   private void processOsmRelationFeature(SourceFeature sourceFeature, FeatureCollector features) {
     // get all the RouteRelationInfo instances we returned from preprocessOsmRelation that
     // this way belongs to
-    for (var routeInfo : sourceFeature.relationInfo(RouteRelationInfo.class)) {
+    for (var routeInfo : sourceFeature.relationInfo(RelationInfo.class)) {
       // (routeInfo.role() also has the "role" of this relation member if needed)
-      RouteRelationInfo relation = routeInfo.relation();
-      if (relation.name == null) {
+      RelationInfo relation = routeInfo.relation();
+      if (relation.pointDocument.name == null) {
         continue;
       }
       // Collect all relation way members
@@ -197,50 +179,35 @@ public class GlobalSearchProfile implements Profile {
       synchronized(mergedLines) {
         try {
           mergedLines.lineMerger.add(sourceFeature.line());
-          relation.member_ids.remove(sourceFeature.id());
+          relation.memberIds.remove(sourceFeature.id());
 
-          if (relation.first_member_id == sourceFeature.id()) {
+          if (relation.firstMemberId == sourceFeature.id()) {
             mergedLines.feature = sourceFeature;
           }
 
-          if (!relation.member_ids.isEmpty()) {
+          if (!relation.memberIds.isEmpty()) {
             continue;
           }
           // All relation members were reached. Add a POI element for trail relation
           var point = getFirstPointOfTrailRelation(mergedLines);
 
-          var pointDocument = new PointDocument();
-          pointDocument.name = relation.name;
-          pointDocument.name_he = Coalesce(relation.name_he, relation.name);
-          pointDocument.name_en = Coalesce(relation.name_en, relation.name);
-          pointDocument.description = relation.description;
-          pointDocument.description_he = Coalesce(relation.description_he, relation.description);
-          pointDocument.description_en = Coalesce(relation.description_en, relation.description);
-          pointDocument.wikidata = relation.wikidata;
-          pointDocument.image = relation.image;
-          pointDocument.wikimedia_commons = relation.wikimedia_commons;
-          pointDocument.poiCategory = relation.route_type;
-          pointDocument.poiIcon = relation.route_type == "Bicycle" ? "icon-bike" : "icon-hike";
-          pointDocument.poiIconColor = "black";
-          pointDocument.location = List.of(point.getX(), point.getY());
+          relation.pointDocument.location = new double[]{point.getX(), point.getY()};
 
-          insertToElasticsearch(pointDocument, "OSM_relation_" + relation.id);
+          insertToElasticsearch(relation.pointDocument, "OSM_relation_" + relation.id());
 
           features.geometry(POINTS_LAYER_NAME, point)
-            .setAttr("name", pointDocument.name)
-            .setAttr("name:he", pointDocument.name_he)
-            .setAttr("name:en", pointDocument.name_en)
-            .setAttr("description", pointDocument.description)
-            .setAttr("description:he", pointDocument.description_he)
-            .setAttr("description:en", pointDocument.description_en)
-            .setAttr("wikidata", pointDocument.wikidata)
-            .setAttr("image", pointDocument.image)
-            .setAttr("wikimedia_commons", relation.wikimedia_commons)
-            .setAttr("route", relation.route)
-            .setAttr("network", relation.network)
-            .setAttr("poiCategory", pointDocument.poiCategory)
-            .setAttr("poiIcon", pointDocument.poiIcon)
-            .setAttr("poiIconColor", pointDocument.poiIconColor)
+            .setAttr("name", relation.pointDocument.name)
+            .setAttr("name:he", relation.pointDocument.name_he)
+            .setAttr("name:en", relation.pointDocument.name_en)
+            .setAttr("description", relation.pointDocument.description)
+            .setAttr("description:he", relation.pointDocument.description_he)
+            .setAttr("description:en", relation.pointDocument.description_en)
+            .setAttr("wikidata", relation.pointDocument.wikidata)
+            .setAttr("image", relation.pointDocument.image)
+            .setAttr("wikimedia_commons", relation.pointDocument.wikimedia_commons)
+            .setAttr("poiCategory", relation.pointDocument.poiCategory)
+            .setAttr("poiIcon", relation.pointDocument.poiIcon)
+            .setAttr("poiIconColor", relation.pointDocument.poiIconColor)
             .setZoomRange(10, 14)
             .setId(relation.vectorTileFeatureId(config.featureSourceIdMultiplier()));
         } catch (GeometryException e) {
@@ -291,7 +258,7 @@ public class GlobalSearchProfile implements Profile {
         pointDocument.poiCategory = "Bicycle";
         pointDocument.poiIcon = "icon-bike";
         pointDocument.poiIconColor = "gray";
-        pointDocument.location = List.of(point.getX(), point.getY());
+        pointDocument.location = new double[]{point.getX(), point.getY()};
 
         insertToElasticsearch(pointDocument, "OSM_way_" + minId);
         // This was the last way with the same mtb:name, so we can merge the lines and add the feature
@@ -362,7 +329,7 @@ public class GlobalSearchProfile implements Profile {
         pointDocument.poiCategory = "Water";
         pointDocument.poiIcon = "icon-waterfall";
         pointDocument.poiIconColor = "blue";
-        pointDocument.location = List.of(point.getX(), point.getY());
+        pointDocument.location = new double[]{point.getX(), point.getY()};
 
         insertToElasticsearch(pointDocument, "OSM_way_" + minId);
         if (!isInterestingPoint(pointDocument)) {
@@ -426,7 +393,7 @@ public class GlobalSearchProfile implements Profile {
     pointDocument.wikidata = feature.getString("wikidata");
     pointDocument.image = feature.getString("image");
     pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
-    pointDocument.location = List.of(point.getX(), point.getY());
+    pointDocument.location = new double[]{point.getX(), point.getY()};
 
     setIconColorCategory(pointDocument, feature);
 
