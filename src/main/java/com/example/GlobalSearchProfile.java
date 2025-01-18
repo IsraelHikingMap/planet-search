@@ -190,8 +190,8 @@ public class GlobalSearchProfile implements Profile {
           }
           // All relation members were reached. Add a POI element for trail relation
           var point = getFirstPointOfTrailRelation(mergedLines);
-
-          relation.pointDocument.location = new double[]{point.getX(), point.getY()};
+          var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
+          relation.pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
 
           insertToElasticsearch(relation.pointDocument, "OSM_relation_" + relation.id());
 
@@ -258,7 +258,8 @@ public class GlobalSearchProfile implements Profile {
         pointDocument.poiCategory = "Bicycle";
         pointDocument.poiIcon = "icon-bike";
         pointDocument.poiIconColor = "gray";
-        pointDocument.location = new double[]{point.getX(), point.getY()};
+        var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
+        pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
 
         insertToElasticsearch(pointDocument, "OSM_way_" + minId);
         // This was the last way with the same mtb:name, so we can merge the lines and add the feature
@@ -329,7 +330,8 @@ public class GlobalSearchProfile implements Profile {
         pointDocument.poiCategory = "Water";
         pointDocument.poiIcon = "icon-waterfall";
         pointDocument.poiIconColor = "blue";
-        pointDocument.location = new double[]{point.getX(), point.getY()};
+        var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
+        pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
 
         insertToElasticsearch(pointDocument, "OSM_way_" + minId);
         if (!isInterestingPoint(pointDocument)) {
@@ -393,7 +395,8 @@ public class GlobalSearchProfile implements Profile {
     pointDocument.wikidata = feature.getString("wikidata");
     pointDocument.image = feature.getString("image");
     pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
-    pointDocument.location = new double[]{point.getX(), point.getY()};
+    var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
+    pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
 
     setIconColorCategory(pointDocument, feature);
 
