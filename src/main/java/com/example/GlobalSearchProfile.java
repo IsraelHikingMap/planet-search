@@ -16,6 +16,7 @@ import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.Point;
 
 import com.onthegomap.planetiler.FeatureCollector;
+import com.onthegomap.planetiler.FeatureCollector.Feature;
 import com.onthegomap.planetiler.Profile;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.geo.GeoUtils;
@@ -34,6 +35,7 @@ public class GlobalSearchProfile implements Profile {
   private PlanetilerConfig config;
   private ElasticsearchClient esClient;
   private final String indexName;
+  private final String[] supportedLanguages;
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
@@ -42,10 +44,11 @@ public class GlobalSearchProfile implements Profile {
   private static final ConcurrentMap<Long, MergedLinesHelper> RelationLineMergers = new ConcurrentHashMap<>();
   private static final ConcurrentMap<Long, MergedLinesHelper> WaysLineMergers = new ConcurrentHashMap<>();
 
-  public GlobalSearchProfile(PlanetilerConfig config, ElasticsearchClient esClient, String indexName) {
+  public GlobalSearchProfile(PlanetilerConfig config, ElasticsearchClient esClient, String indexName, String supportedLnaguages) {
     this.config = config;
     this.esClient = esClient;
     this.indexName = indexName;
+    this.supportedLanguages = supportedLnaguages.split(",");
   }
 
   /*
@@ -107,12 +110,10 @@ public class GlobalSearchProfile implements Profile {
     }
     var info = new RelationInfo(relation.id());
     var pointDocument = new PointDocument();
-    pointDocument.name = relation.getString("name");
-    pointDocument.name_he = Coalesce(relation.getString("name:he"), relation.getString("name"));
-    pointDocument.name_en = Coalesce(relation.getString("name:en"), relation.getString("name"));
-    pointDocument.description = relation.getString("description");
-    pointDocument.description_he = Coalesce(relation.getString("description:he"), relation.getString("description"));
-    pointDocument.description_en = Coalesce(relation.getString("description:en"), relation.getString("description"));
+    for (String language : supportedLanguages) {
+      pointDocument.name.put(language, Coalesce(relation.getString("name:" + language), relation.getString("name")));
+      pointDocument.description.put(language, Coalesce(relation.getString("description:" + language), relation.getString("description")));
+    }
     pointDocument.wikidata = relation.getString("wikidata");
     pointDocument.image = relation.getString("image");
     pointDocument.wikimedia_commons = relation.getString("wikimedia_commons");
@@ -160,7 +161,7 @@ public class GlobalSearchProfile implements Profile {
       processMtbNameFeature(sourceFeature, features);
       processWaterwayFeature(sourceFeature, features);
     } else {
-      processOtherPoints(sourceFeature, features);
+      processOtherSourceFeature(sourceFeature, features);
     }
   }
 
@@ -197,21 +198,10 @@ public class GlobalSearchProfile implements Profile {
 
           insertToElasticsearch(relation.pointDocument, "OSM_relation_" + relation.id());
 
-          features.geometry(POINTS_LAYER_NAME, point)
-            .setAttr("name", relation.pointDocument.name)
-            .setAttr("name:he", relation.pointDocument.name_he)
-            .setAttr("name:en", relation.pointDocument.name_en)
-            .setAttr("description", relation.pointDocument.description)
-            .setAttr("description:he", relation.pointDocument.description_he)
-            .setAttr("description:en", relation.pointDocument.description_en)
-            .setAttr("wikidata", relation.pointDocument.wikidata)
-            .setAttr("image", relation.pointDocument.image)
-            .setAttr("wikimedia_commons", relation.pointDocument.wikimedia_commons)
-            .setAttr("poiCategory", relation.pointDocument.poiCategory)
-            .setAttr("poiIcon", relation.pointDocument.poiIcon)
-            .setAttr("poiIconColor", relation.pointDocument.poiIconColor)
+          var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
             .setZoomRange(10, 14)
             .setId(relation.vectorTileFeatureId(config.featureSourceIdMultiplier()));
+          setFeaturePropertiesFromPointDocument(tileFeature, relation.pointDocument);
         } catch (GeometryException e) {
           throw new RuntimeException(e);
         }
@@ -248,12 +238,10 @@ public class GlobalSearchProfile implements Profile {
         var point = GeoUtils.point(((Geometry)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
 
         var pointDocument = new PointDocument();
-        pointDocument.name = mtbName;
-        pointDocument.name_he = Coalesce(feature.getString("name:he"), feature.getString("mtb:name:he"), feature.getString("name"), feature.getString("mtb:name"));
-        pointDocument.name_en = Coalesce(feature.getString("name:en"), feature.getString("mtb:name:en"), feature.getString("name"), feature.getString("mtb:name"));
-        pointDocument.description = feature.getString("description");
-        pointDocument.description_he = Coalesce(feature.getString("description:he"), feature.getString("description"));
-        pointDocument.description_en = Coalesce(feature.getString("description:en"), feature.getString("description"));
+        for (String language : supportedLanguages) {
+          pointDocument.name.put(language, Coalesce(feature.getString("mtb:name:" + language), feature.getString("name:" + language), feature.getString("name"), feature.getString("mtb:name")));
+          pointDocument.description.put(language, Coalesce(feature.getString("description:" + language), feature.getString("description")));
+        }
         pointDocument.wikidata = feature.getString("wikidata");
         pointDocument.image = feature.getString("image");
         pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
@@ -266,25 +254,11 @@ public class GlobalSearchProfile implements Profile {
         insertToElasticsearch(pointDocument, "OSM_way_" + minId);
         // This was the last way with the same mtb:name, so we can merge the lines and add the feature
         // Add a POI element for a SingleTrack
-        features.geometry(POINTS_LAYER_NAME, point)
-          .setAttr("mtb:name", mtbName)
-          .setAttr("mtb:name:he", feature.getString("mtb:name:he"))
-          .setAttr("mtb:name:en", feature.getString("mtb:name:en"))
-          .setAttr("name", pointDocument.name)
-          .setAttr("name:he", pointDocument.name_he)
-          .setAttr("name:en", pointDocument.name_en)
-          .setAttr("description", pointDocument.description)
-          .setAttr("description:he", pointDocument.description_he)
-          .setAttr("description:en", pointDocument.description_en)
-          .setAttr("wikidata", pointDocument.wikidata)
-          .setAttr("wikimedia_commons", pointDocument.wikimedia_commons)
-          .setAttr("image", pointDocument.image)
-          .setAttr("poiIcon", pointDocument.poiIcon)
-          .setAttr("poiIconColor", pointDocument.poiIconColor)
-          .setAttr("poiCategory", pointDocument.poiCategory)
+        var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
           .setZoomRange(10, 14)
           // Override the feature id with the minimal id of the group
           .setId(feature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
+          setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
       } catch (GeometryException e) {
         throw new RuntimeException(e);
       }
@@ -320,12 +294,10 @@ public class GlobalSearchProfile implements Profile {
         var point = GeoUtils.point(((Geometry)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
 
         var pointDocument = new PointDocument();
-        pointDocument.name = name;
-        pointDocument.name_he = Coalesce(feature.getString("name:he"), feature.getString("name"));
-        pointDocument.name_en = Coalesce(feature.getString("name:en"), feature.getString("name"));
-        pointDocument.description = feature.getString("description");
-        pointDocument.description_he = Coalesce(feature.getString("description:he"), feature.getString("description"));
-        pointDocument.description_en = Coalesce(feature.getString("description:en"), feature.getString("description"));
+        for (String language : supportedLanguages) {
+          pointDocument.name.put(language, Coalesce(feature.getString("name:" + language), feature.getString("name")));
+          pointDocument.description.put(language, Coalesce(feature.getString("description:" + language), feature.getString("description")));
+        }
         pointDocument.wikidata = feature.getString("wikidata");
         pointDocument.image = feature.getString("image");
         pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
@@ -341,29 +313,18 @@ public class GlobalSearchProfile implements Profile {
           return;
         }
         
-        features.geometry(POINTS_LAYER_NAME, point)
-          .setAttr("name", pointDocument.name)
-          .setAttr("name:he", pointDocument.name_he)
-          .setAttr("name:en", pointDocument.name_en)
-          .setAttr("description", pointDocument.description)
-          .setAttr("description:he", pointDocument.description_he)
-          .setAttr("description:en", pointDocument.description_en)
-          .setAttr("wikidata", pointDocument.wikidata)
-          .setAttr("wikimedia_commons", pointDocument.wikimedia_commons)
-          .setAttr("image", pointDocument.image)
-          .setAttr("poiIcon", pointDocument.poiIcon)
-          .setAttr("poiIconColor", pointDocument.poiIconColor)
-          .setAttr("poiCategory", pointDocument.poiCategory)
+        var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
           .setZoomRange(10, 14)
           // Override the feature id with the minimal id of the group
           .setId(feature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
+        setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
       } catch (GeometryException e) {
         throw new RuntimeException(e);
       }
     }
   }
 
-  private void processOtherPoints(SourceFeature feature, FeatureCollector features) {
+  private void processOtherSourceFeature(SourceFeature feature, FeatureCollector features) {
     if (!feature.hasTag("name") && 
         !feature.hasTag("wikidata") && 
         !feature.hasTag("image") && 
@@ -388,12 +349,10 @@ public class GlobalSearchProfile implements Profile {
     }
 
     var pointDocument = new PointDocument();
-    pointDocument.name = feature.getString("name");
-    pointDocument.name_he = Coalesce(feature.getString("name:he"), feature.getString("name"));
-    pointDocument.name_en = Coalesce(feature.getString("name:en"), feature.getString("name"));
-    pointDocument.description = feature.getString("description");
-    pointDocument.description_he = Coalesce(feature.getString("description:he"), feature.getString("description"));
-    pointDocument.description_en = Coalesce(feature.getString("description:en"), feature.getString("description"));
+    for (String language : supportedLanguages) {
+      pointDocument.name.put(language, Coalesce(feature.getString("name:" + language), feature.getString("name")));
+      pointDocument.description.put(language, Coalesce(feature.getString("description:" + language), feature.getString("description")));
+    }
     pointDocument.wikidata = feature.getString("wikidata");
     pointDocument.image = feature.getString("image");
     pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
@@ -402,7 +361,7 @@ public class GlobalSearchProfile implements Profile {
 
     setIconColorCategory(pointDocument, feature);
 
-    if (pointDocument.poiIcon == "icon-search") {
+    if (pointDocument.poiIcon == "icon-search" || (pointDocument.poiIcon == "icon-home" && !isInterestingPoint(pointDocument))) {
         return;
     }
 
@@ -412,22 +371,11 @@ public class GlobalSearchProfile implements Profile {
         return;
     }
 
-    features.geometry(POINTS_LAYER_NAME, point)
-        .setAttr("name", pointDocument.name)
-        .setAttr("name:he", pointDocument.name_he)
-        .setAttr("name:en", pointDocument.name_en)
-        .setAttr("description", pointDocument.description)
-        .setAttr("description:he", pointDocument.description_he)
-        .setAttr("description:en", pointDocument.description_en)
-        .setAttr("wikidata", pointDocument.wikidata)
-        .setAttr("wikimedia_commons", pointDocument.wikimedia_commons)
-        .setAttr("image", pointDocument.image)
-        .setAttr("poiIcon", pointDocument.poiIcon)
-        .setAttr("poiIconColor", pointDocument.poiIconColor)
-        .setAttr("poiCategory", pointDocument.poiCategory)
+    var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
         .setZoomRange(10, 14)
         .setId(tileId);
-    
+
+    setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
   }
 
   private void insertToElasticsearch(PointDocument pointDocument, String docId) {
@@ -471,11 +419,22 @@ public class GlobalSearchProfile implements Profile {
   }
 
   private boolean isInterestingPoint(PointDocument pointDocument) {
-    return pointDocument.description != null || 
-      pointDocument.description_en != null || 
-      pointDocument.description_he != null ||
+    return pointDocument.description.size() > 0 || 
       pointDocument.wikidata != null ||
       pointDocument.image != null;
+  }
+
+  private void setFeaturePropertiesFromPointDocument(Feature tileFeature, PointDocument pointDocument) {
+    tileFeature.setAttr("wikidata", pointDocument.wikidata)
+        .setAttr("wikimedia_commons", pointDocument.wikimedia_commons)
+        .setAttr("image", pointDocument.image)
+        .setAttr("poiIcon", pointDocument.poiIcon)
+        .setAttr("poiIconColor", pointDocument.poiIconColor)
+        .setAttr("poiCategory", pointDocument.poiCategory);
+    for (String lang : supportedLanguages) {
+      tileFeature.setAttr("name:" + lang, pointDocument.name.get(lang));
+      tileFeature.setAttr("description:" + lang, pointDocument.description.get(lang));
+    }
   }
 
 

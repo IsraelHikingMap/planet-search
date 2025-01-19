@@ -60,6 +60,7 @@ public class MainClass {
 
         ElasticsearchClient esClient = new ElasticsearchClient(transport);
 
+        var supportedLanguages = args.getString("languages", "Languages to support", "en,he");
         var indexAlias = args.getString("es-index-alias", "Elasticsearch index to populate", "points");
         
         var targetIndex = getTargetIndexName(indexAlias, esClient);
@@ -68,7 +69,7 @@ public class MainClass {
         }
         esClient.indices().create(c -> c.index(targetIndex));
 
-        var profile = new GlobalSearchProfile(planetiler.config(), esClient, targetIndex);        
+        var profile = new GlobalSearchProfile(planetiler.config(), esClient, targetIndex, supportedLanguages);        
 
         planetiler.setProfile(profile)
           // override this default with osm_path="path/to/data.osm.pbf"
