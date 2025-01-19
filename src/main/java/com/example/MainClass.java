@@ -20,7 +20,6 @@ import java.util.logging.Level;
  * The main entry point
  */
 public class MainClass {
-
     /** 
      * Main entry point for the application.
      * @throws Exception 
@@ -29,6 +28,21 @@ public class MainClass {
         run(Arguments.fromArgsOrConfigFile(args));
     }
     
+    private static String getTargetIndexName(String indexAlias, ElasticsearchClient esClient) throws Exception {
+        var indexName = indexAlias + "1";
+        if (!esClient.indices().existsAlias(c -> c.name(indexAlias)).value()) {
+            Logger.getAnonymousLogger().info("Alias " + indexAlias + " does not exist, creating index " + indexName);
+            return indexName;
+        } 
+        var alias = esClient.indices().getAlias(c -> c.name(indexAlias)).result();
+        if (alias.containsKey(indexName)) {
+            Logger.getAnonymousLogger().info("Alias " + indexAlias + " exists, creating index " + indexAlias + "2");
+            return indexAlias + "2";
+        }
+        Logger.getAnonymousLogger().info("Alias " + indexAlias + " exists, creating index " + indexName);
+        return indexName;
+    }
+
     static void run(Arguments args) throws Exception {
         String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
         // Planetiler is a convenience wrapper around the lower-level API for the most common use-cases.
@@ -38,7 +52,7 @@ public class MainClass {
         Logger.getLogger("org.elasticsearch.client.RestClient").setLevel(Level.OFF);
 
         RestClient restClient = RestClient
-            .builder(HttpHost.create("http://localhost:9200"))
+            .builder(HttpHost.create(args.getString("es-address", "Elasticsearch address", "http://localhost:9200")))
             .build();
 
         ElasticsearchTransport transport = new RestClientTransport(
@@ -46,16 +60,15 @@ public class MainClass {
 
         ElasticsearchClient esClient = new ElasticsearchClient(transport);
 
-        esClient.indices().delete(c -> c
-            .index("points")
-        );
+        var indexAlias = args.getString("es-index-alias", "Elasticsearch index to populate", "points");
+        
+        var targetIndex = getTargetIndexName(indexAlias, esClient);
+        if (esClient.indices().exists(c -> c.index(targetIndex)).value()) {
+            esClient.indices().delete(c -> c.index(targetIndex));
+        }
+        esClient.indices().create(c -> c.index(targetIndex));
 
-        esClient.indices().create(c -> c
-            .index("points")
-        );
-
-
-        var profile = new GlobalSearchProfile(planetiler.config(), esClient);
+        var profile = new GlobalSearchProfile(planetiler.config(), esClient, targetIndex);        
 
         planetiler.setProfile(profile)
           // override this default with osm_path="path/to/data.osm.pbf"
@@ -63,6 +76,13 @@ public class MainClass {
           // override this default with mbtiles="path/to/output.mbtiles"
           .overwriteOutput(Path.of("data", GlobalSearchProfile.POINTS_LAYER_NAME + ".pmtiles"))
           .run();
+
+        Logger.getAnonymousLogger().info("Creating alias " + indexAlias + " for index " + targetIndex);
+
+        esClient.indices().updateAliases(c -> 
+          c.actions(a -> a.remove(i -> i.index("*").alias(indexAlias)))
+          .actions(a -> a.add(c2 -> c2.index(targetIndex).alias(indexAlias)))
+        );
 
         esClient.close();
     }

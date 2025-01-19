@@ -33,6 +33,7 @@ public class GlobalSearchProfile implements Profile {
   private static final Logger LOGGER = LoggerFactory.getLogger(GlobalSearchProfile.class);
   private PlanetilerConfig config;
   private ElasticsearchClient esClient;
+  private final String indexName;
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
@@ -41,9 +42,10 @@ public class GlobalSearchProfile implements Profile {
   private static final ConcurrentMap<Long, MergedLinesHelper> RelationLineMergers = new ConcurrentHashMap<>();
   private static final ConcurrentMap<Long, MergedLinesHelper> WaysLineMergers = new ConcurrentHashMap<>();
 
-  public GlobalSearchProfile(PlanetilerConfig config, ElasticsearchClient esClient) {
+  public GlobalSearchProfile(PlanetilerConfig config, ElasticsearchClient esClient, String indexName) {
     this.config = config;
     this.esClient = esClient;
+    this.indexName = indexName;
   }
 
   /*
@@ -431,7 +433,7 @@ public class GlobalSearchProfile implements Profile {
   private void insertToElasticsearch(PointDocument pointDocument, String docId) {
     try {
       esClient.index(i -> i
-          .index("points")
+          .index(this.indexName)
           .id(docId)
           .document(pointDocument)
       );
