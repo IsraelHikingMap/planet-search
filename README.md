@@ -15,7 +15,7 @@ Additional arguments to this wrapper besides the Planetiler's arguments:
 
 To run using docker:
 
-
+`docker run --rm ghcr.io/israelhikingmap/planet-search`
 
 To compile run:
 
