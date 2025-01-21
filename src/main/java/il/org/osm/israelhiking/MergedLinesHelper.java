@@ -1,4 +1,4 @@
-package com.example;
+package il.org.osm.israelhiking;
 
 import org.locationtech.jts.operation.linemerge.LineMerger;
 

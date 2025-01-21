@@ -1,4 +1,4 @@
-package com.example;
+package il.org.osm.israelhiking;
 
 import static com.onthegomap.planetiler.reader.osm.OsmElement.Type.WAY;
 

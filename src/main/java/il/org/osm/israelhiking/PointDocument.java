@@ -1,4 +1,4 @@
-package com.example;
+package il.org.osm.israelhiking;
 
 import java.util.HashMap;
 import java.util.Map;

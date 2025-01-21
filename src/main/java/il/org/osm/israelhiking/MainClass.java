@@ -1,4 +1,4 @@
-package com.example;
+package il.org.osm.israelhiking;
 
 import com.onthegomap.planetiler.Planetiler;
 import com.onthegomap.planetiler.config.Arguments;

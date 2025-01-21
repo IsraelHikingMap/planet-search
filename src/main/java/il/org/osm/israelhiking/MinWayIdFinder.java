@@ -1,4 +1,4 @@
-package com.example;
+package il.org.osm.israelhiking;
 
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;

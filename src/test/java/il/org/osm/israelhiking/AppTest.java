@@ -1,4 +1,4 @@
-package com.example;
+package il.org.osm.israelhiking;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
