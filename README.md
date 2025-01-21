@@ -13,9 +13,9 @@ Additional arguments to this wrapper besides the Planetiler's arguments:
 | `es-address` | The address of the Elasticsearch database | `http://localhost:9200` |
 | `es-index-alias` | The alias of the index to insert into, it will create "1" and "2" suffix for the relevant index before switching | `points` |
 
-To run using docker:
+To run using docker (While having a local elasticsearch running at 9200):
 
-`docker run --rm ghcr.io/israelhikingmap/planet-search`
+`docker run --rm --network=host -e JAVA_OPTS="-Xmx4g -Xms4g" -v "$(pwd)/data":/app/data ghcr.io/israelhikingmap/planet-search --download`
 
 To compile run:
 

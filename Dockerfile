@@ -8,7 +8,7 @@ RUN mvn package
 
 FROM eclipse-temurin:21-jre-alpine
 
-ENV JAVA_OPTS="-Xmx1g -Xms1g"
+ENV JAVA_OPTS="-Xmx2g -Xms2g"
 
 WORKDIR /app
 
