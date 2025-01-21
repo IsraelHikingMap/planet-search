@@ -1,0 +1,24 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  push-docker:
+    name: deploy/docker
+    runs-on: ubuntu-latest
+
+    if: ${{ github.event_name == 'push' }}
+
+    steps:
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - uses: actions/checkout@v4
+    - run: docker build -t ghcr.io/israelhikingmap/planet-search:latest .
+    - run: docker push ghcr.io/israelhikingmap/planet-search:latest
