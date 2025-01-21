@@ -4,10 +4,10 @@
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>il.org.osm.israelhiking</groupId>
-  <artifactId>global-search</artifactId>
+  <artifactId>planet-search</artifactId>
   <version>1.0-SNAPSHOT</version>
 
-  <name>global-search</name>
+  <name>planet-search</name>
   <url>http://israelhiking.osm.org.il</url>
 
   <properties>
