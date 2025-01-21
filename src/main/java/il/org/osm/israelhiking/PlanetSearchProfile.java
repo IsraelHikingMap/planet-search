@@ -30,8 +30,8 @@ import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class GlobalSearchProfile implements Profile {
-  private static final Logger LOGGER = LoggerFactory.getLogger(GlobalSearchProfile.class);
+public class PlanetSearchProfile implements Profile {
+  private static final Logger LOGGER = LoggerFactory.getLogger(PlanetSearchProfile.class);
   private PlanetilerConfig config;
   private ElasticsearchClient esClient;
   private final String indexName;
@@ -44,7 +44,7 @@ public class GlobalSearchProfile implements Profile {
   private static final ConcurrentMap<Long, MergedLinesHelper> RelationLineMergers = new ConcurrentHashMap<>();
   private static final ConcurrentMap<Long, MergedLinesHelper> WaysLineMergers = new ConcurrentHashMap<>();
 
-  public GlobalSearchProfile(PlanetilerConfig config, ElasticsearchClient esClient, String indexName, String supportedLnaguages) {
+  public PlanetSearchProfile(PlanetilerConfig config, ElasticsearchClient esClient, String indexName, String supportedLnaguages) {
     this.config = config;
     this.esClient = esClient;
     this.indexName = indexName;

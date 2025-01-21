@@ -69,13 +69,13 @@ public class MainClass {
         }
         esClient.indices().create(c -> c.index(targetIndex));
 
-        var profile = new GlobalSearchProfile(planetiler.config(), esClient, targetIndex, supportedLanguages);        
+        var profile = new PlanetSearchProfile(planetiler.config(), esClient, targetIndex, supportedLanguages);        
 
         planetiler.setProfile(profile)
           // override this default with osm_path="path/to/data.osm.pbf"
           .addOsmSource("osm", Path.of("data", "sources", area + ".osm.pbf"), "geofabrik:" + area)
           // override this default with mbtiles="path/to/output.mbtiles"
-          .overwriteOutput(Path.of("data", GlobalSearchProfile.POINTS_LAYER_NAME + ".pmtiles"))
+          .overwriteOutput(Path.of("data", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"))
           .run();
 
         Logger.getAnonymousLogger().info("Creating alias " + indexAlias + " for index " + targetIndex);
