@@ -34,7 +34,8 @@ public class PlanetSearchProfile implements Profile {
   private static final Logger LOGGER = LoggerFactory.getLogger(PlanetSearchProfile.class);
   private PlanetilerConfig config;
   private ElasticsearchClient esClient;
-  private final String indexName;
+  private final String pointsIndexName;
+  private final String bboxIndexName;
   private final String[] supportedLanguages;
 
   public static final String POINTS_LAYER_NAME = "global_points";
@@ -44,11 +45,12 @@ public class PlanetSearchProfile implements Profile {
   private static final ConcurrentMap<Long, MergedLinesHelper> RelationLineMergers = new ConcurrentHashMap<>();
   private static final ConcurrentMap<Long, MergedLinesHelper> WaysLineMergers = new ConcurrentHashMap<>();
 
-  public PlanetSearchProfile(PlanetilerConfig config, ElasticsearchClient esClient, String indexName, String supportedLnaguages) {
+  public PlanetSearchProfile(PlanetilerConfig config, ElasticsearchClient esClient, String pointsIndexName, String bboxIndexName, String[] supportedLnaguages) {
     this.config = config;
     this.esClient = esClient;
-    this.indexName = indexName;
-    this.supportedLanguages = supportedLnaguages.split(",");
+    this.pointsIndexName = pointsIndexName;
+    this.supportedLanguages = supportedLnaguages;
+    this.bboxIndexName = bboxIndexName;
   }
 
   /*
@@ -155,6 +157,9 @@ public class PlanetSearchProfile implements Profile {
 
   @Override
   public void processFeature(SourceFeature sourceFeature, FeatureCollector features) {
+    if (isBBoxFeature(sourceFeature, supportedLanguages)) {
+      insertBboxToElasticsearch(sourceFeature, supportedLanguages);
+    }
     // ignore nodes and ways that should only be treated as polygons
     if (sourceFeature.canBeLine()) {
       processOsmRelationFeature(sourceFeature, features);
@@ -196,7 +201,7 @@ public class PlanetSearchProfile implements Profile {
           var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
           relation.pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
 
-          insertToElasticsearch(relation.pointDocument, "OSM_relation_" + relation.id());
+          insertPointToElasticsearch(relation.pointDocument, "OSM_relation_" + relation.id());
 
           var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
             .setZoomRange(10, 14)
@@ -251,7 +256,7 @@ public class PlanetSearchProfile implements Profile {
         var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
         pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
 
-        insertToElasticsearch(pointDocument, "OSM_way_" + minId);
+        insertPointToElasticsearch(pointDocument, "OSM_way_" + minId);
         // This was the last way with the same mtb:name, so we can merge the lines and add the feature
         // Add a POI element for a SingleTrack
         var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
@@ -307,7 +312,7 @@ public class PlanetSearchProfile implements Profile {
         var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
         pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
 
-        insertToElasticsearch(pointDocument, "OSM_way_" + minId);
+        insertPointToElasticsearch(pointDocument, "OSM_way_" + minId);
         if (!isInterestingPoint(pointDocument)) {
           // Skip adding features without any description or image to tiles
           return;
@@ -334,7 +339,7 @@ public class PlanetSearchProfile implements Profile {
     }
 
     var tileId = feature.vectorTileFeatureId(config.featureSourceIdMultiplier());
-    var docId = "OSM_" + (String.valueOf(tileId).endsWith("1") ? "node_" : String.valueOf(tileId).endsWith("2") ? "way_" : "relation_") + feature.id();
+    var docId = sourceFeatureToDocumentId(feature);
     Point point;
     
     try {
@@ -365,7 +370,7 @@ public class PlanetSearchProfile implements Profile {
         return;
     }
 
-    insertToElasticsearch(pointDocument, docId);
+    insertPointToElasticsearch(pointDocument, docId);
 
     if (pointDocument.poiIcon == "icon-peak" && !isInterestingPoint(pointDocument)) {
         return;
@@ -378,15 +383,34 @@ public class PlanetSearchProfile implements Profile {
     setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
   }
 
-  private void insertToElasticsearch(PointDocument pointDocument, String docId) {
+  private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
     try {
       esClient.index(i -> i
-          .index(this.indexName)
+          .index(this.pointsIndexName)
           .id(docId)
           .document(pointDocument)
       );
     } catch (Exception e) {
       // swallow
+    }
+  }
+
+  private void insertBboxToElasticsearch(SourceFeature feature, String[] supportedLanguages) {
+    try {
+      var bbox = new BBoxDocument();
+      bbox.area = feature.areaMeters();
+      bbox.setBBox(GeoUtils.toLatLonBoundsBounds(feature.polygon().getEnvelopeInternal()));
+      for (String lang : supportedLanguages) {
+          bbox.name.put(lang, Coalesce(feature.getString("name:" + lang), feature.getString("name")));
+      }
+      esClient.index(i -> i
+          .index(this.bboxIndexName)
+          .id(sourceFeatureToDocumentId(feature))
+          .document(bbox)
+      );
+    } catch (Exception e) {
+      // swallow
+      LOGGER.error("Unable to insert" + e.getMessage());
     }
   }
 
@@ -437,6 +461,52 @@ public class PlanetSearchProfile implements Profile {
     }
   }
 
+  private boolean isBBoxFeature(SourceFeature feature, String[] supportedLanguages) {
+      if (!feature.canBePolygon()) {
+          return false;
+      }
+      var hasName = false;
+      for (String language : supportedLanguages) {
+          if (feature.hasTag("name:" + language)) {
+              hasName = true;
+              break;
+          }
+      }
+      if (!feature.hasTag("name") && !hasName) {
+          return false;
+      }
+      var isFeatureADecentCity = feature.hasTag("boundary", "administrative") &&
+                                  feature.hasTag("admin_level") &&
+                                  feature.getLong("admin_level") > 0 &&
+                                  feature.getLong("admin_level") <= 8;
+      if (isFeatureADecentCity) {
+          return true;
+      }
+      if (feature.hasTag("place") && 
+          !feature.hasTag("place", "suburb") &&
+          !feature.hasTag("place", "neighbourhood") &&
+          !feature.hasTag("place", "quarter") &&
+          !feature.hasTag("place", "city_block") &&
+          !feature.hasTag("place", "borough")
+          ) {
+          return true;
+      }
+      if (feature.hasTag("landuse", "forest")) {
+          return true;
+      }
+      return feature.hasTag("leisure", "nature_reserve") ||
+            feature.hasTag("boundary", "national_park") ||
+            feature.hasTag("boundary", "protected_area");
+  }
+
+  private String sourceFeatureToDocumentId(SourceFeature feature) {
+    var tileId = feature.vectorTileFeatureId(config.featureSourceIdMultiplier());
+    return "OSM_" + (String.valueOf(tileId).endsWith("1") 
+      ? "node_" 
+      : String.valueOf(tileId).endsWith("2") 
+        ? "way_" 
+        : "relation_") + feature.id();
+  }
 
   private void setIconColorCategory(PointDocument pointDocument, SourceFeature feature) {
     if ("protected_area".equals(feature.getString("boundary")) || 

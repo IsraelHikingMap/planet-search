@@ -11,7 +11,8 @@ Additional arguments to this wrapper besides the Planetiler's arguments:
 |-|-|-|
 | `languages` | A comma separated list of languages to add to the tiles and search | `en,he` |
 | `es-address` | The address of the Elasticsearch database | `http://localhost:9200` |
-| `es-index-alias` | The alias of the index to insert into, it will create "1" and "2" suffix for the relevant index before switching | `points` |
+| `es-points-index-alias` | The alias of the index to insert points into, it will create "1" and "2" suffix for the relevant index before switching | `points` |
+| `es-bbox-index-alias` | The alias of the index to insert bounding boxes into, it will create "1" and "2" suffix for the relevant index before switching | `bbox` |
 
 To run using docker (While having a local elasticsearch running at 9200):
 
