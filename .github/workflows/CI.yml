@@ -17,7 +17,7 @@ jobs:
         uses: actions/setup-java@v1
         with:
           java-version: 21
-      - name: build and run tests
+      - name: Build and run tests
         run: |
           mvn clean install
       - name: Upload coverage to Codecov
