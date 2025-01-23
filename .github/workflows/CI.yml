@@ -1,4 +1,4 @@
-name: Build and publish docker image
+name: Build and test
 
 on:
   push:
@@ -8,7 +8,23 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-publish:
+  build-and-test-docker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: mvn clean install -DskipTests
+      - name: End to End tests setup
+        run: |
+          docker compose up -d elasticsearch
+          docker compose build planet-search
+      - name: End to End tests using curl
+        run: |-
+          docker compose up planet-search 
+          curl -s -X GET http://localhost:9200/points/_search?pretty -H 'Content-Type: application/json'
+
+  build-and-test-java:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,15 +33,11 @@ jobs:
         uses: actions/setup-java@v1
         with:
           java-version: 21
-      - name: Build
-        run: mvn clean install -DskipTests
       - name: End to End tests setup
         run: |
           docker compose up -d elasticsearch
-          docker compose up planet-search 
-      - name: End to End tests using curl
-        run: |-
-          curl -s -X GET http://localhost:9200/points/_search?pretty -H 'Content-Type: application/json'
+      - name: Build
+        run: mvn clean install -DskipTests
       - name: End to End test using Java
         run: mvn test -Prun-all-tests
       - name: Upload coverage to Codecov
