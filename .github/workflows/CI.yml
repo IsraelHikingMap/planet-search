@@ -21,7 +21,7 @@ jobs:
       - name: End to End tests setup
         run: |
           docker compose up -d elasticsearch
-          docker compose build planet-search 
+          docker compose up planet-search 
       - name: End to End tests  
-        run: curl -s -X GET http://localhost:9200/_cat/health
+        run: curl -s -X GET http://localhost:9200/points/_search?pretty -H 'Content-Type: application/json'
 
