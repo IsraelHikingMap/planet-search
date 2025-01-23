@@ -13,8 +13,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Build
-        run: mvn clean install -DskipTests
       - name: End to End tests setup
         run: |
           docker compose up -d elasticsearch
