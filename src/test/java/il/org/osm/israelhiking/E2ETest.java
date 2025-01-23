@@ -7,6 +7,6 @@ import org.junit.jupiter.api.Test;
 public class E2ETest {
     @Test
     public void test() throws Exception {
-        MainClass.main(new String[]{});
+        MainClass.main(new String[]{ "--download"});
     }
 }
