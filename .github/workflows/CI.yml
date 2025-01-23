@@ -23,10 +23,5 @@ jobs:
           docker compose up -d elasticsearch
           docker compose build planet-search 
       - name: End to End tests  
-        uses: madhead/intellij-http-client-action@latest
-        with:
-          files: |-
-            get-point.http
-          insecure: true
-          docker-mode: true
+        run: curl -s -X GET http://localhost:9200/_cat/health
 

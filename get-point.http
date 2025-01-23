@@ -1,2 +1,2 @@
 # Get a point from elasticsearch
-GET http://127.0.0.1:9200/points/_search
+GET http://localhost:9200/points/_search

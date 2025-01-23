@@ -7,7 +7,7 @@ services:
     environment:
       - JAVA_OPTS=-Xmx2g -Xms2g
     command:
-      - --es-address=http://localhost:9200/
+      - --es-address=http://localhost:9200
       - --download
     depends_on:
       - elasticsearch
