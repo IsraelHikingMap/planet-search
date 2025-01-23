@@ -143,13 +143,13 @@ public class PlanetSearchProfile implements Profile {
       return;
     }
     if (way.hasTag("waterway")) {
-      String waterway = way.getString("waterway");
-      if (!Waterways.containsKey(waterway)) {
+      String waterwayName = way.getString("name");
+      if (!Waterways.containsKey(waterwayName)) {
         var finder = new MinWayIdFinder();
         finder.addWayId(way.id());
-        Waterways.put(waterway, finder);
+        Waterways.put(waterwayName, finder);
       } else {
-        Waterways.get(waterway).addWayId(way.id());
+        Waterways.get(waterwayName).addWayId(way.id());
       }
     }
     
@@ -176,7 +176,7 @@ public class PlanetSearchProfile implements Profile {
     for (var routeInfo : sourceFeature.relationInfo(RelationInfo.class)) {
       // (routeInfo.role() also has the "role" of this relation member if needed)
       RelationInfo relation = routeInfo.relation();
-      if (relation.pointDocument.name == null) {
+      if (relation.pointDocument.name.size() == 0) {
         continue;
       }
       // Collect all relation way members
