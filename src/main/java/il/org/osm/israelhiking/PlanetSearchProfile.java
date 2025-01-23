@@ -176,7 +176,7 @@ public class PlanetSearchProfile implements Profile {
     for (var routeInfo : sourceFeature.relationInfo(RelationInfo.class)) {
       // (routeInfo.role() also has the "role" of this relation member if needed)
       RelationInfo relation = routeInfo.relation();
-      if (relation.pointDocument.name == null) {
+      if (relation.pointDocument.name.size() == 0) {
         continue;
       }
       // Collect all relation way members
