@@ -21,11 +21,12 @@ jobs:
       - name: End to End tests setup
         run: |
           docker compose up -d elasticsearch
-          docker compose up planet-search 
+      #    docker compose up planet-search 
       - name: End to End tests  
         uses: madhead/intellij-http-client-action@latest
         with:
           files: |-
             get-point.http
           insecure: true
+          docker-mode: true
 
