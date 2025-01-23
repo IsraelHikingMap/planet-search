@@ -18,9 +18,6 @@ jobs:
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v4
-      - name: Build Docker image
-        # HM TODO: add image name
-        run: docker build .
       - name: End to End tests setup
         run: |
           docker compose up -d elasticsearch
