@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  planet-search:
+    build: .
+    volumes:
+      - ./data:/app/data
+    environment:
+      - JAVA_OPTS=-Xmx2g -Xms2g
+    command:
+      - --es-address=http://elasticsearch:9200/ 
+      - --download
+    depends_on:
+      - elasticsearch
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.7.0
+    environment:
+      - discovery.type=single-node
+    ports:
+      - 127.0.0.1:9200:9200
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+
+volumes:
+  esdata:
