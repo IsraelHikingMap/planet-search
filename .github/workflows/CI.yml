@@ -17,16 +17,17 @@ jobs:
         uses: actions/setup-java@v1
         with:
           java-version: 21
-      - name: Build and run tests
-        run: |
-          mvn clean install
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+      - name: Build
+        run: mvn clean install -DskipTests
       - name: End to End tests setup
         run: |
           docker compose up -d elasticsearch
           docker compose up planet-search 
-      - name: End to End tests  
+      - name: End to End tests using curl
         run: |-
           curl -s -X GET http://localhost:9200/points/_search?pretty -H 'Content-Type: application/json'
+      - name: End to End test using Java
+        run: mvn test -Prun-all-tests
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
 
