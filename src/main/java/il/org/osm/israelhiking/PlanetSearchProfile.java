@@ -22,6 +22,7 @@ import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.geo.GeoUtils;
 import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.reader.SourceFeature;
+import com.onthegomap.planetiler.reader.WithTags;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
@@ -81,23 +82,15 @@ public class PlanetSearchProfile implements Profile {
   @Override
   public List<OsmRelationInfo> preprocessOsmRelation(OsmElement.Relation relation) {
     // If this is a "route" relation ...
-    String color = null;
-    String icon = null;
-    String category = null;
-    if (relation.hasTag("type", "route") &&
-      relation.hasTag("route", "mtb", "bicycle", "hiking", "foot") &&
-      !relation.hasTag("state", "proposed")
-      ) {
-      color = "black";
-      icon = relation.hasTag("route", "mtb", "bicycle") ? "icon-bike" : "icon-hike";
-      category = relation.hasTag("route", "mtb", "bicycle") ? "Bicycle" : "Hiking";
+    if (relation.hasTag("state", "proposed")) {
+      return null;
     }
-    if (relation.hasTag("waterway")) {
-      color = "blue";
-      icon = "icon-waterfall";
-      category = "Water";
-    }
-    if (color == null) {
+    var pointDocument = new PointDocument();
+    setIconColorCategory(pointDocument, relation);
+
+    if (!"icon-waterfall".equals(pointDocument.poiIcon) && 
+        !"Biycle".equals(pointDocument.poiCategory) && 
+        !"Hiking".equals(pointDocument.poiCategory)) {
       return null;
     }
     // then store a RouteRelationInfo instance with tags we'll need later
@@ -111,7 +104,7 @@ public class PlanetSearchProfile implements Profile {
       return null;
     }
     var info = new RelationInfo(relation.id());
-    var pointDocument = new PointDocument();
+    
     for (String language : supportedLanguages) {
       pointDocument.name.put(language, Coalesce(relation.getString("name:" + language), relation.getString("name")));
       pointDocument.description.put(language, Coalesce(relation.getString("description:" + language), relation.getString("description")));
@@ -119,9 +112,6 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.wikidata = relation.getString("wikidata");
     pointDocument.image = relation.getString("image");
     pointDocument.wikimedia_commons = relation.getString("wikimedia_commons");
-    pointDocument.poiCategory = category;
-    pointDocument.poiIcon = icon;
-    pointDocument.poiIconColor = color;
     info.pointDocument = pointDocument;
     info.firstMemberId = members_ids.isEmpty() ? -1L : members_ids.get(0);
     info.memberIds = members_ids;
@@ -508,7 +498,7 @@ public class PlanetSearchProfile implements Profile {
         : "relation_") + feature.id();
   }
 
-  private void setIconColorCategory(PointDocument pointDocument, SourceFeature feature) {
+  private void setIconColorCategory(PointDocument pointDocument, WithTags feature) {
     if ("protected_area".equals(feature.getString("boundary")) || 
         "national_park".equals(feature.getString("boundary")) ||
         "nature_reserve".equals(feature.getString("leisure"))) {
