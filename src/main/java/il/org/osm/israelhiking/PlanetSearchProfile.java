@@ -100,7 +100,7 @@ public class PlanetSearchProfile implements Profile {
         .mapToLong(OsmElement.Relation.Member::ref)
         .boxed()
         .collect(Collectors.toList());
-    if (members_ids.size() == 0) {
+    if (members_ids.isEmpty()) {
       return null;
     }
     var info = new RelationInfo(relation.id());
@@ -113,7 +113,7 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.image = relation.getString("image");
     pointDocument.wikimedia_commons = relation.getString("wikimedia_commons");
     info.pointDocument = pointDocument;
-    info.firstMemberId = members_ids.isEmpty() ? -1L : members_ids.get(0);
+    info.firstMemberId = members_ids.get(0);
     info.memberIds = members_ids;
 
     return List.of(info);
@@ -507,35 +507,37 @@ public class PlanetSearchProfile implements Profile {
             pointDocument.poiCategory = "Other";
         return;
     }
-    if (feature.getString("network") != null) {
-        switch (feature.getString("network")) {
-            case "lcn":
-            case "rcn":
-                pointDocument.poiIconColor = "black";
-                pointDocument.poiIcon = "icon-bike";
-                pointDocument.poiCategory = "Bicycle";
-                return;
-            case "lwn":
-            case "rwn":
-                pointDocument.poiIconColor = "black";
-                pointDocument.poiIcon = "icon-hike";
-                pointDocument.poiCategory = "Hiking";
-                return;
-        }
-    }
     if (feature.getString("route") != null) {
         switch (feature.getString("route")) {
             case "hiking":
+            case "foot":
                 pointDocument.poiIconColor = "black";
                 pointDocument.poiIcon = "icon-hike";
                 pointDocument.poiCategory = "Hiking";
                 return;
             case "bicycle":
+            case "mtb":
                 pointDocument.poiIconColor = "black";
                 pointDocument.poiIcon = "icon-bike";
                 pointDocument.poiCategory = "Bicycle";
                 return;
         }
+    }
+    if (feature.getString("network") != null) {
+      switch (feature.getString("network")) {
+          case "lcn":
+          case "rcn":
+              pointDocument.poiIconColor = "black";
+              pointDocument.poiIcon = "icon-bike";
+              pointDocument.poiCategory = "Bicycle";
+              return;
+          case "lwn":
+          case "rwn":
+              pointDocument.poiIconColor = "black";
+              pointDocument.poiIcon = "icon-hike";
+              pointDocument.poiCategory = "Hiking";
+              return;
+      }
     }
     if (feature.getString("historic") != null) {
         pointDocument.poiIconColor = "#666666";
