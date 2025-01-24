@@ -2,8 +2,7 @@
 
 <img src="https://github.com/user-attachments/assets/ab2b8b66-5b0c-43ef-b330-543416c10f8a" height="256" /> <img src="https://github.com/user-attachments/assets/c3a9b1e9-34dc-45cf-a981-d60d80d961cf" height="256" />
 
-![codecov.io](https://codecov.io/github/IsraelHikingMap/planet-search/coverage.svg?branch=master)]
-(https://codecov.io/github/IsraelHikingMap/planet-search?branch=main)
+[![Codecov](https://img.shields.io/codecov/c/github/israelhikingmap/planet-search/main.svg)](https://codecov.io/gh/IsraelHikingMap/planet-search/)
 
 A combination of planetiler and elasticsearch to create tiles for points for interest on one hand and a searchabale index on the other.
 
