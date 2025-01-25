@@ -36,6 +36,7 @@ public class MainClass {
         planetiler.setProfile(profile)
           // override this default with osm_path="path/to/data.osm.pbf"
           .addOsmSource("osm", Path.of("data", "sources", area + ".osm.pbf"), "geofabrik:" + area)
+          .addGeoJsonSource("external",  Path.of("data", "sources", "external.geojson"))
           // override this default with mbtiles="path/to/output.mbtiles"
           .overwriteOutput(Path.of("data", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"))
           .run();
