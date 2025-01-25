@@ -523,22 +523,6 @@ public class PlanetSearchProfile implements Profile {
                 return;
         }
     }
-    if (feature.getString("network") != null) {
-      switch (feature.getString("network")) {
-          case "lcn":
-          case "rcn":
-              pointDocument.poiIconColor = "black";
-              pointDocument.poiIcon = "icon-bike";
-              pointDocument.poiCategory = "Bicycle";
-              return;
-          case "lwn":
-          case "rwn":
-              pointDocument.poiIconColor = "black";
-              pointDocument.poiIcon = "icon-hike";
-              pointDocument.poiCategory = "Hiking";
-              return;
-      }
-    }
     if (feature.getString("historic") != null) {
         pointDocument.poiIconColor = "#666666";
         pointDocument.poiCategory = "Historic";
