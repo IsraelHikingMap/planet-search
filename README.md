@@ -26,7 +26,7 @@ To compile run:
 
 To run do:
 
-`java -jar ./target/planet-search-1.0-SNAPSHOT-jar-with-dependencies.jar`
+`java -jar ./target/planet-search-1.0-jar-with-dependencies.jar`
 
 To serve the PMTiles run:
 
