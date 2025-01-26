@@ -28,6 +28,7 @@ public class MainClass {
         var pointsIndexAlias = args.getString("es-points-index-alias", "Elasticsearch index to populate points", "points");
         var bboxIndexAlias = args.getString("es-bbox-index-alias", "Elasticsearch index to populate bounding boxes", "bbox");
         var supportedLanguages = args.getString("languages", "Languages to support", "en,he").split(",");
+        var externalFilePath = Path.of(args.getString("external-file-path", "Extranl file path", "data/sources/external.geojson"));
         var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias, supportedLanguages);
         var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
         var profile = new PlanetSearchProfile(planetiler.config(), esClient, targetPointsIndex, targetBBoxIndex, supportedLanguages);
@@ -36,7 +37,7 @@ public class MainClass {
         planetiler.setProfile(profile)
           // override this default with osm_path="path/to/data.osm.pbf"
           .addOsmSource("osm", Path.of("data", "sources", area + ".osm.pbf"), "geofabrik:" + area)
-          .addGeoJsonSource("external",  Path.of("data", "sources", "external.geojson"))
+          .addGeoJsonSource("external", externalFilePath)
           // override this default with mbtiles="path/to/output.mbtiles"
           .overwriteOutput(Path.of("data", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"))
           .run();
