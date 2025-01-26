@@ -109,6 +109,7 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.name.put(language, Coalesce(relation.getString("name:" + language), relation.getString("name")));
       pointDocument.description.put(language, Coalesce(relation.getString("description:" + language), relation.getString("description")));
     }
+    pointDocument.poiSource = "OSM";
     pointDocument.wikidata = relation.getString("wikidata");
     pointDocument.image = relation.getString("image");
     pointDocument.wikimedia_commons = relation.getString("wikimedia_commons");
@@ -147,6 +148,10 @@ public class PlanetSearchProfile implements Profile {
 
   @Override
   public void processFeature(SourceFeature sourceFeature, FeatureCollector features) {
+    if (sourceFeature.getSource() == "external") {
+      processExternalFeautre(sourceFeature, features);
+      return;
+    }
     if (isBBoxFeature(sourceFeature, supportedLanguages)) {
       insertBboxToElasticsearch(sourceFeature, supportedLanguages);
     }
@@ -158,6 +163,43 @@ public class PlanetSearchProfile implements Profile {
     } else {
       processOtherSourceFeature(sourceFeature, features);
     }
+  }
+
+  private void processExternalFeautre(SourceFeature sourceFeature, FeatureCollector features) {
+    var pointDocument = new PointDocument();
+    pointDocument.poiIcon = sourceFeature.getString("poiIcon");
+    pointDocument.poiIconColor = sourceFeature.getString("poiIconColor");
+    pointDocument.poiCategory = sourceFeature.getString("poiCategory");
+    for (String language : supportedLanguages) {
+      pointDocument.name.put(language, Coalesce(sourceFeature.getString("name:" + language), sourceFeature.getString("name")));
+      pointDocument.description.put(language, Coalesce(sourceFeature.getString("description:" + language), sourceFeature.getString("description")));
+    }
+    pointDocument.poiSource = sourceFeature.getString("poiSource");
+    pointDocument.wikidata = sourceFeature.getString("wikidata");
+    pointDocument.image = sourceFeature.getString("image");
+    pointDocument.wikimedia_commons = sourceFeature.getString("wikimedia_commons");
+    Point point;
+    var docId = pointDocument.poiSource + "_" + sourceFeature.getString("identifier");
+    try {
+        point = (Point)sourceFeature.centroidIfConvex();
+    } catch (GeometryException e) {
+      try {
+        point = GeoUtils.point(sourceFeature.worldGeometry().getCoordinate());
+      } catch (GeometryException e2) {
+        LOGGER.warn("Failed to process external feature: {}", docId);
+        return;
+      }
+    }
+    var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
+    pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
+    
+    insertPointToElasticsearch(pointDocument, docId);
+    
+    var tileFeature = features.geometry("external", point)
+        .setAttr("poiId", docId)
+        .setZoomRange(10, 14)
+        .setId(sourceFeature.id());
+    setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
   }
 
   private void processOsmRelationFeature(SourceFeature sourceFeature, FeatureCollector features) {
@@ -243,6 +285,7 @@ public class PlanetSearchProfile implements Profile {
         pointDocument.poiCategory = "Bicycle";
         pointDocument.poiIcon = "icon-bike";
         pointDocument.poiIconColor = "gray";
+        pointDocument.poiSource = "OSM";
         var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
         pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
 
@@ -299,6 +342,7 @@ public class PlanetSearchProfile implements Profile {
         pointDocument.poiCategory = "Water";
         pointDocument.poiIcon = "icon-waterfall";
         pointDocument.poiIconColor = "blue";
+        pointDocument.poiSource = "OSM";
         var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
         pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
 
@@ -351,6 +395,7 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.wikidata = feature.getString("wikidata");
     pointDocument.image = feature.getString("image");
     pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+    pointDocument.poiSource = "OSM";
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
     pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
 
@@ -444,7 +489,8 @@ public class PlanetSearchProfile implements Profile {
         .setAttr("image", pointDocument.image)
         .setAttr("poiIcon", pointDocument.poiIcon)
         .setAttr("poiIconColor", pointDocument.poiIconColor)
-        .setAttr("poiCategory", pointDocument.poiCategory);
+        .setAttr("poiCategory", pointDocument.poiCategory)
+        .setAttr("poiSource", pointDocument.poiSource);
     for (String lang : supportedLanguages) {
       tileFeature.setAttr("name:" + lang, pointDocument.name.get(lang));
       tileFeature.setAttr("description:" + lang, pointDocument.description.get(lang));

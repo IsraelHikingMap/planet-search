@@ -19,6 +19,8 @@ jobs:
           docker compose build planet-search
       - name: End to End tests using curl
         run: |-
+          mkdir -p ./data/sources
+          cp ./src/test/resources/extenal.geojson ./data/sources/external.geojson
           docker compose up planet-search 
           curl -s -X GET http://localhost:9200/points/_search?pretty -H 'Content-Type: application/json'
 
@@ -30,7 +32,7 @@ jobs:
       - name: Set up JDK
         uses: actions/setup-java@v1
         with:
-          java-version: 21
+          java-version: 23
       - name: End to End tests setup
         run: |
           docker compose up -d elasticsearch
