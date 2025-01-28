@@ -3,8 +3,8 @@ services:
     build: .
     network_mode: host
     volumes:
-      - ./data/output:/app/data/sources
-      - ./data/input:/app/data/target
+      - ./data/input:/app/data/sources
+      - ./data/output:/app/data/target
     environment:
       - JAVA_OPTS=-Xmx2g -Xms2g
     command:
