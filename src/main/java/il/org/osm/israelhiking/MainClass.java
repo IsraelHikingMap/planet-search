@@ -39,7 +39,7 @@ public class MainClass {
           .addOsmSource("osm", Path.of("data", "sources", area + ".osm.pbf"), "geofabrik:" + area)
           .addGeoJsonSource("external", externalFilePath)
           // override this default with mbtiles="path/to/output.mbtiles"
-          .overwriteOutput(Path.of("data", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"))
+          .overwriteOutput(Path.of("data", "target", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"))
           .run();
 
         ElasticsearchHelper.switchAlias(esClient, pointsIndexAlias, targetPointsIndex);

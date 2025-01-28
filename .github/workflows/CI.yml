@@ -19,10 +19,13 @@ jobs:
           docker compose build planet-search
       - name: End to End tests using curl
         run: |-
-          mkdir -p ./data/sources
-          cp ./src/test/resources/extenal.geojson ./data/sources/external.geojson
+          mkdir -p ./data/input
+          cp ./src/test/resources/extenal.geojson ./data/input/external.geojson
           docker compose up planet-search 
           curl -s -X GET http://localhost:9200/points/_search?pretty -H 'Content-Type: application/json'
+      - name: Check that a PMTiles was created
+        if: ${{ hashFiles('./data/output/global_points.pmtiles') == '' }}
+        run: echo "global_points.pmtiles file was not created" && exit 1
 
   Java:
     runs-on: ubuntu-latest

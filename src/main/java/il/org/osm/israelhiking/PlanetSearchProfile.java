@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 
+import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.Point;
@@ -186,7 +187,7 @@ public class PlanetSearchProfile implements Profile {
       try {
         point = GeoUtils.point(sourceFeature.worldGeometry().getCoordinate());
       } catch (GeometryException e2) {
-        LOGGER.warn("Failed to process external feature: {}", docId);
+        // ignore bad geometries
         return;
       }
     }
@@ -382,7 +383,7 @@ public class PlanetSearchProfile implements Profile {
       try {
         point = GeoUtils.point(feature.worldGeometry().getCoordinate());
       } catch (GeometryException e2) {
-        LOGGER.warn("Failed to process feature: {} (this is usually a relations outside the area)", docId);
+        // ignore bad geometries
         return;
       }
     }
@@ -431,10 +432,17 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void insertBboxToElasticsearch(SourceFeature feature, String[] supportedLanguages) {
+    Envelope envelope;
+    try {
+      envelope = feature.polygon().getEnvelopeInternal();
+    } catch (GeometryException e) {
+      return;
+    }
     try {
       var bbox = new BBoxDocument();
       bbox.area = feature.areaMeters();
-      bbox.setBBox(GeoUtils.toLatLonBoundsBounds(feature.polygon().getEnvelopeInternal()));
+
+      bbox.setBBox(GeoUtils.toLatLonBoundsBounds(envelope));
       for (String lang : supportedLanguages) {
           bbox.name.put(lang, Coalesce(feature.getString("name:" + lang), feature.getString("name")));
       }
@@ -445,7 +453,7 @@ public class PlanetSearchProfile implements Profile {
       );
     } catch (Exception e) {
       // swallow
-      LOGGER.error("Unable to insert" + e.getMessage());
+      LOGGER.error("Unable to insert: " + e.getMessage());
     }
   }
 
