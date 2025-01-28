@@ -24,7 +24,7 @@ jobs:
           docker compose up planet-search 
           curl -s -X GET http://localhost:9200/points/_search?pretty -H 'Content-Type: application/json'
       - name: Check that a PMTiles was created
-        if: ${{ ! exists('./data/output/global_points.pmtiles') }}
+        if: ${{ hashFiles('./data/output/global_points.pmtiles') == '' }}
         run: echo "File was not created" && exit 1
 
   Java:
