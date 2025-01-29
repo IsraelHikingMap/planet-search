@@ -3,13 +3,13 @@ services:
     build: .
     network_mode: host
     volumes:
-      - ./data/input:/app/data/sources
-      - ./data/output:/app/data/target
+      - ./pbf:/app/data/sources
+      - ./src/test/resources/extenal.geojson:/external/external.geojson
+      - ./output:/output
     environment:
       - JAVA_OPTS=-Xmx2g -Xms2g
     command:
       - --es-address=http://localhost:9200
-      - --download
     depends_on:
       - elasticsearch
 
