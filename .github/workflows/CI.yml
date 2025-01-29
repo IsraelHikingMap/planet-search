@@ -23,7 +23,7 @@ jobs:
           mkdir -p ./output
           mkdir -p ./pbf
           wget --no-verbose -O ./pbf/israel-and-palestine.osm.pbf https://download.geofabrik.de/asia/israel-and-palestine-latest.osm.pbf
-          docker compose up planet-search --output=/output/isr.pmtiles --external-file-path=/external/external.geojson
+          docker compose up planet-search
           curl -s -X GET http://localhost:9200/points/_search?pretty -H 'Content-Type: application/json'
       - name: Check that a PMTiles was created
         if: ${{ hashFiles('./output/isr.pmtiles') == '' }}

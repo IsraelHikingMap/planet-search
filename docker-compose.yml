@@ -10,6 +10,8 @@ services:
       - JAVA_OPTS=-Xmx2g -Xms2g
     command:
       - --es-address=http://localhost:9200
+      - --output=/output/isr.pmtiles 
+      - --external-file-path=/external/external.geojson
     depends_on:
       - elasticsearch
 
