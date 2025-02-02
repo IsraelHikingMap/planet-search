@@ -72,12 +72,15 @@ public class PlanetSearchProfile implements Profile {
    * point with attributes derived from the relation as well as for ways with mtb:name tag.
    */
 
-  static private final String Coalesce(String... strings) {
-    return Arrays.stream(strings)
-        .filter(Objects::nonNull)
-        .filter(s -> !s.isEmpty())
-        .findFirst()
-        .orElse(null);
+  static private final void CoalesceIntoMap(Map<String, String> map, String language, String... strings) {
+    var value = Arrays.stream(strings)
+      .filter(Objects::nonNull)
+      .filter(s -> !s.isEmpty())
+      .findFirst()
+      .orElse(null);
+    if (value != null) {
+      map.put(language, value);
+    }
   }
 
   @Override
@@ -107,8 +110,8 @@ public class PlanetSearchProfile implements Profile {
     var info = new RelationInfo(relation.id());
     
     for (String language : supportedLanguages) {
-      pointDocument.name.put(language, Coalesce(relation.getString("name:" + language), relation.getString("name")));
-      pointDocument.description.put(language, Coalesce(relation.getString("description:" + language), relation.getString("description")));
+      CoalesceIntoMap(pointDocument.name, language, relation.getString("name:" + language), relation.getString("name"));
+      CoalesceIntoMap(pointDocument.description, language, relation.getString("description:" + language), relation.getString("description"));
     }
     pointDocument.poiSource = "OSM";
     pointDocument.wikidata = relation.getString("wikidata");
@@ -172,8 +175,8 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.poiIconColor = sourceFeature.getString("poiIconColor");
     pointDocument.poiCategory = sourceFeature.getString("poiCategory");
     for (String language : supportedLanguages) {
-      pointDocument.name.put(language, Coalesce(sourceFeature.getString("name:" + language), sourceFeature.getString("name")));
-      pointDocument.description.put(language, Coalesce(sourceFeature.getString("description:" + language), sourceFeature.getString("description")));
+      CoalesceIntoMap(pointDocument.name, language, sourceFeature.getString("name:" + language), sourceFeature.getString("name"));
+      CoalesceIntoMap(pointDocument.description, language, sourceFeature.getString("description:" + language), sourceFeature.getString("description"));
     }
     pointDocument.poiSource = sourceFeature.getString("poiSource");
     pointDocument.wikidata = sourceFeature.getString("wikidata");
@@ -209,7 +212,7 @@ public class PlanetSearchProfile implements Profile {
     for (var routeInfo : sourceFeature.relationInfo(RelationInfo.class)) {
       // (routeInfo.role() also has the "role" of this relation member if needed)
       RelationInfo relation = routeInfo.relation();
-      if (relation.pointDocument.name.size() == 0) {
+      if (relation.pointDocument.name.isEmpty()) {
         continue;
       }
       // Collect all relation way members
@@ -229,8 +232,8 @@ public class PlanetSearchProfile implements Profile {
           if (!relation.memberIds.isEmpty()) {
             continue;
           }
-          // All relation members were reached. Add a POI element for trail relation
-          var point = getFirstPointOfTrailRelation(mergedLines);
+          // All relation members were reached. Add a POI element for line relation
+          var point = getFirstPointOfLineRelation(mergedLines);
           var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
           relation.pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
 
@@ -277,8 +280,8 @@ public class PlanetSearchProfile implements Profile {
 
         var pointDocument = new PointDocument();
         for (String language : supportedLanguages) {
-          pointDocument.name.put(language, Coalesce(feature.getString("mtb:name:" + language), feature.getString("name:" + language), feature.getString("name"), feature.getString("mtb:name")));
-          pointDocument.description.put(language, Coalesce(feature.getString("description:" + language), feature.getString("description")));
+          CoalesceIntoMap(pointDocument.name, language, feature.getString("mtb:name:" + language), feature.getString("name:" + language), feature.getString("name"), feature.getString("mtb:name"));
+          CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language), feature.getString("description"));
         }
         pointDocument.wikidata = feature.getString("wikidata");
         pointDocument.image = feature.getString("image");
@@ -334,8 +337,8 @@ public class PlanetSearchProfile implements Profile {
 
         var pointDocument = new PointDocument();
         for (String language : supportedLanguages) {
-          pointDocument.name.put(language, Coalesce(feature.getString("name:" + language), feature.getString("name")));
-          pointDocument.description.put(language, Coalesce(feature.getString("description:" + language), feature.getString("description")));
+          CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language), feature.getString("name"));
+          CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language), feature.getString("description"));
         }
         pointDocument.wikidata = feature.getString("wikidata");
         pointDocument.image = feature.getString("image");
@@ -390,8 +393,8 @@ public class PlanetSearchProfile implements Profile {
 
     var pointDocument = new PointDocument();
     for (String language : supportedLanguages) {
-      pointDocument.name.put(language, Coalesce(feature.getString("name:" + language), feature.getString("name")));
-      pointDocument.description.put(language, Coalesce(feature.getString("description:" + language), feature.getString("description")));
+      CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language), feature.getString("name"));
+      CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language), feature.getString("description"));
     }
     pointDocument.wikidata = feature.getString("wikidata");
     pointDocument.image = feature.getString("image");
@@ -408,7 +411,7 @@ public class PlanetSearchProfile implements Profile {
 
     insertPointToElasticsearch(pointDocument, docId);
 
-    if (pointDocument.poiIcon == "icon-peak" && !isInterestingPoint(pointDocument)) {
+    if ((pointDocument.poiIcon == "icon-peak" || pointDocument.poiIcon == "icon-waterfall") && !isInterestingPoint(pointDocument)) {
         return;
     }
 
@@ -444,7 +447,7 @@ public class PlanetSearchProfile implements Profile {
 
       bbox.setBBox(GeoUtils.toLatLonBoundsBounds(envelope));
       for (String lang : supportedLanguages) {
-          bbox.name.put(lang, Coalesce(feature.getString("name:" + lang), feature.getString("name")));
+        CoalesceIntoMap(bbox.name, lang, feature.getString("name:" + lang), feature.getString("name"));
       }
       esClient.index(i -> i
           .index(this.bboxIndexName)
@@ -463,7 +466,7 @@ public class PlanetSearchProfile implements Profile {
    * @return the first point of the trail relation
    * @throws GeometryException
    */
-  private Point getFirstPointOfTrailRelation(MergedLinesHelper mergedLines) throws GeometryException {
+  private Point getFirstPointOfLineRelation(MergedLinesHelper mergedLines) throws GeometryException {
     var firstMergedLineString = (LineString) mergedLines.lineMerger.getMergedLineStrings().iterator().next();
     var firstMergedLineCoordinate = firstMergedLineString.getCoordinate();
     var lastMergedLineCoordinate = firstMergedLineString.getCoordinateN(firstMergedLineString.getNumPoints() - 1);
@@ -486,7 +489,7 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private boolean isInterestingPoint(PointDocument pointDocument) {
-    return pointDocument.description.size() > 0 || 
+    return !pointDocument.description.isEmpty() || 
       pointDocument.wikidata != null ||
       pointDocument.image != null;
   }
@@ -658,7 +661,7 @@ public class PlanetSearchProfile implements Profile {
         }
     }
 
-    if ("waterfall".equals(feature.getString("waterway"))) {
+    if ("waterfall".equals(feature.getString("waterway")) || "waterway".equals(feature.getString("type"))) {
         pointDocument.poiIconColor = "blue";
         pointDocument.poiIcon = "icon-waterfall";
         pointDocument.poiCategory = "Water";
