@@ -93,7 +93,7 @@ public class PlanetSearchProfile implements Profile {
     setIconColorCategory(pointDocument, relation);
 
     if (!"icon-waterfall".equals(pointDocument.poiIcon) && 
-        !"Biycle".equals(pointDocument.poiCategory) && 
+        !"Bicycle".equals(pointDocument.poiCategory) && 
         !"Hiking".equals(pointDocument.poiCategory)) {
       return null;
     }
