@@ -152,30 +152,29 @@ public class PlanetSearchProfile implements Profile {
 
   @Override
   public void processFeature(SourceFeature sourceFeature, FeatureCollector features) {
-    if (sourceFeature.getSource() == "external") {
-      processExternalFeautre(sourceFeature, features);
-      return;
-    }
-    if (isBBoxFeature(sourceFeature, supportedLanguages)) {
-      insertBboxToElasticsearch(sourceFeature, supportedLanguages);
-    }
-    // ignore nodes and ways that should only be treated as polygons
-    if (sourceFeature.canBeLine()) {
-      try {
+    try {
+      if (sourceFeature.getSource() == "external") {
+        processExternalFeautre(sourceFeature, features);
+        return;
+      }
+      if (isBBoxFeature(sourceFeature, supportedLanguages)) {
+        insertBboxToElasticsearch(sourceFeature, supportedLanguages);
+      }
+      // ignore nodes and ways that should only be treated as polygons
+      if (sourceFeature.canBeLine()) {
         processOsmRelationFeature(sourceFeature, features);
         processMtbNameFeature(sourceFeature, features);
         processWaterwayFeature(sourceFeature, features);
         processHighwayFeautre(sourceFeature, features);
-      } catch (GeometryException e) {
-        // ignore bad geometries
-        return;
+      } else {
+        processOtherSourceFeature(sourceFeature, features);
       }
-    } else {
-      processOtherSourceFeature(sourceFeature, features);
+    } catch (GeometryException e) {
+      // ignore bad geometries
     }
   }
 
-  private void processExternalFeautre(SourceFeature sourceFeature, FeatureCollector features) {
+  private void processExternalFeautre(SourceFeature sourceFeature, FeatureCollector features) throws GeometryException {
     var pointDocument = new PointDocument();
     pointDocument.poiIcon = sourceFeature.getString("poiIcon");
     pointDocument.poiIconColor = sourceFeature.getString("poiIconColor");
@@ -190,16 +189,7 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.wikimedia_commons = sourceFeature.getString("wikimedia_commons");
     Point point;
     var docId = pointDocument.poiSource + "_" + sourceFeature.getString("identifier");
-    try {
-        point = (Point)sourceFeature.centroidIfConvex();
-    } catch (GeometryException e) {
-      try {
-        point = GeoUtils.point(sourceFeature.worldGeometry().getCoordinate());
-      } catch (GeometryException e2) {
-        // ignore bad geometries
-        return;
-      }
-    }
+    point = sourceFeature.canBeLine() ? GeoUtils.point(sourceFeature.worldGeometry().getCoordinate()) : (Point)sourceFeature.centroidIfConvex();
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
     pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
     
@@ -387,7 +377,7 @@ public class PlanetSearchProfile implements Profile {
     insertPointToElasticsearch(pointDocument, sourceFeatureToDocumentId(sourceFeature));
   }
 
-  private void processOtherSourceFeature(SourceFeature feature, FeatureCollector features) {
+  private void processOtherSourceFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
     if (!feature.hasTag("name") && 
         !feature.hasTag("wikidata") && 
         !feature.hasTag("image") && 
@@ -400,16 +390,7 @@ public class PlanetSearchProfile implements Profile {
     var docId = sourceFeatureToDocumentId(feature);
     Point point;
     
-    try {
-        point = feature.canBeLine() ? GeoUtils.point(feature.worldGeometry().getCoordinate()) : (Point)feature.centroidIfConvex();
-    } catch (GeometryException e) {
-      try {
-        point = GeoUtils.point(feature.worldGeometry().getCoordinate());
-      } catch (GeometryException e2) {
-        // ignore bad geometries
-        return;
-      }
-    }
+    point = (Point)feature.centroidIfConvex();
 
     var pointDocument = new PointDocument();
     for (String language : supportedLanguages) {

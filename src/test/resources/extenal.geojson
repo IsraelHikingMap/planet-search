@@ -30,7 +30,22 @@
                 "en":[],
                 "all":["\u05D7\u05D6\u05D5\u05E8\u05D9 \u05D2\u05D5\u05D1\u05EA\u05D4 - \u05D0\u05EA\u05E8 \u05E0\u05B8\u05D0\u05E7\u05B6\u05D1\u05BC"]
             },
-            "poiId":"Nakeb_1","poiAlt":808.7768734424957
+            "poiId":"Nakeb_1",
+            "poiAlt":808.7768734424957
+        }
+    }, {
+        "type": "Feature",
+        "geometry": {
+            "type": "Point",
+            "coordinates": [35.729807, 33.250042, 808.7768734424957]
+        },
+        "properties": {
+            "poiId": "iNature_1",
+            "poiSource": "iNature",
+            "poiCategory": "Water",
+            "poiLanguage": "he",
+            "poiIcon": "icon-tint",
+            "poiIconColor": "blue"
         }
     }]
 }
