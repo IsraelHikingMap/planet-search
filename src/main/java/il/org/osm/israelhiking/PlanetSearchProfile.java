@@ -350,7 +350,7 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private boolean processHighwayFeautre(SourceFeature feature, FeatureCollector features) throws GeometryException {
-    if (!feature.hasTag("highway")) {
+    if (!feature.hasTag("highway") || !feature.hasTag("name")) {
       return false;
     }
     var point = GeoUtils.point(feature.worldGeometry().getCoordinate());
