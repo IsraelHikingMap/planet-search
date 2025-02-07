@@ -12,7 +12,14 @@ import co.elastic.clients.transport.ElasticsearchTransport;
 import co.elastic.clients.transport.rest_client.RestClientTransport;
 
 public class ElasticsearchHelper {
+
+    /**
+     * Static utility class should not be instantiated.
+     */
+    private ElasticsearchHelper() { }
+
     public static ElasticsearchClient createElasticsearchClient(String esAddress) {
+
         Logger.getLogger("org.elasticsearch.client.RestClient").setLevel(Level.OFF);
 
         RestClient restClient = RestClient
