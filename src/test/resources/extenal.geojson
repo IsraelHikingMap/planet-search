@@ -47,5 +47,29 @@
             "poiIcon": "icon-tint",
             "poiIconColor": "blue"
         }
-    }]
+    },
+    {
+        "type": "Feature",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+                [
+                    [35.729807, 33.250042, 808.7768734424957],
+                    [35.729807, 33.250042, 808.7768734424957],
+                    [35.729807, 33.250042, 808.7768734424957],
+                    [35.729807, 33.250042, 808.7768734424957],
+                    [35.729807, 33.250042, 808.7768734424957]
+                ]
+            ]
+        },
+        "properties": {
+            "poiId": "iNature_2",
+            "poiSource": "iNature",
+            "poiCategory": "Water",
+            "poiLanguage": "he",
+            "poiIcon": "icon-tint",
+            "poiIconColor": "blue"
+        }
+    }
+    ]
 }

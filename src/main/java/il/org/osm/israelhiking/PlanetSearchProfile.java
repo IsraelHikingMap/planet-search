@@ -118,7 +118,7 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.image = relation.getString("image");
     pointDocument.wikimedia_commons = relation.getString("wikimedia_commons");
     info.pointDocument = pointDocument;
-    info.firstMemberId = members_ids.get(0);
+    info.firstMemberId = members_ids.getFirst();
     info.memberIds = members_ids;
 
     return List.of(info);
@@ -151,45 +151,41 @@ public class PlanetSearchProfile implements Profile {
   }
 
   @Override
-  public void processFeature(SourceFeature sourceFeature, FeatureCollector features) {
+  public void processFeature(SourceFeature feature, FeatureCollector features) {
     try {
-      if (sourceFeature.getSource() == "external") {
-        processExternalFeautre(sourceFeature, features);
+      if (feature.getSource() == "external") {
+        processExternalFeautre(feature, features);
         return;
       }
-      if (isBBoxFeature(sourceFeature, supportedLanguages)) {
-        insertBboxToElasticsearch(sourceFeature, supportedLanguages);
+      if (isBBoxFeature(feature, supportedLanguages)) {
+        insertBboxToElasticsearch(feature, supportedLanguages);
       }
-      // ignore nodes and ways that should only be treated as polygons
-      if (sourceFeature.canBeLine()) {
-        processOsmRelationFeature(sourceFeature, features);
-        processMtbNameFeature(sourceFeature, features);
-        processWaterwayFeature(sourceFeature, features);
-        processHighwayFeautre(sourceFeature, features);
-      } else {
-        processOtherSourceFeature(sourceFeature, features);
-      }
+      processOsmRelationFeature(feature, features);
+      if (processMtbNameFeature(feature, features)) return;
+      if (processWaterwayFeature(feature, features)) return;
+      if (processHighwayFeautre(feature, features)) return;
+      if (processOtherSourceFeature(feature, features)) return;
+      addNonIconFeaturesToElasricseach(feature);
     } catch (GeometryException e) {
       // ignore bad geometries
     }
   }
 
-  private void processExternalFeautre(SourceFeature sourceFeature, FeatureCollector features) throws GeometryException {
+  private void processExternalFeautre(SourceFeature feature, FeatureCollector features) throws GeometryException {
     var pointDocument = new PointDocument();
-    pointDocument.poiIcon = sourceFeature.getString("poiIcon");
-    pointDocument.poiIconColor = sourceFeature.getString("poiIconColor");
-    pointDocument.poiCategory = sourceFeature.getString("poiCategory");
+    pointDocument.poiIcon = feature.getString("poiIcon");
+    pointDocument.poiIconColor = feature.getString("poiIconColor");
+    pointDocument.poiCategory = feature.getString("poiCategory");
     for (String language : supportedLanguages) {
-      CoalesceIntoMap(pointDocument.name, language, sourceFeature.getString("name:" + language), sourceFeature.getString("name"));
-      CoalesceIntoMap(pointDocument.description, language, sourceFeature.getString("description:" + language), sourceFeature.getString("description"));
+      CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language), feature.getString("name"));
+      CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language), feature.getString("description"));
     }
-    pointDocument.poiSource = sourceFeature.getString("poiSource");
-    pointDocument.wikidata = sourceFeature.getString("wikidata");
-    pointDocument.image = sourceFeature.getString("image");
-    pointDocument.wikimedia_commons = sourceFeature.getString("wikimedia_commons");
-    Point point;
-    var docId = pointDocument.poiSource + "_" + sourceFeature.getString("identifier");
-    point = sourceFeature.canBeLine() ? GeoUtils.point(sourceFeature.worldGeometry().getCoordinate()) : (Point)sourceFeature.centroidIfConvex();
+    pointDocument.poiSource = feature.getString("poiSource");
+    pointDocument.wikidata = feature.getString("wikidata");
+    pointDocument.image = feature.getString("image");
+    pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+    var point = feature.canBePolygon() ? (Point)feature.centroidIfConvex() : GeoUtils.point(feature.worldGeometry().getCoordinate());
+    var docId = pointDocument.poiSource + "_" + feature.getString("identifier");
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
     pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
     
@@ -198,14 +194,14 @@ public class PlanetSearchProfile implements Profile {
     var tileFeature = features.geometry("external", point)
         .setAttr("poiId", docId)
         .setZoomRange(10, 14)
-        .setId(sourceFeature.id());
+        .setId(feature.id());
     setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
   }
 
-  private void processOsmRelationFeature(SourceFeature sourceFeature, FeatureCollector features) throws GeometryException {
+  private void processOsmRelationFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
     // get all the RouteRelationInfo instances we returned from preprocessOsmRelation that
     // this way belongs to
-    for (var routeInfo : sourceFeature.relationInfo(RelationInfo.class)) {
+    for (var routeInfo : feature.relationInfo(RelationInfo.class)) {
       // (routeInfo.role() also has the "role" of this relation member if needed)
       RelationInfo relation = routeInfo.relation();
       if (relation.pointDocument.name.isEmpty()) {
@@ -217,11 +213,11 @@ public class PlanetSearchProfile implements Profile {
       }
       var mergedLines = RelationLineMergers.get(relation.id());
       synchronized(mergedLines) {
-        mergedLines.lineMerger.add(sourceFeature.line());
-        relation.memberIds.remove(sourceFeature.id());
+        mergedLines.lineMerger.add(feature.line());
+        relation.memberIds.remove(feature.id());
 
-        if (relation.firstMemberId == sourceFeature.id()) {
-          mergedLines.feature = sourceFeature;
+        if (relation.firstMemberId == feature.id()) {
+          mergedLines.feature = feature;
         }
 
         if (!relation.memberIds.isEmpty()) {
@@ -242,13 +238,13 @@ public class PlanetSearchProfile implements Profile {
     }
   }
 
-  private void processMtbNameFeature(SourceFeature sourceFeature, FeatureCollector features) throws GeometryException {
-    if (!sourceFeature.hasTag("mtb:name")) {
-      return;
+  private boolean processMtbNameFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
+    if (!feature.hasTag("mtb:name")) {
+      return false;
     }
-    String mtbName = sourceFeature.getString("mtb:name");
+    String mtbName = feature.getString("mtb:name");
     if (!Singles.containsKey(mtbName)) {
-      return;
+      return false;
     }
     var minId = Singles.get(mtbName).minId;
     if (!WaysLineMergers.containsKey(minId)) {
@@ -256,26 +252,26 @@ public class PlanetSearchProfile implements Profile {
     }
     var mergedLines = WaysLineMergers.get(minId);
     synchronized(mergedLines) {
-      mergedLines.lineMerger.add(sourceFeature.worldGeometry());
-      Singles.get(mtbName).ids.remove(sourceFeature.id());
+      mergedLines.lineMerger.add(feature.worldGeometry());
+      Singles.get(mtbName).ids.remove(feature.id());
 
-      if (minId == sourceFeature.id()) {
-        mergedLines.feature = sourceFeature;
+      if (minId == feature.id()) {
+        mergedLines.feature = feature;
       }
       if (!Singles.get(mtbName).ids.isEmpty()) {
-        return;
+        return false;
       }
-      var feature = mergedLines.feature;
+      var minIdFeature = mergedLines.feature;
       var point = GeoUtils.point(((Geometry)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
 
       var pointDocument = new PointDocument();
       for (String language : supportedLanguages) {
-        CoalesceIntoMap(pointDocument.name, language, feature.getString("mtb:name:" + language), feature.getString("name:" + language), feature.getString("name"), feature.getString("mtb:name"));
-        CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language), feature.getString("description"));
+        CoalesceIntoMap(pointDocument.name, language, minIdFeature.getString("mtb:name:" + language), minIdFeature.getString("name:" + language), minIdFeature.getString("name"), minIdFeature.getString("mtb:name"));
+        CoalesceIntoMap(pointDocument.description, language, minIdFeature.getString("description:" + language), minIdFeature.getString("description"));
       }
-      pointDocument.wikidata = feature.getString("wikidata");
-      pointDocument.image = feature.getString("image");
-      pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+      pointDocument.wikidata = minIdFeature.getString("wikidata");
+      pointDocument.image = minIdFeature.getString("image");
+      pointDocument.wikimedia_commons = minIdFeature.getString("wikimedia_commons");
       pointDocument.poiCategory = "Bicycle";
       pointDocument.poiIcon = "icon-bike";
       pointDocument.poiIconColor = "gray";
@@ -289,19 +285,19 @@ public class PlanetSearchProfile implements Profile {
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
         .setZoomRange(10, 14)
         // Override the feature id with the minimal id of the group
-        .setId(feature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
+        .setId(minIdFeature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
         setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
-      
     }
+    return true;
   }
 
-  private void processWaterwayFeature(SourceFeature sourceFeature, FeatureCollector features) throws GeometryException {
-    if (!sourceFeature.hasTag("waterway")) {
-      return;
+  private boolean processWaterwayFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
+    if (!feature.hasTag("waterway")) {
+      return false;
     }
-    String name = sourceFeature.getString("name");
+    String name = feature.getString("name");
     if (!Waterways.containsKey(name)) {
-      return;
+      return false;
     }
     var minId = Waterways.get(name).minId;
     if (!WaysLineMergers.containsKey(minId)) {
@@ -310,26 +306,26 @@ public class PlanetSearchProfile implements Profile {
     var mergedLines = WaysLineMergers.get(minId);
     synchronized(mergedLines) {
 
-      mergedLines.lineMerger.add(sourceFeature.worldGeometry());
-      Waterways.get(name).ids.remove(sourceFeature.id());
+      mergedLines.lineMerger.add(feature.worldGeometry());
+      Waterways.get(name).ids.remove(feature.id());
 
-      if (minId == sourceFeature.id()) {
-        mergedLines.feature = sourceFeature;
+      if (minId == feature.id()) {
+        mergedLines.feature = feature;
       }
       if (!Waterways.get(name).ids.isEmpty()) {
-        return;
+        return false;
       }
-      var feature = mergedLines.feature;
+      var minIdFeature = mergedLines.feature;
       var point = GeoUtils.point(((Geometry)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
 
       var pointDocument = new PointDocument();
       for (String language : supportedLanguages) {
-        CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language), feature.getString("name"));
-        CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language), feature.getString("description"));
+        CoalesceIntoMap(pointDocument.name, language, minIdFeature.getString("name:" + language), minIdFeature.getString("name"));
+        CoalesceIntoMap(pointDocument.description, language, minIdFeature.getString("description:" + language), minIdFeature.getString("description"));
       }
-      pointDocument.wikidata = feature.getString("wikidata");
-      pointDocument.image = feature.getString("image");
-      pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+      pointDocument.wikidata = minIdFeature.getString("wikidata");
+      pointDocument.image = minIdFeature.getString("image");
+      pointDocument.wikimedia_commons = minIdFeature.getString("wikimedia_commons");
       pointDocument.poiCategory = "Water";
       pointDocument.poiIcon = "icon-waterfall";
       pointDocument.poiIconColor = "blue";
@@ -340,57 +336,58 @@ public class PlanetSearchProfile implements Profile {
       insertPointToElasticsearch(pointDocument, "OSM_way_" + minId);
       if (!isInterestingPoint(pointDocument)) {
         // Skip adding features without any description or image to tiles
-        return;
+        return true;
       }
       
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
         .setZoomRange(10, 14)
         // Override the feature id with the minimal id of the group
-        .setId(feature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
+        .setId(minIdFeature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
       setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
+
+      return true;
     }
   }
 
-  private void processHighwayFeautre(SourceFeature sourceFeature, FeatureCollector features) throws GeometryException {
-    if (!sourceFeature.hasTag("highway")) {
-      return;
+  private boolean processHighwayFeautre(SourceFeature feature, FeatureCollector features) throws GeometryException {
+    if (!feature.hasTag("highway") || !feature.hasTag("name")) {
+      return false;
     }
-    var point = GeoUtils.point(sourceFeature.worldGeometry().getCoordinate());
+    var point = GeoUtils.point(feature.worldGeometry().getCoordinate());
     var pointDocument = new PointDocument();
     for (String language : supportedLanguages) {
-      CoalesceIntoMap(pointDocument.name, language, sourceFeature.getString("name:" + language), sourceFeature.getString("name"));
-      CoalesceIntoMap(pointDocument.description, language, sourceFeature.getString("description:" + language), sourceFeature.getString("description"));
+      CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language), feature.getString("name"));
+      CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language), feature.getString("description"));
     }
     
-    pointDocument.wikidata = sourceFeature.getString("wikidata");
-    pointDocument.image = sourceFeature.getString("image");
-    pointDocument.wikimedia_commons = sourceFeature.getString("wikimedia_commons");
+    pointDocument.wikidata = feature.getString("wikidata");
+    pointDocument.image = feature.getString("image");
+    pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
     pointDocument.poiSource = "OSM";
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
     pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
-    setIconColorCategory(pointDocument, sourceFeature);
+    setIconColorCategory(pointDocument, feature);
 
     if (pointDocument.poiIcon == "icon-search") {
-      return;
+      return true;
     }
 
-    insertPointToElasticsearch(pointDocument, sourceFeatureToDocumentId(sourceFeature));
+    insertPointToElasticsearch(pointDocument, sourceFeatureToDocumentId(feature));
+    return true;
   }
 
-  private void processOtherSourceFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
+  private boolean processOtherSourceFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
     if (!feature.hasTag("name") && 
         !feature.hasTag("wikidata") && 
         !feature.hasTag("image") && 
         !feature.hasTag("description") &&
         !feature.hasTag("ref:IL:inature")) {
-      return;
+      return false;
     }
 
     var tileId = feature.vectorTileFeatureId(config.featureSourceIdMultiplier());
     var docId = sourceFeatureToDocumentId(feature);
-    Point point;
-    
-    point = (Point)feature.centroidIfConvex();
+    var point = feature.canBePolygon() ? (Point)feature.centroidIfConvex() : GeoUtils.point(feature.worldGeometry().getCoordinate());
 
     var pointDocument = new PointDocument();
     for (String language : supportedLanguages) {
@@ -407,13 +404,13 @@ public class PlanetSearchProfile implements Profile {
     setIconColorCategory(pointDocument, feature);
 
     if (pointDocument.poiIcon == "icon-search" || (pointDocument.poiIcon == "icon-home" && !isInterestingPoint(pointDocument))) {
-        return;
+        return false;
     }
 
     insertPointToElasticsearch(pointDocument, docId);
 
     if ((pointDocument.poiIcon == "icon-peak" || pointDocument.poiIcon == "icon-waterfall") && !isInterestingPoint(pointDocument)) {
-        return;
+        return true;
     }
 
     var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
@@ -421,6 +418,42 @@ public class PlanetSearchProfile implements Profile {
         .setId(tileId);
 
     setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
+    return true;
+  }
+
+  private void addNonIconFeaturesToElasricseach(SourceFeature feature) throws GeometryException {
+    if (!feature.hasTag("name")) {
+      return;
+    }
+    var shouldBeIncluded = false;
+    if (feature.hasTag("amenity", "place_of_worship") ||
+      feature.hasTag("shop", "bicycle") ||
+      feature.hasTag("railway", "station") ||
+      feature.hasTag("aerialway", "station") || 
+      feature.hasTag("natural", "valley", "ridge") ||
+      (feature.hasTag("landuse", "recreation_ground") && feature.hasTag("sport", "mtb"))) {
+      shouldBeIncluded = true;
+    }
+
+    if (!shouldBeIncluded) {
+      return;
+    }
+
+    var pointDocument = new PointDocument();
+    for (String language : supportedLanguages) {
+      CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language), feature.getString("name"));
+      CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language), feature.getString("description"));
+    }
+    pointDocument.wikidata = feature.getString("wikidata");
+    pointDocument.image = feature.getString("image");
+    pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+    pointDocument.poiSource = "OSM";
+    setIconColorCategory(pointDocument, feature);
+    var docId = sourceFeatureToDocumentId(feature);
+    var point = feature.canBePolygon() ? (Point)feature.centroidIfConvex() : GeoUtils.point(feature.worldGeometry().getCoordinate());
+    var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
+    pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
+    insertPointToElasticsearch(pointDocument, docId);
   }
 
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
@@ -642,7 +675,8 @@ public class PlanetSearchProfile implements Profile {
     }
 
     if ("reservoir".equals(feature.getString("water")) || 
-        "pond".equals(feature.getString("water"))) {
+        "pond".equals(feature.getString("water")) ||
+        "lake".equals(feature.getString("water"))) {
         pointDocument.poiIconColor = "blue";
         pointDocument.poiIcon = "icon-tint";
         pointDocument.poiCategory = "Water";
