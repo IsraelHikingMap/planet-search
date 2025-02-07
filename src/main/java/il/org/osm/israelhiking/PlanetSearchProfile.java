@@ -403,7 +403,8 @@ public class PlanetSearchProfile implements Profile {
 
     setIconColorCategory(pointDocument, feature);
 
-    if (pointDocument.poiIcon == "icon-search" || (pointDocument.poiIcon == "icon-home" && !isInterestingPoint(pointDocument))) {
+    if (pointDocument.poiIcon == "icon-search" || 
+      (pointDocument.poiIcon == "icon-home" && (!isInterestingPoint(pointDocument) || !feature.isPoint()))) {
         return false;
     }
 
@@ -690,7 +691,8 @@ public class PlanetSearchProfile implements Profile {
 
     if ("reservoir".equals(feature.getString("water")) || 
         "pond".equals(feature.getString("water")) ||
-        "lake".equals(feature.getString("water"))) {
+        "lake".equals(feature.getString("water")) || 
+        "stream_pool".equals(feature.getString("water"))) {
         pointDocument.poiIconColor = "blue";
         pointDocument.poiIcon = "icon-tint";
         pointDocument.poiCategory = "Water";
