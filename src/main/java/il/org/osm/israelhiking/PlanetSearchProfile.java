@@ -426,14 +426,12 @@ public class PlanetSearchProfile implements Profile {
       return;
     }
     var shouldBeIncluded = false;
-    if (feature.hasTag("amenity", "place_of_worship")) {
-      shouldBeIncluded = true;
-    }
-    if (feature.hasTag("shop", "bicycle")) {
-      shouldBeIncluded = true;
-    }
-
-    if (feature.hasTag("railway", "station")) {
+    if (feature.hasTag("amenity", "place_of_worship") ||
+      feature.hasTag("shop", "bicycle") ||
+      feature.hasTag("railway", "station") ||
+      feature.hasTag("aerialway", "station") || 
+      feature.hasTag("natural", "valley", "ridge") ||
+      (feature.hasTag("landuse", "recreation_ground") && feature.hasTag("sport", "mtb"))) {
       shouldBeIncluded = true;
     }
 
