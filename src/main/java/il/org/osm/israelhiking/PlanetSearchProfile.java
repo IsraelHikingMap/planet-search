@@ -425,21 +425,36 @@ public class PlanetSearchProfile implements Profile {
     if (!feature.hasTag("name")) {
       return;
     }
-    var shouldBeIncluded = false;
+    var pointDocument = new PointDocument();
     if (feature.hasTag("amenity", "place_of_worship") ||
-      feature.hasTag("shop", "bicycle") ||
       feature.hasTag("railway", "station") ||
       feature.hasTag("aerialway", "station") || 
-      feature.hasTag("natural", "valley", "ridge") ||
-      (feature.hasTag("landuse", "recreation_ground") && feature.hasTag("sport", "mtb"))) {
-      shouldBeIncluded = true;
+      feature.hasTag("natural", "valley")) {
+      pointDocument.poiIcon = "icon-search";
+      pointDocument.poiIconColor = "black";
+      pointDocument.poiCategory = "Other";
     }
-
-    if (!shouldBeIncluded) {
+    if (feature.hasTag("natural", "ridge")) {
+      pointDocument.poiIcon = "icon-peak";
+      pointDocument.poiIconColor = "black";
+      pointDocument.poiCategory = "Other";
+    }
+    if ((feature.hasTag("landuse", "recreation_ground") && feature.hasTag("sport", "mtb"))) {
+      pointDocument.poiIcon = "icon-bike";
+      pointDocument.poiIconColor = "green";
+      pointDocument.poiCategory = "Bicycle";
+    }
+    if (feature.hasTag("shop", "bicycle")) {
+      pointDocument.poiIcon = "icon-bike";
+      pointDocument.poiIconColor = "red";
+      pointDocument.poiCategory = "Bicycle";
+    }
+    
+    if (pointDocument.poiIcon == null) {
       return;
     }
 
-    var pointDocument = new PointDocument();
+    
     for (String language : supportedLanguages) {
       CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language), feature.getString("name"));
       CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language), feature.getString("description"));
@@ -448,7 +463,6 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.image = feature.getString("image");
     pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
     pointDocument.poiSource = "OSM";
-    setIconColorCategory(pointDocument, feature);
     var docId = sourceFeatureToDocumentId(feature);
     var point = feature.canBePolygon() ? (Point)feature.centroidIfConvex() : GeoUtils.point(feature.worldGeometry().getCoordinate());
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
