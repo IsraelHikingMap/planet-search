@@ -9,6 +9,10 @@ import java.nio.file.Path;
  * The main entry point
  */
 public class MainClass {
+
+    /** Static utility class should not be instantiated. */
+    private MainClass() {}
+
     /** 
      * Main entry point for the application.
      * @throws Exception 
