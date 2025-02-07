@@ -35,7 +35,7 @@ jobs:
       - name: Set up JDK
         uses: actions/setup-java@v1
         with:
-          java-version: 23
+          java-version: 21
       - name: End to End tests setup
         run: |
           docker compose up -d elasticsearch
