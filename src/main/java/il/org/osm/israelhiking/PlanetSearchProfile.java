@@ -445,11 +445,6 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.poiIconColor = "green";
       pointDocument.poiCategory = "Bicycle";
     }
-    if (feature.hasTag("shop", "bicycle")) {
-      pointDocument.poiIcon = "icon-bike";
-      pointDocument.poiIconColor = "red";
-      pointDocument.poiCategory = "Bicycle";
-    }
     
     if (pointDocument.poiIcon == null) {
       return;
