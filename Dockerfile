@@ -16,4 +16,4 @@ COPY --from=build /app/target/ ./
 
 VOLUME [ "/data" ]
 
-ENTRYPOINT java $JAVA_OPTS -jar planet-search-1.0.jar -cp ./ il.org.osm.israelhiking.MainClass "$0" "$@"
+ENTRYPOINT java $JAVA_OPTS -cp "classes:dependency/*" il.org.osm.israelhiking.MainClass "$0" "$@"
