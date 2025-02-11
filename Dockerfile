@@ -4,7 +4,7 @@ WORKDIR /app
 
 COPY . .
 
-RUN mvn package
+RUN mvn clean package dependency:copy-dependencies
 
 FROM eclipse-temurin:21-jre-alpine
 
