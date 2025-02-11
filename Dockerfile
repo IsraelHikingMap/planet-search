@@ -16,4 +16,4 @@ COPY --from=build /app/target/ ./
 
 VOLUME [ "/data" ]
 
-ENTRYPOINT java $JAVA_OPTS -jar planet-search.jar -cp ./ "$0" "$@"
+ENTRYPOINT java $JAVA_OPTS -jar planet-search-1.0.jar -cp ./ "$0" "$@"
