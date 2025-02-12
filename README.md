@@ -23,11 +23,16 @@ To run using docker (While having a local elasticsearch running at 9200):
 
 To compile run:
 
-`mvn package`
+`mvn clean package dependency:copy-dependencies`
 
 To run do:
 
-`java -jar ./target/planet-search-1.0.jar`
+`java -cp "target/classes:target/dependency/*" il.org.osm.israelhiking.MainClass`
+
+You can also do the same with Docker locally:
+
+`docker compose build planet-search`
+`docker compose up planet-search` 
 
 To serve the PMTiles run:
 

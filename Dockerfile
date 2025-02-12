@@ -4,7 +4,7 @@ WORKDIR /app
 
 COPY . .
 
-RUN mvn package
+RUN mvn clean package dependency:copy-dependencies
 
 FROM eclipse-temurin:21-jre-alpine
 
@@ -12,8 +12,8 @@ ENV JAVA_OPTS="-Xmx2g -Xms2g"
 
 WORKDIR /app
 
-COPY --from=build /app/target/planet-search-1.0.jar ./
+COPY --from=build /app/target/ ./
 
 VOLUME [ "/data" ]
 
-ENTRYPOINT java $JAVA_OPTS -jar planet-search-1.0.jar "$0" "$@"
+ENTRYPOINT java $JAVA_OPTS -cp "classes:dependency/*" il.org.osm.israelhiking.MainClass "$0" "$@"
