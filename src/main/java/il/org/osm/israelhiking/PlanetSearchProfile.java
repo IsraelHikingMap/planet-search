@@ -260,7 +260,7 @@ public class PlanetSearchProfile implements Profile {
         mergedLines.feature = feature;
       }
       if (!Singles.get(mtbName).ids.isEmpty()) {
-        return false;
+        return true;
       }
       var minIdFeature = mergedLines.feature;
       var point = GeoUtils.point(((Geometry)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
@@ -314,7 +314,7 @@ public class PlanetSearchProfile implements Profile {
         mergedLines.feature = feature;
       }
       if (!Waterways.get(name).ids.isEmpty()) {
-        return false;
+        return true;
       }
       var minIdFeature = mergedLines.feature;
       var point = GeoUtils.point(((Geometry)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
