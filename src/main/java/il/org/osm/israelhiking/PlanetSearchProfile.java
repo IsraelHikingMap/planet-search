@@ -785,7 +785,8 @@ public class PlanetSearchProfile implements Profile {
         return;
     }
 
-    if (feature.getString("wikidata") != null || feature.getString("wikipedia") != null) {
+    if ((feature.getString("wikidata") != null || feature.getString("wikipedia") != null) &&
+      feature.getString("highway") == null && feature.getString("boundary") == null) {
         pointDocument.poiIconColor = "black";
         pointDocument.poiIcon = "icon-wikipedia-w";
         pointDocument.poiCategory = "Wikipedia";
