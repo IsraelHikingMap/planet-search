@@ -429,10 +429,14 @@ public class PlanetSearchProfile implements Profile {
     }
     var pointDocument = new PointDocument();
     if (feature.hasTag("amenity", "place_of_worship") ||
-      feature.hasTag("railway", "station") ||
-      feature.hasTag("aerialway", "station") || 
       feature.hasTag("natural", "valley")) {
       pointDocument.poiIcon = "icon-search";
+      pointDocument.poiIconColor = "black";
+      pointDocument.poiCategory = "Other";
+    }
+    if (feature.hasTag("railway", "station") ||
+      feature.hasTag("aerialway", "station")) {
+      pointDocument.poiIcon = "icon-bus-stop";
       pointDocument.poiIconColor = "black";
       pointDocument.poiCategory = "Other";
     }
