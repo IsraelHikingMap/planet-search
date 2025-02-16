@@ -1,37 +1,37 @@
 {
     "type":"FeatureCollection",
     "features":[{
-        "type":"Feature",
-        "geometry":{
-            "type":"LineString",
-            "coordinates":[[35.729807,33.250042,808.7768734424957],[35.729807,33.250042,808.7768734424957]]
+        "type": "Feature",
+        "geometry": {
+            "type": "LineString",
+            "coordinates": [[35.729807,33.250042,808.7768734424957],[35.729807,33.250042,808.7768734424957]]
         },
-        "properties":{
-            "identifier":"1",
-            "name":"some name",
-            "name:he":"some name in Hebrew",
-            "poiSource":"Nakeb",
-            "poiCategory":"Hiking",
-            "poiLanguage":"he",
-            "poiIcon":"icon-hike",
-            "poiIconColor":"black",
-            "poiSearchFactor":1,
-            "poiLastModified":"2023-03-08T17:53:39.0000000",
-            "poiGeolocation":{
+        "properties": {
+            "identifier": "1",
+            "name": "some name",
+            "name:he": "some name in Hebrew",
+            "poiSource": "Nakeb",
+            "poiCategory": "Hiking",
+            "poiLanguage": "he",
+            "poiIcon": "icon-hike",
+            "poiIconColor": "black",
+            "poiSearchFactor": 1,
+            "poiLastModified": "2023-03-08T17:53:39.0000000",
+            "poiGeolocation": {
                 "lat":33.250042,
                 "lon":35.729807
             },
-            "description:he":"Some description in Hebrew",
-            "image":"https://www.nakeb.co.il/static/images/hikes/1_01.jpg",
-            "website":"https://www.nakeb.co.il/hike/1",
-            "poiSourceImageUrl":"https://www.nakeb.co.il/static/images/hikes/logo_1000x667.jpg",
-            "poiNames":{
-                "he":["\u05D7\u05D6\u05D5\u05E8\u05D9 \u05D2\u05D5\u05D1\u05EA\u05D4 - \u05D0\u05EA\u05E8 \u05E0\u05B8\u05D0\u05E7\u05B6\u05D1\u05BC"],
-                "en":[],
-                "all":["\u05D7\u05D6\u05D5\u05E8\u05D9 \u05D2\u05D5\u05D1\u05EA\u05D4 - \u05D0\u05EA\u05E8 \u05E0\u05B8\u05D0\u05E7\u05B6\u05D1\u05BC"]
+            "description:he": "Some description in Hebrew",
+            "image": "https://www.nakeb.co.il/static/images/hikes/1_01.jpg",
+            "website": "https://www.nakeb.co.il/hike/1",
+            "poiSourceImageUrl": "https://www.nakeb.co.il/static/images/hikes/logo_1000x667.jpg",
+            "poiNames": {
+                "he": ["\u05D7\u05D6\u05D5\u05E8\u05D9 \u05D2\u05D5\u05D1\u05EA\u05D4 - \u05D0\u05EA\u05E8 \u05E0\u05B8\u05D0\u05E7\u05B6\u05D1\u05BC"],
+                "en": [],
+                "all": ["\u05D7\u05D6\u05D5\u05E8\u05D9 \u05D2\u05D5\u05D1\u05EA\u05D4 - \u05D0\u05EA\u05E8 \u05E0\u05B8\u05D0\u05E7\u05B6\u05D1\u05BC"]
             },
-            "poiId":"Nakeb_1",
-            "poiAlt":808.7768734424957
+            "poiId": "Nakeb_1",
+            "poiAlt": 808.7768734424957
         }
     }, {
         "type": "Feature",
@@ -63,6 +63,7 @@
             ]
         },
         "properties": {
+            "identifier": "2",
             "poiId": "iNature_2",
             "poiSource": "iNature",
             "poiCategory": "Water",
