@@ -300,6 +300,14 @@ public class PlanetSearchProfile implements Profile {
     if (!Waterways.containsKey(name)) {
       return false;
     }
+    for (var routeInfo : feature.relationInfo(RelationInfo.class)) {
+      RelationInfo relation = routeInfo.relation();
+      if (relation.pointDocument.poiIcon == "icon-waterfall") {
+        // In case this waterway is part of a relation, we already processed it
+        return true;
+      }
+    }
+
     var minId = Waterways.get(name).minId;
     if (!WaysLineMergers.containsKey(minId)) {
       WaysLineMergers.put(minId, new MergedLinesHelper());
