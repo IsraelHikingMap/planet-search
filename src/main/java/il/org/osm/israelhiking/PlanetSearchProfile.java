@@ -524,25 +524,32 @@ public class PlanetSearchProfile implements Profile {
    * @throws GeometryException
    */
   private Point getFirstPointOfLineRelation(MergedLinesHelper mergedLines) throws GeometryException {
-    var firstMergedLineString = (LineString) mergedLines.lineMerger.getMergedLineStrings().iterator().next();
-    var firstMergedLineCoordinate = firstMergedLineString.getCoordinate();
-    var lastMergedLineCoordinate = firstMergedLineString.getCoordinateN(firstMergedLineString.getNumPoints() - 1);
-    
-    var firstMemberGeometry = (LineString) mergedLines.feature.line();
+    var firstMemberGeometry = (LineString)mergedLines.feature.line();
+
+    // Check first the start coordinate of first relation member against the start coordinate of all members
     var firstMemberStartCoordinate = firstMemberGeometry.getCoordinate();
+    for (var mergedLine : mergedLines.lineMerger.getMergedLineStrings()) {
+      
+      var mergedLineStartCoordinate = ((LineString)mergedLine).getCoordinate();      
+      if (mergedLineStartCoordinate.equals(firstMemberStartCoordinate)) {
+        // The direction of the related's first memeber and the merged lines is the same
+        return GeoUtils.point(mergedLineStartCoordinate);  
+      }
+    }
+
+    // The check the start or end coordinate of first relation member against the coordinate of all members
     var firstMemberEndCoordinate = firstMemberGeometry.getCoordinateN(firstMemberGeometry.getNumPoints() - 1);
+    for (var mergedLine : mergedLines.lineMerger.getMergedLineStrings()) {
+      // Then check against the end coordinate of all members
+      var mergedLineEndCoordinate = ((LineString)mergedLine).getCoordinateN(((LineString)mergedLine).getNumPoints() - 1);
 
-    if (firstMergedLineCoordinate.equals(firstMemberStartCoordinate)) {
-      // The direction of the related's first memeber and the merged lines is the same
-      return GeoUtils.point(firstMergedLineCoordinate);  
+      if (mergedLineEndCoordinate.equals(firstMemberStartCoordinate) || mergedLineEndCoordinate.equals(firstMemberEndCoordinate)) {
+        // The direction of the related's first memeber and the merged lines is the opposite
+        return GeoUtils.point(mergedLineEndCoordinate);
+      }
     }
-
-    if (lastMergedLineCoordinate.equals(firstMemberStartCoordinate) || lastMergedLineCoordinate.equals(firstMemberEndCoordinate)) {
-      // The direction of the related's first memeber and the merged lines is the opposite
-      return GeoUtils.point(lastMergedLineCoordinate);
-    }
-    // Otherwise, return the first point of the merged line
-    return GeoUtils.point(firstMergedLineCoordinate);
+    // Otherwise, return the first point of the first merged line
+    return GeoUtils.point(((LineString)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
   }
 
   private boolean isInterestingPoint(PointDocument pointDocument) {
