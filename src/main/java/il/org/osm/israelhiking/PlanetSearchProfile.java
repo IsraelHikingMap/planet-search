@@ -12,8 +12,6 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 
 import org.locationtech.jts.geom.Envelope;
-import org.locationtech.jts.geom.Geometry;
-import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.Point;
 
 import com.onthegomap.planetiler.FeatureCollector;
@@ -225,7 +223,7 @@ public class PlanetSearchProfile implements Profile {
           continue;
         }
         // All relation members were reached. Add a POI element for line relation
-        var point = getFirstPointOfLineRelation(mergedLines);
+        var point = GeoUtils.point(mergedLines.lineMerger.getFirstPoint());
         var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
         relation.pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
 
@@ -263,7 +261,7 @@ public class PlanetSearchProfile implements Profile {
         return true;
       }
       var minIdFeature = mergedLines.feature;
-      var point = GeoUtils.point(((Geometry)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
+      var point = GeoUtils.point(mergedLines.lineMerger.getFirstPoint());
 
       var pointDocument = new PointDocument();
       for (String language : supportedLanguages) {
@@ -325,7 +323,7 @@ public class PlanetSearchProfile implements Profile {
         return true;
       }
       var minIdFeature = mergedLines.feature;
-      var point = GeoUtils.point(((Geometry)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
+      var point = GeoUtils.point(mergedLines.lineMerger.getFirstPoint());
 
       var pointDocument = new PointDocument();
       for (String language : supportedLanguages) {
@@ -517,40 +515,6 @@ public class PlanetSearchProfile implements Profile {
     }
   }
 
-  /**
-   * Get the first point of the trail relation by checking some heuristics related to the relation's first member
-   * @param mergedLines - the merged lines helper
-   * @return the first point of the trail relation
-   * @throws GeometryException
-   */
-  private Point getFirstPointOfLineRelation(MergedLinesHelper mergedLines) throws GeometryException {
-    var firstMemberGeometry = (LineString)mergedLines.feature.line();
-
-    // Check first the start coordinate of first relation member against the start coordinate of all members
-    var firstMemberStartCoordinate = firstMemberGeometry.getCoordinate();
-    for (var mergedLine : mergedLines.lineMerger.getMergedLineStrings()) {
-      
-      var mergedLineStartCoordinate = ((LineString)mergedLine).getCoordinate();      
-      if (mergedLineStartCoordinate.equals(firstMemberStartCoordinate)) {
-        // The direction of the related's first memeber and the merged lines is the same
-        return GeoUtils.point(mergedLineStartCoordinate);  
-      }
-    }
-
-    // The check the start or end coordinate of first relation member against the coordinate of all members
-    var firstMemberEndCoordinate = firstMemberGeometry.getCoordinateN(firstMemberGeometry.getNumPoints() - 1);
-    for (var mergedLine : mergedLines.lineMerger.getMergedLineStrings()) {
-      // Then check against the end coordinate of all members
-      var mergedLineEndCoordinate = ((LineString)mergedLine).getCoordinateN(((LineString)mergedLine).getNumPoints() - 1);
-
-      if (mergedLineEndCoordinate.equals(firstMemberStartCoordinate) || mergedLineEndCoordinate.equals(firstMemberEndCoordinate)) {
-        // The direction of the related's first memeber and the merged lines is the opposite
-        return GeoUtils.point(mergedLineEndCoordinate);
-      }
-    }
-    // Otherwise, return the first point of the first merged line
-    return GeoUtils.point(((LineString)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
-  }
 
   private boolean isInterestingPoint(PointDocument pointDocument) {
     return !pointDocument.description.isEmpty() || 
