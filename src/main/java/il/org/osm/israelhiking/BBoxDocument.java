@@ -20,7 +20,7 @@ public class BBoxDocument {
 
     public void setBBox(Geometry geometry) {
         bbox = new HashMap<String, Object>();
-        bbox.put("type", geometry.getGeometryType());        
+        bbox.put("type", geometry.getGeometryType().toLowerCase());
         bbox.put("coordinates", convertJTSToGeoJson(geometry));
     }
 
