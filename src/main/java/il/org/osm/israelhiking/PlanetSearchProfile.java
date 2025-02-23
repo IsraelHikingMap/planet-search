@@ -439,6 +439,11 @@ public class PlanetSearchProfile implements Profile {
       return;
     }
     var pointDocument = new PointDocument();
+    if ((feature.getString("wikidata") != null || feature.getString("wikipedia") != null)) {
+      pointDocument.poiIconColor = "black";
+      pointDocument.poiIcon = "icon-wikipedia-w";
+      pointDocument.poiCategory = "Wikipedia";
+    }
     if (feature.hasTag("amenity", "place_of_worship") ||
       feature.hasTag("natural", "valley")) {
       pointDocument.poiIcon = "icon-search";
@@ -465,12 +470,6 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.poiIcon = "icon-tree";
       pointDocument.poiIconColor = "#008000";
       pointDocument.poiCategory = "Other";
-    }
-    if ((feature.getString("wikidata") != null || feature.getString("wikipedia") != null)) {
-        pointDocument.poiIconColor = "black";
-        pointDocument.poiIcon = "icon-wikipedia-w";
-        pointDocument.poiCategory = "Wikipedia";
-        return;
     }
     
     if (pointDocument.poiIcon == null) {
