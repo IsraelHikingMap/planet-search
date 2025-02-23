@@ -506,9 +506,9 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void insertBboxToElasticsearch(SourceFeature feature, String[] supportedLanguages) {
-    Envelope envelope;
+    Geometry polygon;
     try {
-      envelope = feature.polygon().getEnvelopeInternal();
+      polygon = GeoUtils.worldToLatLonCoords(feature.polygon());
     } catch (GeometryException e) {
       return;
     }
@@ -516,7 +516,7 @@ public class PlanetSearchProfile implements Profile {
       var bbox = new BBoxDocument();
       bbox.area = feature.areaMeters();
 
-      bbox.setBBox(GeoUtils.toLatLonBoundsBounds(envelope));
+      bbox.setBBox(polygon);
       for (String lang : supportedLanguages) {
         CoalesceIntoMap(bbox.name, lang, feature.getString("name:" + lang), feature.getString("name"));
       }
