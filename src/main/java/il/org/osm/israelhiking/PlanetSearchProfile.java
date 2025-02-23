@@ -412,9 +412,12 @@ public class PlanetSearchProfile implements Profile {
 
     setIconColorCategory(pointDocument, feature);
 
-    if (pointDocument.poiIcon == "icon-search" || 
-      (pointDocument.poiIcon == "icon-home" && (!isInterestingPoint(pointDocument) || !feature.isPoint()))) {
+    if (pointDocument.poiIcon == "icon-search") {
         return false;
+    }
+
+    if (pointDocument.poiIcon == "icon-home" && !feature.isPoint()) {
+        return true;
     }
 
     insertPointToElasticsearch(pointDocument, docId);
@@ -457,6 +460,17 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.poiIcon = "icon-bike";
       pointDocument.poiIconColor = "green";
       pointDocument.poiCategory = "Bicycle";
+    }
+    if (feature.hasTag("landuse", "forest")) {
+      pointDocument.poiIcon = "icon-tree";
+      pointDocument.poiIconColor = "#008000";
+      pointDocument.poiCategory = "Other";
+    }
+    if ((feature.getString("wikidata") != null || feature.getString("wikipedia") != null)) {
+        pointDocument.poiIconColor = "black";
+        pointDocument.poiIcon = "icon-wikipedia-w";
+        pointDocument.poiCategory = "Wikipedia";
+        return;
     }
     
     if (pointDocument.poiIcon == null) {
@@ -546,8 +560,7 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private boolean isInterestingPoint(PointDocument pointDocument) {
-    return !pointDocument.description.isEmpty() || 
-      pointDocument.wikidata != null ||
+    return !pointDocument.description.isEmpty() ||
       pointDocument.image != null;
   }
 
@@ -793,13 +806,6 @@ public class PlanetSearchProfile implements Profile {
         return;
     }
 
-    if ((feature.getString("wikidata") != null || feature.getString("wikipedia") != null) &&
-      feature.getString("highway") == null && feature.getString("boundary") == null) {
-        pointDocument.poiIconColor = "black";
-        pointDocument.poiIcon = "icon-wikipedia-w";
-        pointDocument.poiCategory = "Wikipedia";
-        return;
-    }
 
     pointDocument.poiIconColor = "black";
     pointDocument.poiIcon = "icon-search";
