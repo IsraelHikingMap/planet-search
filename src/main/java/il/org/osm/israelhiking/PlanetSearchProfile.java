@@ -3,15 +3,14 @@ package il.org.osm.israelhiking;
 import static com.onthegomap.planetiler.reader.osm.OsmElement.Type.WAY;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 
-import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.Point;
@@ -29,11 +28,7 @@ import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 public class PlanetSearchProfile implements Profile {
-  private static final Logger LOGGER = LoggerFactory.getLogger(PlanetSearchProfile.class);
   private PlanetilerConfig config;
   private ElasticsearchClient esClient;
   private final String pointsIndexName;
@@ -42,10 +37,8 @@ public class PlanetSearchProfile implements Profile {
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
-  private static final Map<String, MinWayIdFinder> Singles = new HashMap<>();
-  private static final Map<String, MinWayIdFinder> Waterways = new HashMap<>();
-  private static final ConcurrentMap<Long, MergedLinesHelper> RelationLineMergers = new ConcurrentHashMap<>();
-  private static final ConcurrentMap<Long, MergedLinesHelper> WaysLineMergers = new ConcurrentHashMap<>();
+  private static final Map<String, MinWayIdFinder> Singles = new ConcurrentHashMap<>();
+  private static final Map<String, MinWayIdFinder> Waterways = new ConcurrentHashMap<>();
 
   public PlanetSearchProfile(PlanetilerConfig config, ElasticsearchClient esClient, String pointsIndexName, String bboxIndexName, String[] supportedLnaguages) {
     this.config = config;
@@ -119,7 +112,8 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.wikimedia_commons = relation.getString("wikimedia_commons");
     info.pointDocument = pointDocument;
     info.firstMemberId = members_ids.getFirst();
-    info.memberIds = members_ids;
+    info.secondMemberId = members_ids.size() > 1 ? members_ids.get(1) : -1;
+    info.memberIds = Collections.synchronizedList(members_ids);
 
     return List.of(info);
   }
@@ -128,23 +122,27 @@ public class PlanetSearchProfile implements Profile {
   public void preprocessOsmWay(OsmElement.Way way) {
     if (way.hasTag("mtb:name")) {
       String mtbName = way.getString("mtb:name");
-      if (!Singles.containsKey(mtbName)) {
-        var finder = new MinWayIdFinder();
-        finder.addWayId(way.id());
-        Singles.put(mtbName, finder);
-      } else {
-        Singles.get(mtbName).addWayId(way.id());
+      synchronized(mtbName.intern()) {
+        if (!Singles.containsKey(mtbName)) {
+          var finder = new MinWayIdFinder();
+          finder.addWayId(way.id());
+          Singles.put(mtbName, finder);
+        } else {
+          Singles.get(mtbName).addWayId(way.id());
+        }
+        return;
       }
-      return;
     }
-    if (way.hasTag("waterway")) {
+    if (way.hasTag("waterway") && way.hasTag("name")) {
       String waterwayName = way.getString("name");
-      if (!Waterways.containsKey(waterwayName)) {
-        var finder = new MinWayIdFinder();
-        finder.addWayId(way.id());
-        Waterways.put(waterwayName, finder);
-      } else {
-        Waterways.get(waterwayName).addWayId(way.id());
+      synchronized(waterwayName.intern()) {
+        if (!Waterways.containsKey(waterwayName)) {
+          var finder = new MinWayIdFinder();
+          finder.addWayId(way.id());
+          Waterways.put(waterwayName, finder);
+        } else {
+          Waterways.get(waterwayName).addWayId(way.id());
+        }
       }
     }
     
@@ -208,34 +206,29 @@ public class PlanetSearchProfile implements Profile {
       if (relation.pointDocument.name.isEmpty()) {
         continue;
       }
-      // Collect all relation way members
-      if (!RelationLineMergers.containsKey(relation.id())) {
-        RelationLineMergers.put(relation.id(), new MergedLinesHelper());
+      relation.memberIds.remove(feature.id());
+
+      if (relation.firstMemberId == feature.id()) {
+        relation.firstMemberFeature = feature;
       }
-      var mergedLines = RelationLineMergers.get(relation.id());
-      synchronized(mergedLines) {
-        mergedLines.lineMerger.add(feature.line());
-        relation.memberIds.remove(feature.id());
-
-        if (relation.firstMemberId == feature.id()) {
-          mergedLines.feature = feature;
-        }
-
-        if (!relation.memberIds.isEmpty()) {
-          continue;
-        }
-        // All relation members were reached. Add a POI element for line relation
-        var point = getFirstPointOfLineRelation(mergedLines);
-        var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
-        relation.pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
-
-        insertPointToElasticsearch(relation.pointDocument, "OSM_relation_" + relation.id());
-
-        var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
-          .setZoomRange(10, 14)
-          .setId(relation.vectorTileFeatureId(config.featureSourceIdMultiplier()));
-        setFeaturePropertiesFromPointDocument(tileFeature, relation.pointDocument);
+      if (relation.secondMemberId == feature.id()) {
+        relation.secondMemberFeature = feature;
       }
+
+      if (!relation.memberIds.isEmpty()) {
+        continue;
+      }
+      // All relation members were reached. Add a POI element for line relation
+      var point = getFirstPointOfLineRelation(relation);
+      var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
+      relation.pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
+
+      insertPointToElasticsearch(relation.pointDocument, "OSM_relation_" + relation.id());
+
+      var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
+        .setZoomRange(10, 14)
+        .setId(relation.vectorTileFeatureId(config.featureSourceIdMultiplier()));
+      setFeaturePropertiesFromPointDocument(tileFeature, relation.pointDocument);
     }
   }
 
@@ -247,23 +240,19 @@ public class PlanetSearchProfile implements Profile {
     if (!Singles.containsKey(mtbName)) {
       return false;
     }
-    var minId = Singles.get(mtbName).minId;
-    if (!WaysLineMergers.containsKey(minId)) {
-      WaysLineMergers.put(minId, new MergedLinesHelper());
-    }
-    var mergedLines = WaysLineMergers.get(minId);
-    synchronized(mergedLines) {
-      mergedLines.lineMerger.add(feature.worldGeometry());
-      Singles.get(mtbName).ids.remove(feature.id());
+    var single = Singles.get(mtbName);
+    synchronized(single) {
+      single.lineMerger.add(feature.worldGeometry());
+      single.ids.remove(feature.id());
 
-      if (minId == feature.id()) {
-        mergedLines.feature = feature;
+      if (single.minId == feature.id()) {
+        single.representingFeature = feature;
       }
-      if (!Singles.get(mtbName).ids.isEmpty()) {
+      if (!single.ids.isEmpty()) {
         return true;
       }
-      var minIdFeature = mergedLines.feature;
-      var point = GeoUtils.point(((Geometry)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
+      var minIdFeature = single.representingFeature;
+      var point = GeoUtils.point(((Geometry)single.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
 
       var pointDocument = new PointDocument();
       for (String language : supportedLanguages) {
@@ -280,7 +269,7 @@ public class PlanetSearchProfile implements Profile {
       var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
       pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
 
-      insertPointToElasticsearch(pointDocument, "OSM_way_" + minId);
+      insertPointToElasticsearch(pointDocument, "OSM_way_" + single.minId);
       // This was the last way with the same mtb:name, so we can merge the lines and add the feature
       // Add a POI element for a SingleTrack
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
@@ -296,6 +285,9 @@ public class PlanetSearchProfile implements Profile {
     if (!feature.hasTag("waterway")) {
       return false;
     }
+    if (!feature.hasTag("name")) {
+      return false;
+    }
     String name = feature.getString("name");
     if (!Waterways.containsKey(name)) {
       return false;
@@ -308,24 +300,20 @@ public class PlanetSearchProfile implements Profile {
       }
     }
 
-    var minId = Waterways.get(name).minId;
-    if (!WaysLineMergers.containsKey(minId)) {
-      WaysLineMergers.put(minId, new MergedLinesHelper());
-    }
-    var mergedLines = WaysLineMergers.get(minId);
-    synchronized(mergedLines) {
+    var waterway = Waterways.get(name);
+    synchronized(waterway) {
 
-      mergedLines.lineMerger.add(feature.worldGeometry());
-      Waterways.get(name).ids.remove(feature.id());
+      waterway.lineMerger.add(feature.worldGeometry());
+      waterway.ids.remove(feature.id());
 
-      if (minId == feature.id()) {
-        mergedLines.feature = feature;
+      if (waterway.minId == feature.id()) {
+        waterway.representingFeature = feature;
       }
-      if (!Waterways.get(name).ids.isEmpty()) {
+      if (!waterway.ids.isEmpty()) {
         return true;
       }
-      var minIdFeature = mergedLines.feature;
-      var point = GeoUtils.point(((Geometry)mergedLines.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
+      var minIdFeature = waterway.representingFeature;
+      var point = GeoUtils.point(((Geometry)waterway.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
 
       var pointDocument = new PointDocument();
       for (String language : supportedLanguages) {
@@ -342,7 +330,7 @@ public class PlanetSearchProfile implements Profile {
       var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
       pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
 
-      insertPointToElasticsearch(pointDocument, "OSM_way_" + minId);
+      insertPointToElasticsearch(pointDocument, "OSM_way_" + waterway.minId);
       if (!isInterestingPoint(pointDocument)) {
         // Skip adding features without any description or image to tiles
         return true;
@@ -530,7 +518,6 @@ public class PlanetSearchProfile implements Profile {
       );
     } catch (Exception e) {
       // swallow
-      LOGGER.error("Unable to insert: " + e.getMessage());
     }
   }
 
@@ -540,26 +527,26 @@ public class PlanetSearchProfile implements Profile {
    * @return the first point of the trail relation
    * @throws GeometryException
    */
-  private Point getFirstPointOfLineRelation(MergedLinesHelper mergedLines) throws GeometryException {
-    var firstMergedLineString = (LineString) mergedLines.lineMerger.getMergedLineStrings().iterator().next();
-    var firstMergedLineCoordinate = firstMergedLineString.getCoordinate();
-    var lastMergedLineCoordinate = firstMergedLineString.getCoordinateN(firstMergedLineString.getNumPoints() - 1);
-    
-    var firstMemberGeometry = (LineString) mergedLines.feature.line();
+  private Point getFirstPointOfLineRelation(RelationInfo relation) throws GeometryException {
+    if (relation.secondMemberFeature == null) {
+      return GeoUtils.point(relation.firstMemberFeature.worldGeometry().getCoordinate());
+    }
+
+    var firstMemberGeometry = (LineString) relation.firstMemberFeature.line();
     var firstMemberStartCoordinate = firstMemberGeometry.getCoordinate();
     var firstMemberEndCoordinate = firstMemberGeometry.getCoordinateN(firstMemberGeometry.getNumPoints() - 1);
+    
+    var secondMemberGeometry = (LineString) relation.secondMemberFeature.line();
+    var secondMemberStartCoordinate = secondMemberGeometry.getCoordinate();
+    var secondMemberEndCoordinate = secondMemberGeometry.getCoordinateN(secondMemberGeometry.getNumPoints() - 1);
 
-    if (firstMergedLineCoordinate.equals(firstMemberStartCoordinate)) {
-      // The direction of the related's first memeber and the merged lines is the same
-      return GeoUtils.point(firstMergedLineCoordinate);  
+    if (firstMemberStartCoordinate.equals2D(secondMemberStartCoordinate) || firstMemberStartCoordinate.equals2D(secondMemberEndCoordinate)) {
+      return GeoUtils.point(firstMemberEndCoordinate);
     }
-
-    if (lastMergedLineCoordinate.equals(firstMemberStartCoordinate) || lastMergedLineCoordinate.equals(firstMemberEndCoordinate)) {
-      // The direction of the related's first memeber and the merged lines is the opposite
-      return GeoUtils.point(lastMergedLineCoordinate);
+    if (firstMemberEndCoordinate.equals2D(secondMemberStartCoordinate) || firstMemberEndCoordinate.equals2D(secondMemberEndCoordinate)) {
+      return GeoUtils.point(firstMemberStartCoordinate);
     }
-    // Otherwise, return the first point of the merged line
-    return GeoUtils.point(firstMergedLineCoordinate);
+    return GeoUtils.point(firstMemberStartCoordinate);
   }
 
   private boolean isInterestingPoint(PointDocument pointDocument) {
