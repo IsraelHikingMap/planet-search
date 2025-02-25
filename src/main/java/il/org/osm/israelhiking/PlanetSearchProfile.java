@@ -439,13 +439,13 @@ public class PlanetSearchProfile implements Profile {
       return;
     }
     var pointDocument = new PointDocument();
-    if ((feature.getString("wikidata") != null || feature.getString("wikipedia") != null)) {
-      pointDocument.poiIconColor = "black";
-      pointDocument.poiIcon = "icon-wikipedia-w";
-      pointDocument.poiCategory = "Wikipedia";
-    }
     if (feature.hasTag("amenity", "place_of_worship") ||
       feature.hasTag("natural", "valley")) {
+      pointDocument.poiIcon = "icon-search";
+      pointDocument.poiIconColor = "black";
+      pointDocument.poiCategory = "Other";
+    }
+    if (feature.hasTag("building") && !feature.hasTag("building", "no", "none", "No")) {
       pointDocument.poiIcon = "icon-search";
       pointDocument.poiIconColor = "black";
       pointDocument.poiCategory = "Other";
@@ -476,7 +476,11 @@ public class PlanetSearchProfile implements Profile {
       return;
     }
 
-    
+    if (pointDocument.poiIcon == "icon-search" && ((feature.getString("wikidata") != null || feature.getString("wikipedia") != null))) {
+      pointDocument.poiIconColor = "black";
+      pointDocument.poiIcon = "icon-wikipedia-w";
+      pointDocument.poiCategory = "Wikipedia";
+    }
     for (String language : supportedLanguages) {
       CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language), feature.getString("name"));
       CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language), feature.getString("description"));
