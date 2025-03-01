@@ -2,9 +2,9 @@ package il.org.osm.israelhiking;
 
 import static com.onthegomap.planetiler.reader.osm.OsmElement.Type.WAY;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -193,7 +193,11 @@ public class PlanetSearchProfile implements Profile {
         .setAttr("poiId", docId)
         .setAttr("identifier", feature.getString("identifier"))
         .setZoomRange(10, 14)
+        .setBufferPixels(0)
         .setId(feature.id());
+    if (feature.hasTag("poiLanguages")) {
+      tileFeature.setAttr("poiLanguages", String.join(",", (ArrayList<String>)feature.getTag("poiLanguages")));
+    }
     setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
   }
 
@@ -226,7 +230,9 @@ public class PlanetSearchProfile implements Profile {
       insertPointToElasticsearch(relation.pointDocument, "OSM_relation_" + relation.id());
 
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
+        .setAttr("poiLanguages", String.join(",", this.supportedLanguages))
         .setZoomRange(10, 14)
+        .setBufferPixels(0)
         .setId(relation.vectorTileFeatureId(config.featureSourceIdMultiplier()));
       setFeaturePropertiesFromPointDocument(tileFeature, relation.pointDocument);
     }
@@ -273,7 +279,9 @@ public class PlanetSearchProfile implements Profile {
       // This was the last way with the same mtb:name, so we can merge the lines and add the feature
       // Add a POI element for a SingleTrack
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
+        .setAttr("poiLanguages", String.join(",", this.supportedLanguages))
         .setZoomRange(10, 14)
+        .setBufferPixels(0)
         // Override the feature id with the minimal id of the group
         .setId(minIdFeature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
         setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
@@ -337,7 +345,9 @@ public class PlanetSearchProfile implements Profile {
       }
       
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
+        .setAttr("poiLanguages", String.join(",", this.supportedLanguages))
         .setZoomRange(10, 14)
+        .setBufferPixels(0)
         // Override the feature id with the minimal id of the group
         .setId(minIdFeature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
       setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
@@ -415,7 +425,9 @@ public class PlanetSearchProfile implements Profile {
     }
 
     var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
+        .setAttr("poiLanguages", String.join(",", this.supportedLanguages))
         .setZoomRange(10, 14)
+        .setBufferPixels(0)
         .setId(tileId);
 
     setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
