@@ -31,7 +31,7 @@ public class MainClass {
         try {
             var pointsIndexAlias = args.getString("es-points-index-alias", "Elasticsearch index to populate points", "points");
             var bboxIndexAlias = args.getString("es-bbox-index-alias", "Elasticsearch index to populate bounding boxes", "bbox");
-            var supportedLanguages = args.getString("languages", "Languages to support", "en,he").split(",");
+            var supportedLanguages = args.getString("languages", "Languages to support", "en,he,ru").split(",");
             var externalFilePath = Path.of(args.getString("external-file-path", "Extranl file path", "data/sources/external.geojson"));
             var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias, supportedLanguages);
             var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
