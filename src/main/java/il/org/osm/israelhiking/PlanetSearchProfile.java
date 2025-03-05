@@ -76,6 +76,19 @@ public class PlanetSearchProfile implements Profile {
     }
   }
 
+  private void convertTagsToDocument(PointDocument pointDocument, WithTags feature) {
+    for (String language : supportedLanguages) {
+      CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language));
+      CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language));
+    }
+    if (feature.hasTag("name")) {
+      CoalesceIntoMap(pointDocument.name, "default", feature.getString("name"));
+    }
+    pointDocument.wikidata = feature.getString("wikidata");
+    pointDocument.image = feature.getString("image");
+    pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+  }
+
   @Override
   public List<OsmRelationInfo> preprocessOsmRelation(OsmElement.Relation relation) {
     // If this is a "route" relation ...
@@ -102,14 +115,8 @@ public class PlanetSearchProfile implements Profile {
     }
     var info = new RelationInfo(relation.id());
     
-    for (String language : supportedLanguages) {
-      CoalesceIntoMap(pointDocument.name, language, relation.getString("name:" + language), relation.getString("name"));
-      CoalesceIntoMap(pointDocument.description, language, relation.getString("description:" + language), relation.getString("description"));
-    }
+    convertTagsToDocument(pointDocument, relation);
     pointDocument.poiSource = "OSM";
-    pointDocument.wikidata = relation.getString("wikidata");
-    pointDocument.image = relation.getString("image");
-    pointDocument.wikimedia_commons = relation.getString("wikimedia_commons");
     info.pointDocument = pointDocument;
     info.firstMemberId = members_ids.getFirst();
     info.secondMemberId = members_ids.size() > 1 ? members_ids.get(1) : -1;
@@ -174,14 +181,8 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.poiIcon = feature.getString("poiIcon");
     pointDocument.poiIconColor = feature.getString("poiIconColor");
     pointDocument.poiCategory = feature.getString("poiCategory");
-    for (String language : supportedLanguages) {
-      CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language), feature.getString("name"));
-      CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language), feature.getString("description"));
-    }
     pointDocument.poiSource = feature.getString("poiSource");
-    pointDocument.wikidata = feature.getString("wikidata");
-    pointDocument.image = feature.getString("image");
-    pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+    convertTagsToDocument(pointDocument, feature);
     var point = feature.canBePolygon() ? (Point)feature.centroidIfConvex() : GeoUtils.point(feature.worldGeometry().getCoordinate());
     var docId = pointDocument.poiSource + "_" + feature.getString("identifier");
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
@@ -261,13 +262,13 @@ public class PlanetSearchProfile implements Profile {
       var point = GeoUtils.point(((Geometry)single.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
 
       var pointDocument = new PointDocument();
+      convertTagsToDocument(pointDocument, feature);
       for (String language : supportedLanguages) {
-        CoalesceIntoMap(pointDocument.name, language, minIdFeature.getString("mtb:name:" + language), minIdFeature.getString("name:" + language), minIdFeature.getString("name"), minIdFeature.getString("mtb:name"));
-        CoalesceIntoMap(pointDocument.description, language, minIdFeature.getString("description:" + language), minIdFeature.getString("description"));
+        CoalesceIntoMap(pointDocument.name, language, minIdFeature.getString("mtb:name:" + language));
       }
-      pointDocument.wikidata = minIdFeature.getString("wikidata");
-      pointDocument.image = minIdFeature.getString("image");
-      pointDocument.wikimedia_commons = minIdFeature.getString("wikimedia_commons");
+      if (minIdFeature.hasTag("mtb:name")) {
+        CoalesceIntoMap(pointDocument.name, "default", minIdFeature.getString("mtb:name"));
+      }
       pointDocument.poiCategory = "Bicycle";
       pointDocument.poiIcon = "icon-bike";
       pointDocument.poiIconColor = "gray";
@@ -324,13 +325,7 @@ public class PlanetSearchProfile implements Profile {
       var point = GeoUtils.point(((Geometry)waterway.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
 
       var pointDocument = new PointDocument();
-      for (String language : supportedLanguages) {
-        CoalesceIntoMap(pointDocument.name, language, minIdFeature.getString("name:" + language), minIdFeature.getString("name"));
-        CoalesceIntoMap(pointDocument.description, language, minIdFeature.getString("description:" + language), minIdFeature.getString("description"));
-      }
-      pointDocument.wikidata = minIdFeature.getString("wikidata");
-      pointDocument.image = minIdFeature.getString("image");
-      pointDocument.wikimedia_commons = minIdFeature.getString("wikimedia_commons");
+      convertTagsToDocument(pointDocument, feature);
       pointDocument.poiCategory = "Water";
       pointDocument.poiIcon = "icon-waterfall";
       pointDocument.poiIconColor = "blue";
@@ -362,14 +357,7 @@ public class PlanetSearchProfile implements Profile {
     }
     var point = GeoUtils.point(feature.worldGeometry().getCoordinate());
     var pointDocument = new PointDocument();
-    for (String language : supportedLanguages) {
-      CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language), feature.getString("name"));
-      CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language), feature.getString("description"));
-    }
-    
-    pointDocument.wikidata = feature.getString("wikidata");
-    pointDocument.image = feature.getString("image");
-    pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+    convertTagsToDocument(pointDocument, feature);
     pointDocument.poiSource = "OSM";
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
     pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
@@ -397,13 +385,7 @@ public class PlanetSearchProfile implements Profile {
     var point = feature.canBePolygon() ? (Point)feature.centroidIfConvex() : GeoUtils.point(feature.worldGeometry().getCoordinate());
 
     var pointDocument = new PointDocument();
-    for (String language : supportedLanguages) {
-      CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language), feature.getString("name"));
-      CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language), feature.getString("description"));
-    }
-    pointDocument.wikidata = feature.getString("wikidata");
-    pointDocument.image = feature.getString("image");
-    pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+    convertTagsToDocument(pointDocument, feature);
     pointDocument.poiSource = "OSM";
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
     pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
@@ -482,8 +464,11 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.poiCategory = "Wikipedia";
     }
     for (String language : supportedLanguages) {
-      CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language), feature.getString("name"));
-      CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language), feature.getString("description"));
+      CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language));
+      CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language));
+    }
+    if (feature.hasTag("name")) {
+      CoalesceIntoMap(pointDocument.name, "default", feature.getString("name"));
     }
     pointDocument.wikidata = feature.getString("wikidata");
     pointDocument.image = feature.getString("image");
@@ -521,7 +506,10 @@ public class PlanetSearchProfile implements Profile {
 
       bbox.setBBox(polygon);
       for (String lang : supportedLanguages) {
-        CoalesceIntoMap(bbox.name, lang, feature.getString("name:" + lang), feature.getString("name"));
+        CoalesceIntoMap(bbox.name, lang, feature.getString("name:" + lang));
+      }
+      if (feature.hasTag("name")) {
+        CoalesceIntoMap(bbox.name, "default", feature.getString("name"));
       }
       esClient.index(i -> i
           .index(this.bboxIndexName)
