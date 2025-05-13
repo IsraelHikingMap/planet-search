@@ -195,7 +195,7 @@ public class PlanetSearchProfile implements Profile {
         .setAttr("identifier", feature.getString("identifier"))
         .setId(feature.id());
     var languages = feature.hasTag("poiLanguages") ? (ArrayList<String>)feature.getTag("poiLanguages") : new ArrayList<String>();
-    setFeaturePropertiesFromPointDocument(tileFeature, pointDocument, languages.toArray());
+    setFeaturePropertiesFromPointDocument(tileFeature, pointDocument, languages.toArray(String[]::new));
   }
 
   private void processOsmRelationFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
