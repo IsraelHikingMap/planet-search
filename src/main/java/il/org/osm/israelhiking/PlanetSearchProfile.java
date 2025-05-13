@@ -193,13 +193,9 @@ public class PlanetSearchProfile implements Profile {
     var tileFeature = features.geometry("external", point)
         .setAttr("poiId", docId)
         .setAttr("identifier", feature.getString("identifier"))
-        .setZoomRange(10, 14)
-        .setBufferPixels(0)
         .setId(feature.id());
-    if (feature.hasTag("poiLanguages")) {
-      tileFeature.setAttr("poiLanguages", String.join(",", (ArrayList<String>)feature.getTag("poiLanguages")));
-    }
-    setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
+    var languages = feature.hasTag("poiLanguages") ? (ArrayList<String>)feature.getTag("poiLanguages") : new ArrayList<String>();
+    setFeaturePropertiesFromPointDocument(tileFeature, pointDocument, languages.toArray(String[]::new));
   }
 
   private void processOsmRelationFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
@@ -231,11 +227,8 @@ public class PlanetSearchProfile implements Profile {
       insertPointToElasticsearch(relation.pointDocument, "OSM_relation_" + relation.id());
 
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
-        .setAttr("poiLanguages", String.join(",", this.supportedLanguages))
-        .setZoomRange(10, 14)
-        .setBufferPixels(0)
         .setId(relation.vectorTileFeatureId(config.featureSourceIdMultiplier()));
-      setFeaturePropertiesFromPointDocument(tileFeature, relation.pointDocument);
+      setFeaturePropertiesFromPointDocument(tileFeature, relation.pointDocument, this.supportedLanguages);
     }
   }
 
@@ -280,12 +273,9 @@ public class PlanetSearchProfile implements Profile {
       // This was the last way with the same mtb:name, so we can merge the lines and add the feature
       // Add a POI element for a SingleTrack
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
-        .setAttr("poiLanguages", String.join(",", this.supportedLanguages))
-        .setZoomRange(10, 14)
-        .setBufferPixels(0)
         // Override the feature id with the minimal id of the group
         .setId(minIdFeature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
-        setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
+      setFeaturePropertiesFromPointDocument(tileFeature, pointDocument, this.supportedLanguages);
     }
     return true;
   }
@@ -340,12 +330,9 @@ public class PlanetSearchProfile implements Profile {
       }
       
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
-        .setAttr("poiLanguages", String.join(",", this.supportedLanguages))
-        .setZoomRange(10, 14)
-        .setBufferPixels(0)
         // Override the feature id with the minimal id of the group
         .setId(minIdFeature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
-      setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
+      setFeaturePropertiesFromPointDocument(tileFeature, pointDocument, this.supportedLanguages);
 
       return true;
     }
@@ -407,12 +394,9 @@ public class PlanetSearchProfile implements Profile {
     }
 
     var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
-        .setAttr("poiLanguages", String.join(",", this.supportedLanguages))
-        .setZoomRange(10, 14)
-        .setBufferPixels(0)
         .setId(tileId);
 
-    setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
+    setFeaturePropertiesFromPointDocument(tileFeature, pointDocument, this.supportedLanguages);
     return true;
   }
 
@@ -554,17 +538,23 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.image != null;
   }
 
-  private void setFeaturePropertiesFromPointDocument(Feature tileFeature, PointDocument pointDocument) {
+  private void setFeaturePropertiesFromPointDocument(Feature tileFeature, PointDocument pointDocument, String[] languages) {
     tileFeature.setAttr("wikidata", pointDocument.wikidata)
         .setAttr("wikimedia_commons", pointDocument.wikimedia_commons)
         .setAttr("image", pointDocument.image)
         .setAttr("poiIcon", pointDocument.poiIcon)
         .setAttr("poiIconColor", pointDocument.poiIconColor)
         .setAttr("poiCategory", pointDocument.poiCategory)
-        .setAttr("poiSource", pointDocument.poiSource);
+        .setAttr("poiSource", pointDocument.poiSource)
+        .setAttr("poiLanguages", String.join(",", languages))
+        .setZoomRange(10, 14)
+        .setBufferPixels(0);
     for (String lang : supportedLanguages) {
       tileFeature.setAttr("name:" + lang, pointDocument.name.get(lang));
       tileFeature.setAttr("description:" + lang, pointDocument.description.get(lang));
+    }
+    if (pointDocument.name.containsKey("default")) {
+      tileFeature.setAttr("name", pointDocument.name.get("default"));
     }
   }
 
