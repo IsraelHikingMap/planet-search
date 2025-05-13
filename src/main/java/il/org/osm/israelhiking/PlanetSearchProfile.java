@@ -545,10 +545,10 @@ public class PlanetSearchProfile implements Profile {
         .setAttr("poiIcon", pointDocument.poiIcon)
         .setAttr("poiIconColor", pointDocument.poiIconColor)
         .setAttr("poiCategory", pointDocument.poiCategory)
-        .setAttr("poiSource", pointDocument.poiSource);
+        .setAttr("poiSource", pointDocument.poiSource)
         .setAttr("poiLanguages", String.join(",", languages))
         .setZoomRange(10, 14)
-        .setBufferPixels(0)
+        .setBufferPixels(0);
     for (String lang : supportedLanguages) {
       tileFeature.setAttr("name:" + lang, pointDocument.name.get(lang));
       tileFeature.setAttr("description:" + lang, pointDocument.description.get(lang));
