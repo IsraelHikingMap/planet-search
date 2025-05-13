@@ -195,7 +195,7 @@ public class PlanetSearchProfile implements Profile {
         .setAttr("identifier", feature.getString("identifier"))
         .setId(feature.id());
     var languages = feature.hasTag("poiLanguages") ? (ArrayList<String>)feature.getTag("poiLanguages") : new ArrayList<String>();
-    setFeaturePropertiesFromPointDocument(tileFeature, pointDocument, languages);
+    setFeaturePropertiesFromPointDocument(tileFeature, pointDocument, languages.toArray());
   }
 
   private void processOsmRelationFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
@@ -538,7 +538,7 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.image != null;
   }
 
-  private void setFeaturePropertiesFromPointDocument(Feature tileFeature, PointDocument pointDocument, ArrayList<String> languages) {
+  private void setFeaturePropertiesFromPointDocument(Feature tileFeature, PointDocument pointDocument, String[] languages) {
     tileFeature.setAttr("wikidata", pointDocument.wikidata)
         .setAttr("wikimedia_commons", pointDocument.wikimedia_commons)
         .setAttr("image", pointDocument.image)
@@ -553,7 +553,7 @@ public class PlanetSearchProfile implements Profile {
       tileFeature.setAttr("name:" + lang, pointDocument.name.get(lang));
       tileFeature.setAttr("description:" + lang, pointDocument.description.get(lang));
     }
-    if (pointDocument.name.has("default")) {
+    if (pointDocument.name.containsKey("default")) {
       tileFeature.setAttr("name", pointDocument.name.get("default"));
     }
   }
