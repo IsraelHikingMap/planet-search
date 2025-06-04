@@ -11,7 +11,7 @@ This repo allows both the creation of global POIs PMTiles using planetiler and a
 Additional arguments to this wrapper besides the Planetiler's arguments:
 | Parameter Name | Description | Default Value |
 |-|-|-|
-| `languages` | A comma separated list of languages to add to the tiles and search | `en,he` |
+| `languages` | A comma separated list of languages to add to the tiles and search | `en,he,ru,ar` |
 | `es-address` | The address of the Elasticsearch database | `http://localhost:9200` |
 | `es-points-index-alias` | The alias of the index to insert points into, it will create "1" and "2" suffix for the relevant index before switching | `points` |
 | `es-bbox-index-alias` | The alias of the index to insert bounding boxes into, it will create "1" and "2" suffix for the relevant index before switching | `bbox` |
