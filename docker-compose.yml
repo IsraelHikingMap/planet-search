@@ -10,6 +10,7 @@ services:
     command:
       - --es-address=http://localhost:9200
       - --download
+      - --external-file-path=data/sources/external.geojson
     depends_on:
       - elasticsearch
 
