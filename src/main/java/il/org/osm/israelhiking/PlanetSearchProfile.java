@@ -383,7 +383,7 @@ public class PlanetSearchProfile implements Profile {
         return false;
     }
 
-    if (pointDocument.poiIcon == "icon-home" && !feature.isPoint()) {
+    if (pointDocument.poiIcon == "icon-home" &&  pointDocument.poiCategory == "Wikipedia" && !feature.isPoint()) {
         return true;
     }
 
