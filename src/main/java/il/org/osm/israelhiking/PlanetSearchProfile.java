@@ -383,7 +383,7 @@ public class PlanetSearchProfile implements Profile {
         return false;
     }
 
-    if (pointDocument.poiIcon == "icon-home" && !feature.isPoint()) {
+    if (feature.getString("place") != null && pointDocument.poiCategory == "Wikipedia" && !feature.isPoint()) {
         return true;
     }
 
@@ -744,6 +744,11 @@ public class PlanetSearchProfile implements Profile {
                 pointDocument.poiIconColor = "#ffb800";
                 pointDocument.poiIcon = "icon-star";
                 pointDocument.poiCategory = "Other";
+                return;
+          case "alpine_hut":
+                pointDocument.poiIconColor = "#734a08";
+                pointDocument.poiIcon = "icon-home";
+                pointDocument.poiCategory = "Camping";
                 return;
         }
     }
