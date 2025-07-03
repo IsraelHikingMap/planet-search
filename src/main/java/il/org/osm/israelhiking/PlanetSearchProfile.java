@@ -610,7 +610,7 @@ public class PlanetSearchProfile implements Profile {
         "national_park".equals(feature.getString("boundary")) ||
         "nature_reserve".equals(feature.getString("leisure"))) {
             pointDocument.poiIconColor = "#008000";
-            pointDocument.poiIcon = "icon-nature-reserve";
+            pointDocument.poiIcon = "icon-leaf";
             pointDocument.poiCategory = "Other";
         return;
     }
