@@ -740,9 +740,12 @@ public class PlanetSearchProfile implements Profile {
                 pointDocument.poiCategory = "Camping";
                 return;
             case "attraction":
-            case "artwork":
                 pointDocument.poiIconColor = "#ffb800";
                 pointDocument.poiIcon = "icon-star";
+                pointDocument.poiCategory = "Other";
+            case "artwork":
+                pointDocument.poiIconColor = "#ffb800";
+                pointDocument.poiIcon = "icon-artwork";
                 pointDocument.poiCategory = "Other";
                 return;
           case "alpine_hut":
