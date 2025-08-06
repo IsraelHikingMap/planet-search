@@ -293,7 +293,7 @@ public class PlanetSearchProfile implements Profile {
     }
     for (var routeInfo : feature.relationInfo(RelationInfo.class)) {
       RelationInfo relation = routeInfo.relation();
-      if (relation.pointDocument.poiIcon == "icon-waterfall") {
+      if (relation.pointDocument.poiIcon == "icon-river") {
         // In case this waterway is part of a relation, we already processed it
         return true;
       }
