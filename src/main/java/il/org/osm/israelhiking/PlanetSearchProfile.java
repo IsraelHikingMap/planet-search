@@ -98,7 +98,7 @@ public class PlanetSearchProfile implements Profile {
     var pointDocument = new PointDocument();
     setIconColorCategory(pointDocument, relation);
 
-    if (!"icon-waterfall".equals(pointDocument.poiIcon) && 
+    if (!"icon-river".equals(pointDocument.poiIcon) && 
         !"Bicycle".equals(pointDocument.poiCategory) && 
         !"Hiking".equals(pointDocument.poiCategory)) {
       return null;
@@ -293,7 +293,7 @@ public class PlanetSearchProfile implements Profile {
     }
     for (var routeInfo : feature.relationInfo(RelationInfo.class)) {
       RelationInfo relation = routeInfo.relation();
-      if (relation.pointDocument.poiIcon == "icon-waterfall") {
+      if (relation.pointDocument.poiIcon == "icon-river") {
         // In case this waterway is part of a relation, we already processed it
         return true;
       }
@@ -317,7 +317,7 @@ public class PlanetSearchProfile implements Profile {
       var pointDocument = new PointDocument();
       convertTagsToDocument(pointDocument, feature);
       pointDocument.poiCategory = "Water";
-      pointDocument.poiIcon = "icon-waterfall";
+      pointDocument.poiIcon = "icon-river";
       pointDocument.poiIconColor = "blue";
       pointDocument.poiSource = "OSM";
       var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
@@ -389,7 +389,7 @@ public class PlanetSearchProfile implements Profile {
 
     insertPointToElasticsearch(pointDocument, docId);
 
-    if ((pointDocument.poiIcon == "icon-peak" || pointDocument.poiIcon == "icon-waterfall") && !isInterestingPoint(pointDocument)) {
+    if ((pointDocument.poiIcon == "icon-peak" || pointDocument.poiIcon == "icon-river") && !isInterestingPoint(pointDocument)) {
         return true;
     }
 
@@ -713,9 +713,16 @@ public class PlanetSearchProfile implements Profile {
         }
     }
 
-    if ("waterfall".equals(feature.getString("waterway")) || "waterway".equals(feature.getString("type"))) {
+    if ("waterfall".equals(feature.getString("waterway"))) {
         pointDocument.poiIconColor = "blue";
         pointDocument.poiIcon = "icon-waterfall";
+        pointDocument.poiCategory = "Water";
+        return;
+    }
+
+    if ("waterway".equals(feature.getString("type"))) {
+        pointDocument.poiIconColor = "blue";
+        pointDocument.poiIcon = "icon-river";
         pointDocument.poiCategory = "Water";
         return;
     }
@@ -740,9 +747,12 @@ public class PlanetSearchProfile implements Profile {
                 pointDocument.poiCategory = "Camping";
                 return;
             case "attraction":
-            case "artwork":
                 pointDocument.poiIconColor = "#ffb800";
                 pointDocument.poiIcon = "icon-star";
+                pointDocument.poiCategory = "Other";
+            case "artwork":
+                pointDocument.poiIconColor = "#ffb800";
+                pointDocument.poiIcon = "icon-artwork";
                 pointDocument.poiCategory = "Other";
                 return;
           case "alpine_hut":
