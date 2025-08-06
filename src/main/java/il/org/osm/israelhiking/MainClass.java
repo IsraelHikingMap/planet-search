@@ -32,7 +32,7 @@ public class MainClass {
             var pointsIndexAlias = args.getString("es-points-index-alias", "Elasticsearch index to populate points", "points");
             var bboxIndexAlias = args.getString("es-bbox-index-alias", "Elasticsearch index to populate bounding boxes", "bbox");
             var supportedLanguages = args.getString("languages", "Languages to support", "en,he,ru,ar").split(",");
-            var externalFilePath = args.getString("external-file-path", "Extranl file path", "");
+            var externalFilePath = args.getString("external-file-path", "External file path", "");
             var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias, supportedLanguages);
             var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
             var profile = new PlanetSearchProfile(planetiler.config(), esClient, targetPointsIndex, targetBBoxIndex, supportedLanguages);
