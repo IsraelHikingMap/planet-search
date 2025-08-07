@@ -750,6 +750,7 @@ public class PlanetSearchProfile implements Profile {
                 pointDocument.poiIconColor = "#ffb800";
                 pointDocument.poiIcon = "icon-star";
                 pointDocument.poiCategory = "Other";
+                return;
             case "artwork":
                 pointDocument.poiIconColor = "#ffb800";
                 pointDocument.poiIcon = "icon-artwork";
