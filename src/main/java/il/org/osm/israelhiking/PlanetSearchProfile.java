@@ -318,7 +318,7 @@ public class PlanetSearchProfile implements Profile {
       convertTagsToDocument(pointDocument, feature);
       pointDocument.poiCategory = "Water";
       pointDocument.poiIcon = "icon-river";
-      pointDocument.poiIconColor = "blue";
+      pointDocument.poiIconColor = "#1e80e3";
       pointDocument.poiSource = "OSM";
       var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
       pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
@@ -668,7 +668,7 @@ public class PlanetSearchProfile implements Profile {
                 pointDocument.poiCategory = "Natural";
                 return;
             case "spring":
-                pointDocument.poiIconColor = "blue";
+                pointDocument.poiIconColor = "#1e80e3";
                 pointDocument.poiIcon = "icon-tint";
                 pointDocument.poiCategory = "Water";
                 return;
@@ -683,7 +683,7 @@ public class PlanetSearchProfile implements Profile {
                 pointDocument.poiCategory = "Natural";
                 return;
             case "waterhole":
-                pointDocument.poiIconColor = "blue";
+                pointDocument.poiIconColor = "#1e80e3";
                 pointDocument.poiIcon = "icon-waterhole";
                 pointDocument.poiCategory = "Water";
                 return;
@@ -694,14 +694,14 @@ public class PlanetSearchProfile implements Profile {
         "pond".equals(feature.getString("water")) ||
         "lake".equals(feature.getString("water")) || 
         "stream_pool".equals(feature.getString("water"))) {
-        pointDocument.poiIconColor = "blue";
+        pointDocument.poiIconColor = "#1e80e3";
         pointDocument.poiIcon = "icon-tint";
         pointDocument.poiCategory = "Water";
         return;
     }
 
     if (feature.getString("man_made") != null) {
-        pointDocument.poiIconColor = "blue";
+        pointDocument.poiIconColor = "#1e80e3";
         pointDocument.poiCategory = "Water";
         switch (feature.getString("man_made")) {
             case "water_well":
@@ -714,14 +714,14 @@ public class PlanetSearchProfile implements Profile {
     }
 
     if ("waterfall".equals(feature.getString("waterway"))) {
-        pointDocument.poiIconColor = "blue";
+        pointDocument.poiIconColor = "#1e80e3";
         pointDocument.poiIcon = "icon-waterfall";
         pointDocument.poiCategory = "Water";
         return;
     }
 
     if ("waterway".equals(feature.getString("type"))) {
-        pointDocument.poiIconColor = "blue";
+        pointDocument.poiIconColor = "#1e80e3";
         pointDocument.poiIcon = "icon-river";
         pointDocument.poiCategory = "Water";
         return;
@@ -758,7 +758,7 @@ public class PlanetSearchProfile implements Profile {
                 return;
           case "alpine_hut":
                 pointDocument.poiIconColor = "#734a08";
-                pointDocument.poiIcon = "icon-home";
+                pointDocument.poiIcon = "icon-alpinehut";
                 pointDocument.poiCategory = "Camping";
                 return;
         }
