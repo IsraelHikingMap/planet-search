@@ -84,6 +84,9 @@ public class PlanetSearchProfile implements Profile {
     if (feature.hasTag("name")) {
       CoalesceIntoMap(pointDocument.name, "default", feature.getString("name"));
     }
+    if (feature.hasTag("description")) {
+      CoalesceIntoMap(pointDocument.description, "default", feature.getString("description"));
+    }
     pointDocument.wikidata = feature.getString("wikidata");
     pointDocument.image = feature.getString("image");
     pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
@@ -454,6 +457,9 @@ public class PlanetSearchProfile implements Profile {
     if (feature.hasTag("name")) {
       CoalesceIntoMap(pointDocument.name, "default", feature.getString("name"));
     }
+    if (feature.hasTag("description")) {
+      CoalesceIntoMap(pointDocument.description, "default", feature.getString("description"));
+    }
     pointDocument.wikidata = feature.getString("wikidata");
     pointDocument.image = feature.getString("image");
     pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
@@ -555,6 +561,9 @@ public class PlanetSearchProfile implements Profile {
     }
     if (pointDocument.name.containsKey("default")) {
       tileFeature.setAttr("name", pointDocument.name.get("default"));
+    }
+    if (pointDocument.description.containsKey("default")) {
+      tileFeature.setAttr("description", pointDocument.description.get("default"));
     }
   }
 
