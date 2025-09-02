@@ -103,7 +103,8 @@ public class PlanetSearchProfile implements Profile {
 
     if (!"icon-river".equals(pointDocument.poiIcon) && 
         !"Bicycle".equals(pointDocument.poiCategory) && 
-        !"Hiking".equals(pointDocument.poiCategory)) {
+        !"Hiking".equals(pointDocument.poiCategory) &&
+        !"4x4".equals(pointDocument.poiCategory)) {
       return null;
     }
     // then store a RouteRelationInfo instance with tags we'll need later
@@ -641,6 +642,13 @@ public class PlanetSearchProfile implements Profile {
                 pointDocument.poiIcon = "icon-bike";
                 pointDocument.poiCategory = "Bicycle";
                 return;
+            case "road":
+                if ("yes".equals(feature.getTag("scenic"))) {
+                    pointDocument.poiIconColor = "black";
+                    pointDocument.poiCategory = "4x4";
+                    pointDocument.poiIcon = "icon-four-by-four";
+                    return;
+                }
         }
     }
     if (feature.getString("historic") != null) {
