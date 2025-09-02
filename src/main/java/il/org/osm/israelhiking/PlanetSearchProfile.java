@@ -342,8 +342,12 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private boolean processHighwayFeautre(SourceFeature feature, FeatureCollector features) throws GeometryException {
-    if (!feature.hasTag("highway") || !feature.hasTag("name")) {
+    if (!feature.hasTag("highway")) {
       return false;
+    }
+    if (!feature.hasTag("name")) {
+      // Highways without a name should not be included in the search or POI layer.
+      return true;
     }
     var point = GeoUtils.point(feature.worldGeometry().getCoordinate());
     var pointDocument = new PointDocument();
