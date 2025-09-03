@@ -7,6 +7,6 @@ import org.junit.jupiter.api.Test;
 public class E2ETest {
     @Test
     public void test() throws Exception {
-        MainClass.main(new String[]{ "--download", "--external-file-path", "./src/test/resources/extenal.geojson"});
+        MainClass.main(new String[]{ "--download", "--external-file-path", "./src/test/resources/external.geojson"});
     }
 }

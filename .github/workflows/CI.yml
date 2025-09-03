@@ -20,7 +20,7 @@ jobs:
       - name: Build index and PMTiles
         run: |-
           mkdir -p ./data/input
-          cp ./src/test/resources/extenal.geojson ./data/input/external.geojson
+          cp ./src/test/resources/external.geojson ./data/input/external.geojson
           docker compose up planet-search 
       - name: End to End tests using curl
         run: |
