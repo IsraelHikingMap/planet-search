@@ -37,6 +37,7 @@ public class PlanetSearchProfile implements Profile {
   public static final String POINTS_LAYER_NAME = "global_points";
 
   private static final Map<String, MinWayIdFinder> Singles = new ConcurrentHashMap<>();
+  private static final Map<String, MinWayIdFinder> NamedHighways = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> Waterways = new ConcurrentHashMap<>();
 
   public PlanetSearchProfile(PlanetilerConfig config, ElasticsearchClient esClient, String pointsIndexName, String bboxIndexName, String[] supportedLnaguages) {
@@ -154,8 +155,22 @@ public class PlanetSearchProfile implements Profile {
           Waterways.get(waterwayName).addWayId(way.id());
         }
       }
+      return;
     }
     
+    if (way.hasTag("highway", "track", "path", "footway", "cycleway") && way.hasTag("name")) {
+      String highwayName = way.getString("name");
+      synchronized(highwayName.intern()) {
+        if (!NamedHighways.containsKey(highwayName)) {
+          var finder = new MinWayIdFinder();
+          finder.addWayId(way.id());
+          NamedHighways.put(highwayName, finder);
+        } else {
+          NamedHighways.get(highwayName).addWayId(way.id());
+        }
+      }
+      return;
+    }
   }
 
   @Override
@@ -348,20 +363,43 @@ public class PlanetSearchProfile implements Profile {
       // Highways without a name should not be included in the search or POI layer.
       return true;
     }
-    var point = GeoUtils.point(feature.worldGeometry().getCoordinate());
-    var pointDocument = new PointDocument();
-    convertTagsToDocument(pointDocument, feature);
-    pointDocument.poiSource = "OSM";
-    var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
-    pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
-    setIconColorCategory(pointDocument, feature);
-
-    if (pointDocument.poiIcon == "icon-search") {
+    if (feature.isPoint()) {
+      // We don't want to process highway nodes (bus stops, etc.) here.
+      return false;
+    }
+    if (!feature.hasTag("highway", "track", "path", "footway", "cycleway")) {
+      return true;
+    }
+    
+    String name = feature.getString("name");
+    if (!NamedHighways.containsKey(name)) {
       return true;
     }
 
-    insertPointToElasticsearch(pointDocument, sourceFeatureToDocumentId(feature));
-    return true;
+    var highway = NamedHighways.get(name);
+    synchronized(highway) {
+
+      highway.lineMerger.add(feature.worldGeometry());
+      highway.ids.remove(feature.id());
+
+      if (highway.minId == feature.id()) {
+        highway.representingFeature = feature;
+      }
+      if (!highway.ids.isEmpty()) {
+        return true;
+      }
+      var minIdFeature = highway.representingFeature;
+      var point = GeoUtils.point(((Geometry)highway.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
+      var pointDocument = new PointDocument();
+      setIconColorCategory(pointDocument, minIdFeature);
+      convertTagsToDocument(pointDocument, minIdFeature);
+      pointDocument.poiSource = "OSM";
+      var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
+      pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
+      insertPointToElasticsearch(pointDocument, sourceFeatureToDocumentId(feature));
+
+      return true;
+    }
   }
 
   private boolean processOtherSourceFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
