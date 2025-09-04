@@ -2,7 +2,6 @@ package il.org.osm.israelhiking;
 
 import static com.onthegomap.planetiler.reader.osm.OsmElement.Type.WAY;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -198,8 +197,7 @@ public class PlanetSearchProfile implements Profile {
         .setAttr("poiId", docId)
         .setAttr("identifier", feature.getString("identifier"))
         .setId(feature.id());
-    var languages = feature.hasTag("poiLanguages") ? (ArrayList<String>)feature.getTag("poiLanguages") : new ArrayList<String>();
-    setFeaturePropertiesFromPointDocument(tileFeature, pointDocument, languages.toArray(String[]::new));
+    setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
   }
 
   private void processOsmRelationFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
@@ -232,7 +230,7 @@ public class PlanetSearchProfile implements Profile {
 
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
         .setId(relation.vectorTileFeatureId(config.featureSourceIdMultiplier()));
-      setFeaturePropertiesFromPointDocument(tileFeature, relation.pointDocument, this.supportedLanguages);
+      setFeaturePropertiesFromPointDocument(tileFeature, relation.pointDocument);
     }
   }
 
@@ -279,7 +277,7 @@ public class PlanetSearchProfile implements Profile {
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
         // Override the feature id with the minimal id of the group
         .setId(minIdFeature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
-      setFeaturePropertiesFromPointDocument(tileFeature, pointDocument, this.supportedLanguages);
+      setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
     }
     return true;
   }
@@ -336,7 +334,7 @@ public class PlanetSearchProfile implements Profile {
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
         // Override the feature id with the minimal id of the group
         .setId(minIdFeature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
-      setFeaturePropertiesFromPointDocument(tileFeature, pointDocument, this.supportedLanguages);
+      setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
 
       return true;
     }
@@ -404,7 +402,7 @@ public class PlanetSearchProfile implements Profile {
     var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
         .setId(tileId);
 
-    setFeaturePropertiesFromPointDocument(tileFeature, pointDocument, this.supportedLanguages);
+    setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
     return true;
   }
 
@@ -549,7 +547,7 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.image != null;
   }
 
-  private void setFeaturePropertiesFromPointDocument(Feature tileFeature, PointDocument pointDocument, String[] languages) {
+  private void setFeaturePropertiesFromPointDocument(Feature tileFeature, PointDocument pointDocument) {
     tileFeature.setAttr("wikidata", pointDocument.wikidata)
         .setAttr("wikimedia_commons", pointDocument.wikimedia_commons)
         .setAttr("image", pointDocument.image)
@@ -557,7 +555,6 @@ public class PlanetSearchProfile implements Profile {
         .setAttr("poiIconColor", pointDocument.poiIconColor)
         .setAttr("poiCategory", pointDocument.poiCategory)
         .setAttr("poiSource", pointDocument.poiSource)
-        .setAttr("poiLanguages", String.join(",", languages))
         .setZoomRange(10, 14)
         .setBufferPixels(0);
     for (String lang : supportedLanguages) {
