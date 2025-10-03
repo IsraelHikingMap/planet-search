@@ -16,11 +16,39 @@
     <maven.compiler.target>21</maven.compiler.target>
   </properties>
 
+   <repositories>
+    <!-- Planetiler depends on geotools for shapefile processing, which is not in maven central. Add here: 
+    <repository>
+      <id>osgeo</id>
+      <name>OSGeo Release Repository</name>
+      <url>https://repo.osgeo.org/repository/release/</url>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+      <releases>
+        <enabled>true</enabled>
+      </releases>
+    </repository>
+    -->
+    <!-- Get planetiler snapshot builds from here: -->
+    <repository>
+      <name>Central Portal Snapshots</name>
+      <id>central-portal-snapshots</id>
+      <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+      <snapshots>
+        <enabled>true</enabled>
+      </snapshots>
+      <releases>
+        <enabled>false</enabled>
+      </releases>
+    </repository>
+  </repositories>
+
   <dependencies>
     <dependency>
       <groupId>com.onthegomap.planetiler</groupId>
       <artifactId>planetiler-core</artifactId>
-      <version>0.9.1</version>
+      <version>0.9.3-SNAPSHOT</version>
     </dependency>
 
     <dependency>

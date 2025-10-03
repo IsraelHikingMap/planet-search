@@ -22,9 +22,13 @@ public class RelationInfo implements OsmRelationInfo {
         return this._id;
     }
 
+    boolean isSuperRelation;
     Long firstMemberId;
     Long secondMemberId;
-    List<Long> memberIds;
+    List<Long> waysMemberIds;
+    List<Long> RelationMemberIds;
     SourceFeature firstMemberFeature;
     SourceFeature secondMemberFeature;
+
+    
 }
