@@ -238,7 +238,7 @@ public class PlanetSearchProfile implements Profile {
   private void processOsmRelationFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
     // get all the RouteRelationInfo instances we returned from preprocessOsmRelation that
     // this way belongs to
-    for (var routeInfo : feature.relationInfo(RelationInfo.class)) {
+    for (var routeInfo : feature.relationInfo(RelationInfo.class, true)) {
       // (routeInfo.role() also has the "role" of this relation member if needed)
       RelationInfo relation = routeInfo.relation();
       relation.waysMemberIds.remove(feature.id());
@@ -253,7 +253,7 @@ public class PlanetSearchProfile implements Profile {
 
     handleSuperRelationMembersUpdate(feature);
 
-    for (var routeInfo : feature.relationInfo(RelationInfo.class)) {
+    for (var routeInfo : feature.relationInfo(RelationInfo.class, true)) {
       RelationInfo relation = routeInfo.relation();
       if (!relation.waysMemberIds.isEmpty() || !relation.RelationMemberIds.isEmpty()) {
         continue;
@@ -610,12 +610,12 @@ public class PlanetSearchProfile implements Profile {
     var removedElement = false;
     do {
       removedElement = false;
-      for (var routeInfo : feature.relationInfo(RelationInfo.class)) {
+      for (var routeInfo : feature.relationInfo(RelationInfo.class, true)) {
         RelationInfo relation = routeInfo.relation();
         if (!relation.waysMemberIds.isEmpty() || !relation.RelationMemberIds.isEmpty()) {
           continue;
         }
-        for (var superRouteInfo : feature.relationInfo(RelationInfo.class)) {
+        for (var superRouteInfo : feature.relationInfo(RelationInfo.class, true)) {
           RelationInfo superRelation = superRouteInfo.relation();
           if (!superRelation.isSuperRelation) {
             continue;
