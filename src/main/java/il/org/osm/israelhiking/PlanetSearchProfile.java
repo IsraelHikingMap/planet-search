@@ -1,5 +1,6 @@
 package il.org.osm.israelhiking;
 
+import static com.onthegomap.planetiler.reader.osm.OsmElement.Type.RELATION;
 import static com.onthegomap.planetiler.reader.osm.OsmElement.Type.WAY;
 
 import java.util.Arrays;
@@ -108,24 +109,43 @@ public class PlanetSearchProfile implements Profile {
       return null;
     }
     // then store a RouteRelationInfo instance with tags we'll need later
-    var members_ids = relation.members()
+    var waysMemberIds = relation.members()
         .stream()
         .filter(member -> member.type() == WAY)
         .mapToLong(OsmElement.Relation.Member::ref)
         .boxed()
         .collect(Collectors.toList());
-    if (members_ids.isEmpty()) {
+
+    var relationMemberIds = relation.members()
+        .stream()
+        .filter(member -> member.type() == RELATION)
+        .mapToLong(OsmElement.Relation.Member::ref)
+        .boxed()
+        .collect(Collectors.toList());
+
+    if (waysMemberIds.isEmpty() && relationMemberIds.isEmpty()) {
       return null;
     }
     var info = new RelationInfo(relation.id());
     
     convertTagsToDocument(pointDocument, relation);
+
+    if (pointDocument.name.isEmpty()) {
+      return null;
+    }
     pointDocument.poiSource = "OSM";
     info.pointDocument = pointDocument;
-    info.firstMemberId = members_ids.getFirst();
-    info.secondMemberId = members_ids.size() > 1 ? members_ids.get(1) : -1;
-    info.memberIds = Collections.synchronizedList(members_ids);
-
+    if (waysMemberIds.size() > 0) {
+      info.firstMemberId = waysMemberIds.getFirst();
+      info.secondMemberId = waysMemberIds.size() > 1 ? waysMemberIds.get(1) : -1;
+    } else if (relationMemberIds.size() > 0) {
+      info.firstMemberId = relationMemberIds.getFirst();
+      info.secondMemberId = relationMemberIds.size() > 1 ? relationMemberIds.get(1) : -1;
+    }
+    
+    info.waysMemberIds = Collections.synchronizedList(waysMemberIds);
+    info.RelationMemberIds = Collections.synchronizedList(relationMemberIds);
+    info.isSuperRelation = info.RelationMemberIds.size() > 0;
     return List.of(info);
   }
 
@@ -216,15 +236,10 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void processOsmRelationFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
-    // get all the RouteRelationInfo instances we returned from preprocessOsmRelation that
-    // this way belongs to
-    for (var routeInfo : feature.relationInfo(RelationInfo.class)) {
-      // (routeInfo.role() also has the "role" of this relation member if needed)
+    // get all the RouteRelationInfo instances we returned from preprocessOsmRelation that this way belongs to, including super relations.
+    for (var routeInfo : feature.relationInfo(RelationInfo.class, true)) {
       RelationInfo relation = routeInfo.relation();
-      if (relation.pointDocument.name.isEmpty()) {
-        continue;
-      }
-      relation.memberIds.remove(feature.id());
+      relation.waysMemberIds.remove(feature.id());
 
       if (relation.firstMemberId == feature.id()) {
         relation.firstMemberFeature = feature;
@@ -232,12 +247,17 @@ public class PlanetSearchProfile implements Profile {
       if (relation.secondMemberId == feature.id()) {
         relation.secondMemberFeature = feature;
       }
+    }
 
-      if (!relation.memberIds.isEmpty()) {
+    handleSuperRelationMembersUpdate(feature);
+
+    for (var routeInfo : feature.relationInfo(RelationInfo.class, true)) {
+      RelationInfo relation = routeInfo.relation();
+      if (!relation.waysMemberIds.isEmpty() || !relation.RelationMemberIds.isEmpty()) {
         continue;
       }
       // All relation members were reached. Add a POI element for line relation
-      var point = getFirstPointOfLineRelation(relation);
+      var point = getFirstPointOfLineRelation(relation.firstMemberFeature, relation.secondMemberFeature);
       var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
       relation.pointDocument.location = new double[]{lngLatPoint.getX(), lngLatPoint.getY()};
 
@@ -558,16 +578,15 @@ public class PlanetSearchProfile implements Profile {
    * @return the first point of the trail relation
    * @throws GeometryException
    */
-  private Point getFirstPointOfLineRelation(RelationInfo relation) throws GeometryException {
-    if (relation.secondMemberFeature == null) {
-      return GeoUtils.point(relation.firstMemberFeature.worldGeometry().getCoordinate());
+  private Point getFirstPointOfLineRelation(SourceFeature firstMemberFeature, SourceFeature secondMemberFeature) throws GeometryException {
+    if (secondMemberFeature == null) {
+      return GeoUtils.point(firstMemberFeature.worldGeometry().getCoordinate());
     }
 
-    var firstMemberGeometry = (LineString) relation.firstMemberFeature.line();
+    var firstMemberGeometry = (LineString) firstMemberFeature.line();
     var firstMemberStartCoordinate = firstMemberGeometry.getCoordinate();
     var firstMemberEndCoordinate = firstMemberGeometry.getCoordinateN(firstMemberGeometry.getNumPoints() - 1);
-    
-    var secondMemberGeometry = (LineString) relation.secondMemberFeature.line();
+    var secondMemberGeometry = (LineString) secondMemberFeature.line();
     var secondMemberStartCoordinate = secondMemberGeometry.getCoordinate();
     var secondMemberEndCoordinate = secondMemberGeometry.getCoordinateN(secondMemberGeometry.getNumPoints() - 1);
 
@@ -578,6 +597,40 @@ public class PlanetSearchProfile implements Profile {
       return GeoUtils.point(firstMemberStartCoordinate);
     }
     return GeoUtils.point(firstMemberStartCoordinate);
+  }
+
+  /**
+   * This method removes relation members that are part of super relations and have completed the ways processing.
+   * This is done by checking for each new way that is being processed if it completes a relation, 
+   * and remove that relation from the list of parent relations, this way at some point all the ways and relations are empty
+   * and it means we can continue processing them to add them to the database and tiles.
+   * It also keeps track of the first and second member features in case they are needed to determine the first point of the relation.
+   * @param feature
+   */
+  private void handleSuperRelationMembersUpdate(SourceFeature feature) {
+    var removedElement = false;
+    do {
+      removedElement = false;
+      for (var routeInfo : feature.relationInfo(RelationInfo.class, true)) {
+        RelationInfo relation = routeInfo.relation();
+        if (!relation.waysMemberIds.isEmpty() || !relation.RelationMemberIds.isEmpty()) {
+          continue;
+        }
+        for (var superRouteInfo : feature.relationInfo(RelationInfo.class, true)) {
+          RelationInfo superRelation = superRouteInfo.relation();
+          if (!superRelation.isSuperRelation) {
+            continue;
+          }
+          if (superRelation.RelationMemberIds.remove(relation.id())) {
+            removedElement = true;
+            if (superRelation.firstMemberId == relation.id()) {
+              superRelation.firstMemberFeature = relation.firstMemberFeature;
+              superRelation.secondMemberFeature = relation.secondMemberFeature;
+            }
+          }
+        }
+      }
+    } while (removedElement);
   }
 
   private boolean isInterestingPoint(PointDocument pointDocument) {
