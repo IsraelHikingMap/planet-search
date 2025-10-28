@@ -236,10 +236,8 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void processOsmRelationFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
-    // get all the RouteRelationInfo instances we returned from preprocessOsmRelation that
-    // this way belongs to
+    // get all the RouteRelationInfo instances we returned from preprocessOsmRelation that this way belongs to, including super relations.
     for (var routeInfo : feature.relationInfo(RelationInfo.class, true)) {
-      // (routeInfo.role() also has the "role" of this relation member if needed)
       RelationInfo relation = routeInfo.relation();
       relation.waysMemberIds.remove(feature.id());
 
@@ -603,6 +601,9 @@ public class PlanetSearchProfile implements Profile {
 
   /**
    * This method removes relation members that are part of super relations and have completed the ways processing.
+   * This is done by checking for each new way that is being processed if it completes a relation, 
+   * and remove that relation from the list of parent relations, this way at some point all the ways and relations are empty
+   * and it means we can continue processing them to add them to the database and tiles.
    * It also keeps track of the first and second member features in case they are needed to determine the first point of the relation.
    * @param feature
    */
