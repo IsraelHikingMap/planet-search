@@ -138,9 +138,6 @@ public class PlanetSearchProfile implements Profile {
 
     convertTagsToDocument(pointDocument, relation);
 
-    if (pointDocument.name.isEmpty()) {
-      return null;
-    }
     pointDocument.poiSource = "OSM";
     info.pointDocument = pointDocument;
     if (waysMemberIds.size() > 0) {
@@ -268,6 +265,10 @@ public class PlanetSearchProfile implements Profile {
     for (var routeInfo : feature.relationInfo(RelationInfo.class, true)) {
       RelationInfo relation = routeInfo.relation();
       if (!relation.waysMemberIds.isEmpty() || !relation.RelationMemberIds.isEmpty()) {
+        continue;
+      }
+
+      if (relation.pointDocument.name.isEmpty()) {
         continue;
       }
       // All relation members were reached. Add a POI element for line relation
