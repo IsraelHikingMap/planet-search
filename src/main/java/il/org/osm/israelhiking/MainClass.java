@@ -11,31 +11,38 @@ import java.nio.file.Path;
 public class MainClass {
 
     /** Static utility class should not be instantiated. */
-    private MainClass() {}
+    private MainClass() {
+    }
 
-    /** 
+    /**
      * Main entry point for the application.
-     * @throws Exception 
+     * 
+     * @throws Exception
      */
     public static void main(String[] args) throws Exception {
         run(Arguments.fromArgsOrConfigFile(args));
     }
 
     static void run(Arguments args) throws Exception {
-        // Planetiler is a convenience wrapper around the lower-level API for the most common use-cases.
+        // Planetiler is a convenience wrapper around the lower-level API for the most
+        // common use-cases.
         // See ToiletsOverlayLowLevelApi for an example using the lower-level API
         Planetiler planetiler = Planetiler.create(args);
-        
+
         var esAddress = args.getString("es-address", "Elasticsearch address", "http://localhost:9200");
         var esClient = ElasticsearchHelper.createElasticsearchClient(esAddress);
         try {
-            var pointsIndexAlias = args.getString("es-points-index-alias", "Elasticsearch index to populate points", "points");
-            var bboxIndexAlias = args.getString("es-bbox-index-alias", "Elasticsearch index to populate bounding boxes", "bbox");
+            var pointsIndexAlias = args.getString("es-points-index-alias", "Elasticsearch index to populate points",
+                    "points");
+            var bboxIndexAlias = args.getString("es-bbox-index-alias", "Elasticsearch index to populate bounding boxes",
+                    "bbox");
             var supportedLanguages = args.getString("languages", "Languages to support", "en,he,ru,ar").split(",");
             var externalFilePath = args.getString("external-file-path", "External file path", "");
-            var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias, supportedLanguages);
+            var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias,
+                    supportedLanguages);
             var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
-            var profile = new PlanetSearchProfile(planetiler.config(), esClient, targetPointsIndex, targetBBoxIndex, supportedLanguages);
+            var profile = new PlanetSearchProfile(planetiler.config(), esClient, targetPointsIndex, targetBBoxIndex,
+                    supportedLanguages);
 
             String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
             planetiler.setProfile(profile);

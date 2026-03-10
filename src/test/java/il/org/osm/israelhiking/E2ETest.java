@@ -7,6 +7,11 @@ import org.junit.jupiter.api.Test;
 public class E2ETest {
     @Test
     public void test() throws Exception {
-        MainClass.main(new String[]{ "--download", "--external-file-path", "./src/test/resources/external.geojson"});
+        MainClass.main(new String[] { "--download", "--external-file-path", "./src/test/resources/external.geojson" });
+    }
+
+    @Test
+    public void testMissingSuperRelation() throws Exception {
+        MainClass.main(new String[] { "--download", "--area", "auvergne" });
     }
 }

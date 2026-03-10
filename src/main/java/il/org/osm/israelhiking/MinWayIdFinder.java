@@ -12,10 +12,11 @@ class MinWayIdFinder {
   long minId;
   LineMerger lineMerger;
   /**
-   * The feature that reporesens the merged line. In our cause, the feature with the minimal id.
+   * The feature that reporesens the merged line. In our cause, the feature with
+   * the minimal id.
    */
   SourceFeature representingFeature;
-  
+
   public MinWayIdFinder() {
     this.minId = Integer.MAX_VALUE;
     this.lineMerger = new LineMerger();

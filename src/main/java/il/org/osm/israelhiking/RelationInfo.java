@@ -18,7 +18,7 @@ public class RelationInfo implements OsmRelationInfo {
 
     // OSM ID of the relation (required):
     @Override
-    public long id() { 
+    public long id() {
         return this._id;
     }
 
@@ -30,5 +30,4 @@ public class RelationInfo implements OsmRelationInfo {
     SourceFeature firstMemberFeature;
     SourceFeature secondMemberFeature;
 
-    
 }

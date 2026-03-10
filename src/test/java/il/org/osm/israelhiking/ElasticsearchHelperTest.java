@@ -34,7 +34,7 @@ class ElasticsearchServiceTest {
     @Mock
     private ElasticsearchIndicesClient indicesClient;
 
-    private final String[] supportedLanguages = {"en", "es"};
+    private final String[] supportedLanguages = { "en", "es" };
     private final String indexAlias = "test-index";
 
     @BeforeEach
@@ -44,25 +44,35 @@ class ElasticsearchServiceTest {
 
     @Test
     void testCreatePointIndexThatDoesntHaveAlias_ShouldDeleteItBeforeCreating() throws Exception {
-        when(indicesClient.existsAlias(ArgumentMatchers.<Function<ExistsAliasRequest.Builder, ObjectBuilder<ExistsAliasRequest>>>any())).thenReturn(new BooleanResponse(false));
-        when(indicesClient.exists(ArgumentMatchers.<Function<ExistsRequest.Builder, ObjectBuilder<ExistsRequest>>>any())).thenReturn(new BooleanResponse(true));
+        when(indicesClient.existsAlias(
+                ArgumentMatchers.<Function<ExistsAliasRequest.Builder, ObjectBuilder<ExistsAliasRequest>>>any()))
+                .thenReturn(new BooleanResponse(false));
+        when(indicesClient
+                .exists(ArgumentMatchers.<Function<ExistsRequest.Builder, ObjectBuilder<ExistsRequest>>>any()))
+                .thenReturn(new BooleanResponse(true));
 
         var indexName = ElasticsearchHelper.createPointsIndex(esClient, indexAlias, supportedLanguages);
 
-        verify(indicesClient).delete(ArgumentMatchers.<Function<DeleteIndexRequest.Builder, ObjectBuilder<DeleteIndexRequest>>>any());
+        verify(indicesClient).delete(
+                ArgumentMatchers.<Function<DeleteIndexRequest.Builder, ObjectBuilder<DeleteIndexRequest>>>any());
         assertEquals(indexAlias + "1", indexName);
     }
 
     @Test
     void testCreatePointIndexWhenOneExists_ShouldAddASecondOne() throws Exception {
-        when(indicesClient.existsAlias(ArgumentMatchers.<Function<ExistsAliasRequest.Builder, ObjectBuilder<ExistsAliasRequest>>>any())).thenReturn(new BooleanResponse(true));
-        when(indicesClient.exists(ArgumentMatchers.<Function<ExistsRequest.Builder, ObjectBuilder<ExistsRequest>>>any())).thenReturn(new BooleanResponse(true));
-        when(indicesClient.getAlias(ArgumentMatchers.<Function<GetAliasRequest.Builder, ObjectBuilder<GetAliasRequest>>>any()))
-            .thenReturn(GetAliasResponse.of(b -> b.result(new HashMap<String, IndexAliases>() { 
-                {
-                    put(indexAlias + "1", null);
-                }
-            })));
+        when(indicesClient.existsAlias(
+                ArgumentMatchers.<Function<ExistsAliasRequest.Builder, ObjectBuilder<ExistsAliasRequest>>>any()))
+                .thenReturn(new BooleanResponse(true));
+        when(indicesClient
+                .exists(ArgumentMatchers.<Function<ExistsRequest.Builder, ObjectBuilder<ExistsRequest>>>any()))
+                .thenReturn(new BooleanResponse(true));
+        when(indicesClient
+                .getAlias(ArgumentMatchers.<Function<GetAliasRequest.Builder, ObjectBuilder<GetAliasRequest>>>any()))
+                .thenReturn(GetAliasResponse.of(b -> b.result(new HashMap<String, IndexAliases>() {
+                    {
+                        put(indexAlias + "1", null);
+                    }
+                })));
 
         var indexName = ElasticsearchHelper.createPointsIndex(esClient, indexAlias, supportedLanguages);
 
@@ -71,28 +81,39 @@ class ElasticsearchServiceTest {
 
     @Test
     void testCreatePointIndexWhenSecondaryExists_ShouldAddTheFirstAndDelete() throws Exception {
-        when(indicesClient.existsAlias(ArgumentMatchers.<Function<ExistsAliasRequest.Builder, ObjectBuilder<ExistsAliasRequest>>>any())).thenReturn(new BooleanResponse(true));
-        when(indicesClient.exists(ArgumentMatchers.<Function<ExistsRequest.Builder, ObjectBuilder<ExistsRequest>>>any())).thenReturn(new BooleanResponse(true));
-        when(indicesClient.getAlias(ArgumentMatchers.<Function<GetAliasRequest.Builder, ObjectBuilder<GetAliasRequest>>>any()))
-            .thenReturn(GetAliasResponse.of(b -> b.result(new HashMap<String, IndexAliases>() { 
-                {
-                    put(indexAlias + "2", null);
-                }
-            })));
+        when(indicesClient.existsAlias(
+                ArgumentMatchers.<Function<ExistsAliasRequest.Builder, ObjectBuilder<ExistsAliasRequest>>>any()))
+                .thenReturn(new BooleanResponse(true));
+        when(indicesClient
+                .exists(ArgumentMatchers.<Function<ExistsRequest.Builder, ObjectBuilder<ExistsRequest>>>any()))
+                .thenReturn(new BooleanResponse(true));
+        when(indicesClient
+                .getAlias(ArgumentMatchers.<Function<GetAliasRequest.Builder, ObjectBuilder<GetAliasRequest>>>any()))
+                .thenReturn(GetAliasResponse.of(b -> b.result(new HashMap<String, IndexAliases>() {
+                    {
+                        put(indexAlias + "2", null);
+                    }
+                })));
 
         var indexName = ElasticsearchHelper.createPointsIndex(esClient, indexAlias, supportedLanguages);
 
         assertEquals(indexAlias + "1", indexName);
-        verify(indicesClient).delete(ArgumentMatchers.<Function<DeleteIndexRequest.Builder, ObjectBuilder<DeleteIndexRequest>>>any());
+        verify(indicesClient).delete(
+                ArgumentMatchers.<Function<DeleteIndexRequest.Builder, ObjectBuilder<DeleteIndexRequest>>>any());
     }
 
     @Test
     void testCreateBboxIndexThatDoesntHaveAlias_DeleteIt() throws Exception {
-        when(indicesClient.existsAlias(ArgumentMatchers.<Function<ExistsAliasRequest.Builder, ObjectBuilder<ExistsAliasRequest>>>any())).thenReturn(new BooleanResponse(false));
-        when(indicesClient.exists(ArgumentMatchers.<Function<ExistsRequest.Builder, ObjectBuilder<ExistsRequest>>>any())).thenReturn(new BooleanResponse(true));
+        when(indicesClient.existsAlias(
+                ArgumentMatchers.<Function<ExistsAliasRequest.Builder, ObjectBuilder<ExistsAliasRequest>>>any()))
+                .thenReturn(new BooleanResponse(false));
+        when(indicesClient
+                .exists(ArgumentMatchers.<Function<ExistsRequest.Builder, ObjectBuilder<ExistsRequest>>>any()))
+                .thenReturn(new BooleanResponse(true));
 
         ElasticsearchHelper.createBBoxIndex(esClient, indexAlias, supportedLanguages);
 
-        verify(indicesClient).delete(ArgumentMatchers.<Function<DeleteIndexRequest.Builder, ObjectBuilder<DeleteIndexRequest>>>any());
+        verify(indicesClient).delete(
+                ArgumentMatchers.<Function<DeleteIndexRequest.Builder, ObjectBuilder<DeleteIndexRequest>>>any());
     }
 }
