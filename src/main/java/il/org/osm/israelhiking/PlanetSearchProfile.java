@@ -11,6 +11,7 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
+import org.apache.commons.lang3.math.NumberUtils;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.Point;
@@ -99,6 +100,7 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.wikidata = feature.getString("wikidata");
     pointDocument.image = feature.getString("image");
     pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+    pointDocument.website = feature.getString("website");
   }
 
   @Override
@@ -229,6 +231,8 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.poiIconColor = feature.getString("poiIconColor");
     pointDocument.poiCategory = feature.getString("poiCategory");
     pointDocument.poiSource = feature.getString("poiSource");
+    pointDocument.poiDifficulty = feature.getString("poiDifficulty");
+    pointDocument.poiLength = NumberUtils.toDouble(feature.getString("poiLength"), 0.0);
     convertTagsToDocument(pointDocument, feature);
     var point = feature.canBePolygon() ? (Point) feature.centroidIfConvex()
         : GeoUtils.point(feature.worldGeometry().getCoordinate());
@@ -250,8 +254,9 @@ public class PlanetSearchProfile implements Profile {
     // preprocessOsmRelation that this way belongs to, including super relations.
     for (var routeInfo : feature.relationInfo(RelationInfo.class, true)) {
       RelationInfo relation = routeInfo.relation();
-      relation.waysMemberIds.remove(feature.id());
-
+      if (relation.waysMemberIds.remove(feature.id())) {
+        relation.length += feature.lengthMeters();
+      }
       if (relation.firstMemberId == feature.id()) {
         relation.firstMemberFeature = feature;
       }
@@ -275,7 +280,7 @@ public class PlanetSearchProfile implements Profile {
       var point = getFirstPointOfLineRelation(relation.firstMemberFeature, relation.secondMemberFeature);
       var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
       relation.pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
-
+      relation.pointDocument.poiLength = relation.length;
       insertPointToElasticsearch(relation.pointDocument, "OSM_relation_" + relation.id());
 
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
@@ -295,7 +300,9 @@ public class PlanetSearchProfile implements Profile {
     var single = Singles.get(mtbName);
     synchronized (single) {
       single.lineMerger.add(feature.worldGeometry());
-      single.ids.remove(feature.id());
+      if (single.ids.remove(feature.id())) {
+        single.length += feature.lengthMeters();
+      }
 
       if (single.minId == feature.id()) {
         single.representingFeature = feature;
@@ -304,8 +311,6 @@ public class PlanetSearchProfile implements Profile {
         return true;
       }
       var minIdFeature = single.representingFeature;
-      var point = GeoUtils
-          .point(((Geometry) single.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
 
       var pointDocument = new PointDocument();
       convertTagsToDocument(pointDocument, feature);
@@ -319,6 +324,10 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.poiIcon = "icon-bike";
       pointDocument.poiIconColor = "gray";
       pointDocument.poiSource = "OSM";
+      pointDocument.poiLength = single.length;
+
+      var firstLine = single.lineMerger.getMergedLineStrings().iterator().next();
+      var point = GeoUtils.point(((Geometry) firstLine).getCoordinate());
       var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
       pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
 
@@ -357,7 +366,9 @@ public class PlanetSearchProfile implements Profile {
     synchronized (waterway) {
 
       waterway.lineMerger.add(feature.worldGeometry());
-      waterway.ids.remove(feature.id());
+      if (waterway.ids.remove(feature.id())) {
+        waterway.length += feature.lengthMeters();
+      }
 
       if (waterway.minId == feature.id()) {
         waterway.representingFeature = feature;
@@ -366,8 +377,6 @@ public class PlanetSearchProfile implements Profile {
         return true;
       }
       var minIdFeature = waterway.representingFeature;
-      var point = GeoUtils
-          .point(((Geometry) waterway.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
 
       var pointDocument = new PointDocument();
       convertTagsToDocument(pointDocument, feature);
@@ -375,6 +384,10 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.poiIcon = "icon-river";
       pointDocument.poiIconColor = "#1e80e3";
       pointDocument.poiSource = "OSM";
+      pointDocument.poiLength = waterway.length;
+
+      var firstLine = waterway.lineMerger.getMergedLineStrings().iterator().next();
+      var point = GeoUtils.point(((Geometry) firstLine).getCoordinate());
       var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
       pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
 
@@ -418,7 +431,9 @@ public class PlanetSearchProfile implements Profile {
     synchronized (highway) {
 
       highway.lineMerger.add(feature.worldGeometry());
-      highway.ids.remove(feature.id());
+      if (highway.ids.remove(feature.id())) {
+        highway.length += feature.lengthMeters();
+      }
 
       if (highway.minId == feature.id()) {
         highway.representingFeature = feature;
@@ -427,12 +442,14 @@ public class PlanetSearchProfile implements Profile {
         return true;
       }
       var minIdFeature = highway.representingFeature;
-      var point = GeoUtils
-          .point(((Geometry) highway.lineMerger.getMergedLineStrings().iterator().next()).getCoordinate());
       var pointDocument = new PointDocument();
       setIconColorCategory(pointDocument, minIdFeature);
       convertTagsToDocument(pointDocument, minIdFeature);
       pointDocument.poiSource = "OSM";
+      pointDocument.poiLength = highway.length;
+
+      var firstLine = highway.lineMerger.getMergedLineStrings().iterator().next();
+      var point = GeoUtils.point(((Geometry) firstLine).getCoordinate());
       var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
       pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
       insertPointToElasticsearch(pointDocument, sourceFeatureToDocumentId(feature));
@@ -654,6 +671,7 @@ public class PlanetSearchProfile implements Profile {
             continue;
           }
           if (superRelation.RelationMemberIds.remove(relation.id())) {
+            superRelation.length += relation.length;
             removedElement = true;
             if (superRelation.firstMemberId == relation.id()) {
               superRelation.firstMemberFeature = relation.firstMemberFeature;
@@ -763,7 +781,7 @@ public class PlanetSearchProfile implements Profile {
           pointDocument.poiCategory = "Bicycle";
           return;
         case "road":
-          if ("yes".equals(feature.getTag("scenic"))) {
+          if ("yes".equals(feature.getString("scenic"))) {
             pointDocument.poiIconColor = "black";
             pointDocument.poiCategory = "4x4";
             pointDocument.poiIcon = "icon-four-by-four";

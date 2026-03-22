@@ -11,6 +11,7 @@ class MinWayIdFinder {
   List<Long> ids = new CopyOnWriteArrayList<Long>();
   long minId;
   LineMerger lineMerger;
+  double length;
   /**
    * The feature that reporesens the merged line. In our cause, the feature with
    * the minimal id.
@@ -20,6 +21,7 @@ class MinWayIdFinder {
   public MinWayIdFinder() {
     this.minId = Integer.MAX_VALUE;
     this.lineMerger = new LineMerger();
+    this.length = 0;
   }
 
   public void addWayId(long id) {

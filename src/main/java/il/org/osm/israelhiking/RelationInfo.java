@@ -12,6 +12,7 @@ public class RelationInfo implements OsmRelationInfo {
 
     RelationInfo(long id) {
         this._id = id;
+        this.length = 0;
     }
 
     PointDocument pointDocument;
@@ -29,5 +30,6 @@ public class RelationInfo implements OsmRelationInfo {
     List<Long> RelationMemberIds;
     SourceFeature firstMemberFeature;
     SourceFeature secondMemberFeature;
+    double length;
 
 }
