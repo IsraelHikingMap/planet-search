@@ -163,10 +163,10 @@ public class PlanetSearchProfile implements Profile {
       synchronized (mtbName.intern()) {
         if (!Singles.containsKey(mtbName)) {
           var finder = new MinWayIdFinder();
-          finder.addWayId(way.id());
+          finder.ids.add(way.id());
           Singles.put(mtbName, finder);
         } else {
-          Singles.get(mtbName).addWayId(way.id());
+          Singles.get(mtbName).ids.add((way.id()));
         }
         return;
       }
@@ -176,10 +176,10 @@ public class PlanetSearchProfile implements Profile {
       synchronized (waterwayName.intern()) {
         if (!Waterways.containsKey(waterwayName)) {
           var finder = new MinWayIdFinder();
-          finder.addWayId(way.id());
+          finder.ids.add((way.id()));
           Waterways.put(waterwayName, finder);
         } else {
-          Waterways.get(waterwayName).addWayId(way.id());
+          Waterways.get(waterwayName).ids.add((way.id()));
         }
       }
       return;
@@ -190,10 +190,10 @@ public class PlanetSearchProfile implements Profile {
       synchronized (highwayName.intern()) {
         if (!NamedHighways.containsKey(highwayName)) {
           var finder = new MinWayIdFinder();
-          finder.addWayId(way.id());
+          finder.ids.add((way.id()));
           NamedHighways.put(highwayName, finder);
         } else {
-          NamedHighways.get(highwayName).addWayId(way.id());
+          NamedHighways.get(highwayName).ids.add((way.id()));
         }
       }
       return;
@@ -299,46 +299,44 @@ public class PlanetSearchProfile implements Profile {
     }
     var single = Singles.get(mtbName);
     synchronized (single) {
-      single.lineMerger.add(feature.worldGeometry());
-      if (single.ids.remove(feature.id())) {
-        single.length += feature.lengthMeters();
-      }
+      single.features.add(feature);
+      single.ids.remove(feature.id());
 
-      if (single.minId == feature.id()) {
-        single.representingFeature = feature;
-      }
       if (!single.ids.isEmpty()) {
         return true;
       }
-      var minIdFeature = single.representingFeature;
 
-      var pointDocument = new PointDocument();
-      convertTagsToDocument(pointDocument, feature);
-      for (String language : supportedLanguages) {
-        CoalesceIntoMap(pointDocument.name, language, minIdFeature.getString("mtb:name:" + language));
+      for (var mergedFeature : single.getMergedFeatures()) {
+        var minIdFeature = mergedFeature.representingFeature;
+
+        var pointDocument = new PointDocument();
+        convertTagsToDocument(pointDocument, feature);
+        for (String language : supportedLanguages) {
+          CoalesceIntoMap(pointDocument.name, language, minIdFeature.getString("mtb:name:" + language));
+        }
+        if (minIdFeature.hasTag("mtb:name")) {
+          CoalesceIntoMap(pointDocument.name, "default", minIdFeature.getString("mtb:name"));
+        }
+        pointDocument.poiCategory = "Bicycle";
+        pointDocument.poiIcon = "icon-bike";
+        pointDocument.poiIconColor = "gray";
+        pointDocument.poiSource = "OSM";
+        pointDocument.poiLength = mergedFeature.length;
+
+        var firstLine = mergedFeature.geometry;
+        var point = GeoUtils.point(((Geometry) firstLine).getCoordinate());
+        var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
+        pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
+
+        insertPointToElasticsearch(pointDocument, "OSM_way_" + mergedFeature.minId);
+        // This was the last way with the same mtb:name, so we can merge the lines and
+        // add the feature
+        // Add a POI element for a SingleTrack
+        var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
+            // Override the feature id with the minimal id of the group
+            .setId(minIdFeature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
+        setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
       }
-      if (minIdFeature.hasTag("mtb:name")) {
-        CoalesceIntoMap(pointDocument.name, "default", minIdFeature.getString("mtb:name"));
-      }
-      pointDocument.poiCategory = "Bicycle";
-      pointDocument.poiIcon = "icon-bike";
-      pointDocument.poiIconColor = "gray";
-      pointDocument.poiSource = "OSM";
-      pointDocument.poiLength = single.length;
-
-      var firstLine = single.lineMerger.getMergedLineStrings().iterator().next();
-      var point = GeoUtils.point(((Geometry) firstLine).getCoordinate());
-      var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
-      pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
-
-      insertPointToElasticsearch(pointDocument, "OSM_way_" + single.minId);
-      // This was the last way with the same mtb:name, so we can merge the lines and
-      // add the feature
-      // Add a POI element for a SingleTrack
-      var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
-          // Override the feature id with the minimal id of the group
-          .setId(minIdFeature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
-      setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
     }
     return true;
   }
@@ -365,43 +363,38 @@ public class PlanetSearchProfile implements Profile {
     var waterway = Waterways.get(name);
     synchronized (waterway) {
 
-      waterway.lineMerger.add(feature.worldGeometry());
-      if (waterway.ids.remove(feature.id())) {
-        waterway.length += feature.lengthMeters();
-      }
-
-      if (waterway.minId == feature.id()) {
-        waterway.representingFeature = feature;
-      }
+      waterway.features.add(feature);
+      waterway.ids.remove(feature.id());
       if (!waterway.ids.isEmpty()) {
         return true;
       }
-      var minIdFeature = waterway.representingFeature;
+      for (var mergedFeature : waterway.getMergedFeatures()) {
+        var minIdFeature = mergedFeature.representingFeature;
 
-      var pointDocument = new PointDocument();
-      convertTagsToDocument(pointDocument, feature);
-      pointDocument.poiCategory = "Water";
-      pointDocument.poiIcon = "icon-river";
-      pointDocument.poiIconColor = "#1e80e3";
-      pointDocument.poiSource = "OSM";
-      pointDocument.poiLength = waterway.length;
+        var pointDocument = new PointDocument();
+        convertTagsToDocument(pointDocument, minIdFeature);
+        pointDocument.poiCategory = "Water";
+        pointDocument.poiIcon = "icon-river";
+        pointDocument.poiIconColor = "#1e80e3";
+        pointDocument.poiSource = "OSM";
+        pointDocument.poiLength = mergedFeature.length;
 
-      var firstLine = waterway.lineMerger.getMergedLineStrings().iterator().next();
-      var point = GeoUtils.point(((Geometry) firstLine).getCoordinate());
-      var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
-      pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
+        var firstLine = mergedFeature.geometry;
+        var point = GeoUtils.point(((Geometry) firstLine).getCoordinate());
+        var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
+        pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
 
-      insertPointToElasticsearch(pointDocument, "OSM_way_" + waterway.minId);
-      if (!isInterestingPoint(pointDocument)) {
-        // Skip adding features without any description or image to tiles
-        return true;
+        insertPointToElasticsearch(pointDocument, "OSM_way_" + mergedFeature.minId);
+        if (!isInterestingPoint(pointDocument)) {
+          // Skip adding features without any description or image to tiles
+          continue;
+        }
+
+        var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
+            // Override the feature id with the minimal id of the group
+            .setId(minIdFeature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
+        setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
       }
-
-      var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
-          // Override the feature id with the minimal id of the group
-          .setId(minIdFeature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
-      setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
-
       return true;
     }
   }
@@ -430,29 +423,26 @@ public class PlanetSearchProfile implements Profile {
     var highway = NamedHighways.get(name);
     synchronized (highway) {
 
-      highway.lineMerger.add(feature.worldGeometry());
-      if (highway.ids.remove(feature.id())) {
-        highway.length += feature.lengthMeters();
-      }
+      highway.features.add(feature);
+      highway.ids.remove(feature.id());
 
-      if (highway.minId == feature.id()) {
-        highway.representingFeature = feature;
-      }
       if (!highway.ids.isEmpty()) {
         return true;
       }
-      var minIdFeature = highway.representingFeature;
-      var pointDocument = new PointDocument();
-      setIconColorCategory(pointDocument, minIdFeature);
-      convertTagsToDocument(pointDocument, minIdFeature);
-      pointDocument.poiSource = "OSM";
-      pointDocument.poiLength = highway.length;
 
-      var firstLine = highway.lineMerger.getMergedLineStrings().iterator().next();
-      var point = GeoUtils.point(((Geometry) firstLine).getCoordinate());
-      var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
-      pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
-      insertPointToElasticsearch(pointDocument, sourceFeatureToDocumentId(feature));
+      for (var mergedFeature : highway.getMergedFeatures()) {
+        var minIdFeature = mergedFeature.representingFeature;
+        var pointDocument = new PointDocument();
+        setIconColorCategory(pointDocument, minIdFeature);
+        convertTagsToDocument(pointDocument, minIdFeature);
+        pointDocument.poiSource = "OSM";
+        pointDocument.poiLength = mergedFeature.length;
+
+        var point = GeoUtils.point((mergedFeature.geometry.getCoordinate()));
+        var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
+        pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
+        insertPointToElasticsearch(pointDocument, "OSM_way_" + mergedFeature.minId);
+      }
 
       return true;
     }
