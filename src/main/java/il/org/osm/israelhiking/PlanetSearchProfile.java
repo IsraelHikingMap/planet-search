@@ -688,6 +688,7 @@ public class PlanetSearchProfile implements Profile {
         .setAttr("poiCategory", pointDocument.poiCategory)
         .setAttr("poiSource", pointDocument.poiSource)
         .setAttr("poiLength", pointDocument.poiLength)
+        .setAttr("poiDifficulty", pointDocument.poiDifficulty)
         .setZoomRange(10, 14)
         .setBufferPixels(0);
     for (String lang : supportedLanguages) {

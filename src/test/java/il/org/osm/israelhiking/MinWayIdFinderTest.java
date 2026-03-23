@@ -64,4 +64,16 @@ public class MinWayIdFinderTest {
         assertEquals(1, merged.size());
         assertEquals(2L, merged.getFirst().minId);
     }
+
+    @Test
+    public void shouldMergeSelfClosingFeatures() throws GeometryException {
+        var finder = new MinWayIdFinder();
+        finder.features.add(makeLineFeature(5L, 0, 0, 1, 1));
+        finder.features.add(makeLineFeature(2L, 2, 2, 3, 3));
+        finder.features.add(makeLineFeature(9L, 1, 1, 2, 2));
+        finder.features.add(makeLineFeature(10L, 3, 3, 0, 0));
+        var merged = finder.getMergedFeatures();
+        assertEquals(1, merged.size());
+        assertEquals(2L, merged.getFirst().minId);
+    }
 }

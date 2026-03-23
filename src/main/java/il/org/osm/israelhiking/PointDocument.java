@@ -13,7 +13,7 @@ class PointDocument {
   public String poiIcon;
   public String poiIconColor;
   public String poiSource;
-  public String poiDifficulty = "Unknown";
+  public String poiDifficulty;
   /** Length is in meters */
   public double poiLength = 0;
   public String website;
