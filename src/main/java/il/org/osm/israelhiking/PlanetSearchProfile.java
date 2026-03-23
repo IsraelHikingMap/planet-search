@@ -254,14 +254,16 @@ public class PlanetSearchProfile implements Profile {
     // preprocessOsmRelation that this way belongs to, including super relations.
     for (var routeInfo : feature.relationInfo(RelationInfo.class, true)) {
       RelationInfo relation = routeInfo.relation();
-      if (relation.waysMemberIds.remove(feature.id())) {
-        relation.length += feature.lengthMeters();
-      }
-      if (relation.firstMemberId == feature.id()) {
-        relation.firstMemberFeature = feature;
-      }
-      if (relation.secondMemberId == feature.id()) {
-        relation.secondMemberFeature = feature;
+      synchronized (relation) {
+        if (relation.waysMemberIds.remove(feature.id())) {
+          relation.length += feature.lengthMeters();
+        }
+        if (relation.firstMemberId == feature.id()) {
+          relation.firstMemberFeature = feature;
+        }
+        if (relation.secondMemberId == feature.id()) {
+          relation.secondMemberFeature = feature;
+        }
       }
     }
 
@@ -660,12 +662,14 @@ public class PlanetSearchProfile implements Profile {
           if (!superRelation.isSuperRelation) {
             continue;
           }
-          if (superRelation.RelationMemberIds.remove(relation.id())) {
-            superRelation.length += relation.length;
-            removedElement = true;
-            if (superRelation.firstMemberId == relation.id()) {
-              superRelation.firstMemberFeature = relation.firstMemberFeature;
-              superRelation.secondMemberFeature = relation.secondMemberFeature;
+          synchronized (superRelation) {
+            if (superRelation.RelationMemberIds.remove(relation.id())) {
+              superRelation.length += relation.length;
+              removedElement = true;
+              if (superRelation.firstMemberId == relation.id()) {
+                superRelation.firstMemberFeature = relation.firstMemberFeature;
+                superRelation.secondMemberFeature = relation.secondMemberFeature;
+              }
             }
           }
         }

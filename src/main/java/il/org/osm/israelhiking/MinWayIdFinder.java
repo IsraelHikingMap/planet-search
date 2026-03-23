@@ -22,7 +22,6 @@ class MinWayIdFinder {
   List<SourceFeature> features = new CopyOnWriteArrayList<SourceFeature>();
 
   public List<MergedFeature> getMergedFeatures() throws GeometryException {
-    var merged = false;
     var mergedFeatures = new ArrayList<MergedFeature>();
     for (SourceFeature feature : features) {
       var mergedFeature = new MergedFeature();
@@ -33,31 +32,48 @@ class MinWayIdFinder {
       mergedFeatures.add(mergedFeature);
     }
     features = new CopyOnWriteArrayList<SourceFeature>(); // clear memory
-    do {
-      merged = false;
-      for (int i = 0; i < mergedFeatures.size(); i++) {
-        for (int j = i + 1; j < mergedFeatures.size(); j++) {
-          var lineMerger = new LineMerger();
-          var featureI = mergedFeatures.get(i);
-          var featureJ = mergedFeatures.get(j);
-          lineMerger.add(featureI.geometry);
-          lineMerger.add(featureJ.geometry);
-          if (lineMerger.getMergedLineStrings().size() == 1) {
-            featureJ.geometry = (Geometry) lineMerger.getMergedLineStrings().iterator().next();
-            featureJ.length += featureI.length;
-            if (featureI.minId < featureJ.minId) {
-              featureJ.minId = featureI.minId;
-              featureJ.representingFeature = featureI.representingFeature;
-            }
-            mergedFeatures.remove(i);
-            merged = true;
-            break;
-          }
-        }
-        if (merged)
-          break;
+    if (mergedFeatures.size() <= 1) {
+      return mergedFeatures;
+    }
+
+    int maxPasses = mergedFeatures.size();
+    for (int pass = maxPasses; pass >= 0; pass--) {
+      if (!tryMergeOnce(mergedFeatures)) {
+        break;
       }
-    } while (merged);
+      if (pass == 0) {
+        System.out.println("WARN: Failed to merge all features, " + mergedFeatures.size()
+            + " features remain, related feature id: " + mergedFeatures.get(0).minId);
+      }
+    }
+
     return mergedFeatures;
+  }
+
+  private boolean tryMergeOnce(List<MergedFeature> mergedFeatures) {
+    for (int i = 0; i < mergedFeatures.size(); i++) {
+      for (int j = i + 1; j < mergedFeatures.size(); j++) {
+        var lineMerger = new LineMerger();
+        lineMerger.add(mergedFeatures.get(i).geometry);
+        lineMerger.add(mergedFeatures.get(j).geometry);
+        if (lineMerger.getMergedLineStrings().size() == 1) {
+          mergeInto(mergedFeatures, i, j, lineMerger);
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private void mergeInto(List<MergedFeature> mergedFeatures, int i, int j, LineMerger lineMerger) {
+    var featureI = mergedFeatures.get(i);
+    var featureJ = mergedFeatures.get(j);
+    featureJ.geometry = (Geometry) lineMerger.getMergedLineStrings().iterator().next();
+    featureJ.length += featureI.length;
+    if (featureI.minId < featureJ.minId) {
+      featureJ.minId = featureI.minId;
+      featureJ.representingFeature = featureI.representingFeature;
+    }
+    mergedFeatures.remove(i);
   }
 }
