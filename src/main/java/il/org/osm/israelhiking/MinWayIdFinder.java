@@ -1,9 +1,12 @@
 package il.org.osm.israelhiking;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.operation.linemerge.LineMerger;
 
@@ -22,58 +25,73 @@ class MinWayIdFinder {
   List<SourceFeature> features = new CopyOnWriteArrayList<SourceFeature>();
 
   public List<MergedFeature> getMergedFeatures() throws GeometryException {
-    var mergedFeatures = new ArrayList<MergedFeature>();
+    if (features.isEmpty()) {
+      return List.of();
+    }
+
+    // 1. Bulk merge - single LineMerger pass over all input geometries
+    var lineMerger = new LineMerger();
     for (SourceFeature feature : features) {
-      var mergedFeature = new MergedFeature();
-      mergedFeature.minId = feature.id();
-      mergedFeature.representingFeature = feature;
-      mergedFeature.geometry = feature.worldGeometry();
-      mergedFeature.length = feature.lengthMeters();
-      mergedFeatures.add(mergedFeature);
+      lineMerger.add(feature.worldGeometry());
     }
-    features = new CopyOnWriteArrayList<SourceFeature>(); // clear memory
-    if (mergedFeatures.size() <= 1) {
-      return mergedFeatures;
-    }
+    @SuppressWarnings("unchecked")
+    Collection<Geometry> mergedGeoms = lineMerger.getMergedLineStrings();
 
-    int maxPasses = mergedFeatures.size();
-    for (int pass = maxPasses; pass >= 0; pass--) {
-      if (!tryMergeOnce(mergedFeatures)) {
-        break;
-      }
-      if (pass == 0) {
-        System.out.println("WARN: Failed to merge all features, " + mergedFeatures.size()
-            + " features remain, related feature id: " + mergedFeatures.get(0).minId);
+    // 2. Build coordinate -> merged geometry lookup by indexing ALL coordinates
+    // of every merged output. This guarantees that any input segment's
+    // endpoint will find its parent geometry regardless of whether the output
+    // is an open line or a closed ring (where LineMerger may pick an
+    // arbitrary start/end point).
+    var coordToMerged = new HashMap<CoordKey, Geometry>();
+    for (Geometry geom : mergedGeoms) {
+      for (Coordinate coord : geom.getCoordinates()) {
+        coordToMerged.put(key(coord), geom);
       }
     }
 
-    return mergedFeatures;
+    // 3. Attribute each input feature to its output geometry via endpoint lookup,
+    // aggregating minId, representingFeature, and length per output geometry.
+    var mergedFeatureMap = new HashMap<Geometry, MergedFeature>(mergedGeoms.size() * 2);
+    for (SourceFeature feature : features) {
+      Coordinate[] coords = feature.worldGeometry().getCoordinates();
+      if (coords.length == 0)
+        continue;
+
+      Geometry mergedGeom = coordToMerged.get(key(coords[0]));
+      if (mergedGeom == null) {
+        mergedGeom = coordToMerged.get(key(coords[coords.length - 1]));
+      }
+      if (mergedGeom == null)
+        continue; // shouldn't happen, but be safe
+
+      MergedFeature mf = mergedFeatureMap.computeIfAbsent(mergedGeom, g -> {
+        var newMf = new MergedFeature();
+        newMf.geometry = g;
+        newMf.minId = Long.MAX_VALUE;
+        newMf.length = 0;
+        return newMf;
+      });
+
+      mf.length += feature.lengthMeters();
+      if (feature.id() < mf.minId) {
+        mf.minId = feature.id();
+        mf.representingFeature = feature;
+      }
+    }
+
+    features = new CopyOnWriteArrayList<>(); // release memory
+    return new ArrayList<>(mergedFeatureMap.values());
   }
 
-  private boolean tryMergeOnce(List<MergedFeature> mergedFeatures) {
-    for (int i = 0; i < mergedFeatures.size(); i++) {
-      for (int j = i + 1; j < mergedFeatures.size(); j++) {
-        var lineMerger = new LineMerger();
-        lineMerger.add(mergedFeatures.get(i).geometry);
-        lineMerger.add(mergedFeatures.get(j).geometry);
-        if (lineMerger.getMergedLineStrings().size() == 1) {
-          mergeInto(mergedFeatures, i, j, lineMerger);
-          return true;
-        }
-      }
-    }
-    return false;
+  private static CoordKey key(Coordinate c) {
+    return new CoordKey(c);
   }
 
-  private void mergeInto(List<MergedFeature> mergedFeatures, int i, int j, LineMerger lineMerger) {
-    var featureI = mergedFeatures.get(i);
-    var featureJ = mergedFeatures.get(j);
-    featureJ.geometry = (Geometry) lineMerger.getMergedLineStrings().iterator().next();
-    featureJ.length += featureI.length;
-    if (featureI.minId < featureJ.minId) {
-      featureJ.minId = featureI.minId;
-      featureJ.representingFeature = featureI.representingFeature;
+  private record CoordKey(long x, long y) {
+    private static final double SCALE = 1e8; // ~0.01 mm precision
+
+    CoordKey(Coordinate c) {
+      this(Math.round(c.x * SCALE), Math.round(c.y * SCALE));
     }
-    mergedFeatures.remove(i);
   }
 }
