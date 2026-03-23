@@ -682,10 +682,12 @@ public class PlanetSearchProfile implements Profile {
     tileFeature.setAttr("wikidata", pointDocument.wikidata)
         .setAttr("wikimedia_commons", pointDocument.wikimedia_commons)
         .setAttr("image", pointDocument.image)
+        .setAttr("website", pointDocument.website)
         .setAttr("poiIcon", pointDocument.poiIcon)
         .setAttr("poiIconColor", pointDocument.poiIconColor)
         .setAttr("poiCategory", pointDocument.poiCategory)
         .setAttr("poiSource", pointDocument.poiSource)
+        .setAttr("poiLength", pointDocument.poiLength)
         .setZoomRange(10, 14)
         .setBufferPixels(0);
     for (String lang : supportedLanguages) {
