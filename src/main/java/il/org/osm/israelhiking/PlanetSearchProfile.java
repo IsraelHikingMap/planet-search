@@ -97,10 +97,67 @@ public class PlanetSearchProfile implements Profile {
     if (feature.hasTag("description")) {
       CoalesceIntoMap(pointDocument.description, "default", feature.getString("description"));
     }
+    setDifficulty(pointDocument, feature);
     pointDocument.wikidata = feature.getString("wikidata");
     pointDocument.image = feature.getString("image");
     pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
     pointDocument.website = feature.getString("website");
+  }
+
+  private void setDifficulty(PointDocument pointDocument, WithTags feature) {
+    if (feature.hasTag("sac_scale")) {
+      switch (feature.getString("sac_scale")) {
+        case "none":
+          pointDocument.poiDifficulty = "Easy";
+          break;
+        case "T1":
+          pointDocument.poiDifficulty = "Moderate";
+          break;
+        case "T2":
+          pointDocument.poiDifficulty = "Hard";
+          break;
+        case "T3":
+        case "T4":
+        case "T5":
+        case "T6":
+          pointDocument.poiDifficulty = "Very Hard";
+          break;
+      }
+    } else if (feature.hasTag("mtb:scale")) {
+      switch (feature.getString("mtb:scale")) {
+        case "0":
+          pointDocument.poiDifficulty = "Easy";
+          break;
+        case "1":
+          pointDocument.poiDifficulty = "Moderate";
+          break;
+        case "2":
+          pointDocument.poiDifficulty = "Hard";
+          break;
+        case "3":
+        case "4":
+        case "5":
+        case "6":
+          pointDocument.poiDifficulty = "Very Hard";
+          break;
+      }
+    } else if (feature.hasTag("tracktype")) {
+      switch (feature.getString("tracktype")) {
+        case "grade1":
+        case "grade2":
+          pointDocument.poiDifficulty = "Easy";
+          break;
+        case "grade3":
+          pointDocument.poiDifficulty = "Moderate";
+          break;
+        case "grade4":
+          pointDocument.poiDifficulty = "Hard";
+          break;
+        case "grade5":
+          pointDocument.poiDifficulty = "Very Hard";
+          break;
+      }
+    }
   }
 
   @Override
