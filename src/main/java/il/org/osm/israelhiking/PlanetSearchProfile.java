@@ -750,7 +750,7 @@ public class PlanetSearchProfile implements Profile {
         .setAttr("poiSource", pointDocument.poiSource)
         .setAttr("poiLength", pointDocument.poiLength)
         .setAttr("poiDifficulty", pointDocument.poiDifficulty)
-        .setZoomRange(10, 14)
+        .setZoomRange(8, 14)
         .setBufferPixels(0);
     for (String lang : supportedLanguages) {
       tileFeature.setAttr("name:" + lang, pointDocument.name.get(lang));
