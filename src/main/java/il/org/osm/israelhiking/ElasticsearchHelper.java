@@ -1,7 +1,9 @@
 package il.org.osm.israelhiking;
 
+import java.util.Arrays;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Stream;
 
 import org.apache.http.HttpHost;
 import org.elasticsearch.client.RestClient;
@@ -39,12 +41,31 @@ public class ElasticsearchHelper {
         if (esClient.indices().exists(c -> c.index(targetIndex)).value()) {
             esClient.indices().delete(c -> c.index(targetIndex));
         }
+        var allLanguages = Stream.concat(Stream.of("default"), Arrays.stream(supportedLanguages))
+                .toArray(String[]::new);
         esClient.indices().create(c -> c.index(targetIndex)
+                .settings(s -> s
+                        .analysis(a -> a
+                                .charFilter("hebrew_niqqud", cf -> cf
+                                        .definition(d -> d.patternReplace(pr -> pr
+                                                .pattern("[\\u05B0-\\u05C7]")
+                                                .replacement(""))))
+                                .normalizer("universal_normalizer", n -> n
+                                        .custom(cn -> cn
+                                                .charFilter("hebrew_niqqud")
+                                                .filter("asciifolding", "lowercase")))
+                                .analyzer("universal_analyzer", an -> an
+                                        .custom(ca -> ca
+                                                .charFilter("hebrew_niqqud")
+                                                .tokenizer("standard")
+                                                .filter("asciifolding", "lowercase")))))
                 .mappings(m -> {
-                    for (var lang : supportedLanguages) {
-                        m.properties("name." + lang, k -> k.text(p -> p.fields("keyword", f -> f.keyword(kw -> kw))));
-                        m.properties("description." + lang,
-                                k -> k.text(p -> p.fields("keyword", f -> f.keyword(kw -> kw))));
+                    for (var lang : allLanguages) {
+                        m.properties("name." + lang, k -> k
+                                .text(p -> p
+                                        .analyzer("universal_analyzer")
+                                        .fields("keyword", f -> f
+                                                .keyword(kw -> kw.normalizer("universal_normalizer")))));
                     }
                     m.properties("location", g -> g.geoPoint(p -> p));
                     return m;
@@ -59,10 +80,31 @@ public class ElasticsearchHelper {
         if (esClient.indices().exists(c -> c.index(targetIndex)).value()) {
             esClient.indices().delete(c -> c.index(targetIndex));
         }
+        var allLanguages = Stream.concat(Stream.of("default"), Arrays.stream(supportedLanguages))
+                .toArray(String[]::new);
         esClient.indices().create(c -> c.index(targetIndex)
+                .settings(s -> s
+                        .analysis(a -> a
+                                .charFilter("hebrew_niqqud", cf -> cf
+                                        .definition(d -> d.patternReplace(pr -> pr
+                                                .pattern("[\\u05B0-\\u05C7]")
+                                                .replacement(""))))
+                                .normalizer("universal_normalizer", n -> n
+                                        .custom(cn -> cn
+                                                .charFilter("hebrew_niqqud")
+                                                .filter("asciifolding", "lowercase")))
+                                .analyzer("universal_analyzer", an -> an
+                                        .custom(ca -> ca
+                                                .charFilter("hebrew_niqqud")
+                                                .tokenizer("standard")
+                                                .filter("asciifolding", "lowercase")))))
                 .mappings(m -> {
-                    for (var lang : supportedLanguages) {
-                        m.properties("name." + lang, k -> k.text(p -> p.fields("keyword", f -> f.keyword(kw -> kw))));
+                    for (var lang : allLanguages) {
+                        m.properties("name." + lang, k -> k
+                                .text(p -> p
+                                        .analyzer("universal_analyzer")
+                                        .fields("keyword", f -> f
+                                                .keyword(kw -> kw.normalizer("universal_normalizer")))));
                     }
                     m.properties("bbox", g -> g.geoShape(p -> p));
                     m.properties("area", n -> n.float_(f -> f));
