@@ -302,6 +302,7 @@ public class PlanetSearchProfile implements Profile {
     var tileFeature = features.geometry("external", point)
         .setAttr("poiId", docId)
         .setAttr("identifier", feature.getString("identifier"))
+        .setAttr("poiUserId", feature.getString("poiUserId"))
         .setId(feature.id());
     setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
   }
