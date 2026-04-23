@@ -1010,6 +1010,26 @@ public class PlanetSearchProfile implements Profile {
       }
     }
 
+    if ("place_of_worship".equals(feature.getString("amenity"))) {
+      var religion = feature.getString("religion");
+      pointDocument.poiCategory = "Other";
+      pointDocument.poiIconColor = "black";
+      switch (religion) {
+        case "jewish":
+          pointDocument.poiIcon = "icon-synagogue";
+          return;
+        case "christian":
+          pointDocument.poiIcon = "icon-church";
+          return;
+        case "muslim":
+          pointDocument.poiIcon = "icon-mosque";
+          return;
+        default:
+          pointDocument.poiIcon = "icon-holy-place";
+          return;
+      }
+    }
+
     if (feature.getString("ref:IL:inature") != null) {
       pointDocument.poiIconColor = "#116C00";
       pointDocument.poiIcon = "icon-inature";
