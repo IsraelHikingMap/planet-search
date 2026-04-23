@@ -1011,7 +1011,7 @@ public class PlanetSearchProfile implements Profile {
     }
 
     if ("place_of_worship".equals(feature.getString("amenity"))) {
-      var religion = feature.getString("religion");
+      var religion = feature.getString("religion") != null ? feature.getString("religion") : "";
       pointDocument.poiCategory = "Other";
       pointDocument.poiIconColor = "black";
       switch (religion) {
