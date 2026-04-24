@@ -16,6 +16,7 @@ public class BBoxDocument {
     public Map<String, String> name = new HashMap<String, String>();
     public Map<String, Object> bbox;
     public double area;
+    public double[] center;
 
     public void setBBox(Geometry geometry) {
         bbox = new HashMap<String, Object>();

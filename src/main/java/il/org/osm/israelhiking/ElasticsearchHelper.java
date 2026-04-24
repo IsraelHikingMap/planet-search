@@ -14,121 +14,119 @@ import co.elastic.clients.transport.ElasticsearchTransport;
 import co.elastic.clients.transport.rest_client.RestClientTransport;
 
 public class ElasticsearchHelper {
+  /**
+   * Static utility class should not be instantiated.
+   */
+  private ElasticsearchHelper() {
+  }
 
-    /**
-     * Static utility class should not be instantiated.
-     */
-    private ElasticsearchHelper() {
+  public static ElasticsearchClient createElasticsearchClient(String esAddress) {
+    Logger.getLogger("org.elasticsearch.client.RestClient").setLevel(Level.OFF);
+    RestClient restClient = RestClient.builder(HttpHost.create(esAddress)).build();
+    ElasticsearchTransport transport = new RestClientTransport(restClient, new JacksonJsonpMapper());
+    return new ElasticsearchClient(transport);
+  }
+
+  public static String createPointsIndex(ElasticsearchClient esClient, String indexAlias,
+      String[] supportedLanguages) throws Exception {
+    var targetIndex = getTargetIndexName(indexAlias, esClient);
+    if (esClient.indices().exists(c -> c.index(targetIndex)).value()) {
+      esClient.indices().delete(c -> c.index(targetIndex));
     }
+    var allLanguages = Stream.concat(Stream.of("default"), Arrays.stream(supportedLanguages))
+        .toArray(String[]::new);
+    esClient.indices().create(c -> c.index(targetIndex)
+        .settings(s -> s
+            .analysis(a -> a
+                .charFilter("hebrew_niqqud", cf -> cf
+                    .definition(d -> d
+                        .patternReplace(pr -> pr
+                            .pattern("[\\u05B0-\\u05C7]")
+                            .replacement(""))))
+                .normalizer("universal_normalizer", n -> n
+                    .custom(cn -> cn
+                        .charFilter("hebrew_niqqud")
+                        .filter("asciifolding", "lowercase")))
+                .analyzer("universal_analyzer", an -> an
+                    .custom(ca -> ca
+                        .charFilter("hebrew_niqqud")
+                        .tokenizer("standard")
+                        .filter("asciifolding", "lowercase")))))
+        .mappings(m -> {
+          for (var lang : allLanguages) {
+            m.properties("name." + lang, k -> k
+                .text(p -> p
+                    .analyzer("universal_analyzer")
+                    .fields("keyword", f -> f
+                        .keyword(kw -> kw
+                            .normalizer("universal_normalizer")))));
+          }
+          m.properties("location", g -> g.geoPoint(p -> p));
+          return m;
+        }));
 
-    public static ElasticsearchClient createElasticsearchClient(String esAddress) {
+    return targetIndex;
+  }
 
-        Logger.getLogger("org.elasticsearch.client.RestClient").setLevel(Level.OFF);
-
-        RestClient restClient = RestClient
-                .builder(HttpHost.create(esAddress))
-                .build();
-
-        ElasticsearchTransport transport = new RestClientTransport(
-                restClient, new JacksonJsonpMapper());
-
-        return new ElasticsearchClient(transport);
+  public static String createBBoxIndex(ElasticsearchClient esClient, String indexAlias,
+      String[] supportedLanguages) throws Exception {
+    var targetIndex = getTargetIndexName(indexAlias, esClient);
+    if (esClient.indices().exists(c -> c.index(targetIndex)).value()) {
+      esClient.indices().delete(c -> c.index(targetIndex));
     }
+    var allLanguages = Stream.concat(Stream.of("default"), Arrays.stream(supportedLanguages))
+        .toArray(String[]::new);
+    esClient.indices().create(c -> c.index(targetIndex)
+        .settings(s -> s
+            .analysis(a -> a
+                .charFilter("hebrew_niqqud", cf -> cf
+                    .definition(d -> d
+                        .patternReplace(pr -> pr
+                            .pattern("[\\u05B0-\\u05C7]")
+                            .replacement(""))))
+                .normalizer("universal_normalizer", n -> n
+                    .custom(cn -> cn
+                        .charFilter("hebrew_niqqud")
+                        .filter("asciifolding",
+                            "lowercase")))
+                .analyzer("universal_analyzer", an -> an
+                    .custom(ca -> ca
+                        .charFilter("hebrew_niqqud")
+                        .tokenizer("standard")
+                        .filter("asciifolding", "lowercase")))))
+        .mappings(m -> {
+          for (var lang : allLanguages) {
+            m.properties("name." + lang, k -> k
+                .text(p -> p
+                    .analyzer("universal_analyzer")
+                    .fields("keyword", f -> f
+                        .keyword(kw -> kw
+                            .normalizer("universal_normalizer")))));
+          }
+          m.properties("bbox", g -> g.geoShape(p -> p));
+          m.properties("area", n -> n.float_(f -> f));
+          m.properties("center", g -> g.geoPoint(p -> p));
+          return m;
+        }));
 
-    public static String createPointsIndex(ElasticsearchClient esClient, String indexAlias, String[] supportedLanguages)
-            throws Exception {
-        var targetIndex = getTargetIndexName(indexAlias, esClient);
-        if (esClient.indices().exists(c -> c.index(targetIndex)).value()) {
-            esClient.indices().delete(c -> c.index(targetIndex));
-        }
-        var allLanguages = Stream.concat(Stream.of("default"), Arrays.stream(supportedLanguages))
-                .toArray(String[]::new);
-        esClient.indices().create(c -> c.index(targetIndex)
-                .settings(s -> s
-                        .analysis(a -> a
-                                .charFilter("hebrew_niqqud", cf -> cf
-                                        .definition(d -> d.patternReplace(pr -> pr
-                                                .pattern("[\\u05B0-\\u05C7]")
-                                                .replacement(""))))
-                                .normalizer("universal_normalizer", n -> n
-                                        .custom(cn -> cn
-                                                .charFilter("hebrew_niqqud")
-                                                .filter("asciifolding", "lowercase")))
-                                .analyzer("universal_analyzer", an -> an
-                                        .custom(ca -> ca
-                                                .charFilter("hebrew_niqqud")
-                                                .tokenizer("standard")
-                                                .filter("asciifolding", "lowercase")))))
-                .mappings(m -> {
-                    for (var lang : allLanguages) {
-                        m.properties("name." + lang, k -> k
-                                .text(p -> p
-                                        .analyzer("universal_analyzer")
-                                        .fields("keyword", f -> f
-                                                .keyword(kw -> kw.normalizer("universal_normalizer")))));
-                    }
-                    m.properties("location", g -> g.geoPoint(p -> p));
-                    return m;
-                }));
+    return targetIndex;
+  }
 
-        return targetIndex;
+  private static String getTargetIndexName(String indexAlias, ElasticsearchClient esClient) throws Exception {
+    var indexName = indexAlias + "1";
+    if (!esClient.indices().existsAlias(c -> c.name(indexAlias)).value()) {
+      return indexName;
     }
-
-    public static String createBBoxIndex(ElasticsearchClient esClient, String indexAlias, String[] supportedLanguages)
-            throws Exception {
-        var targetIndex = getTargetIndexName(indexAlias, esClient);
-        if (esClient.indices().exists(c -> c.index(targetIndex)).value()) {
-            esClient.indices().delete(c -> c.index(targetIndex));
-        }
-        var allLanguages = Stream.concat(Stream.of("default"), Arrays.stream(supportedLanguages))
-                .toArray(String[]::new);
-        esClient.indices().create(c -> c.index(targetIndex)
-                .settings(s -> s
-                        .analysis(a -> a
-                                .charFilter("hebrew_niqqud", cf -> cf
-                                        .definition(d -> d.patternReplace(pr -> pr
-                                                .pattern("[\\u05B0-\\u05C7]")
-                                                .replacement(""))))
-                                .normalizer("universal_normalizer", n -> n
-                                        .custom(cn -> cn
-                                                .charFilter("hebrew_niqqud")
-                                                .filter("asciifolding", "lowercase")))
-                                .analyzer("universal_analyzer", an -> an
-                                        .custom(ca -> ca
-                                                .charFilter("hebrew_niqqud")
-                                                .tokenizer("standard")
-                                                .filter("asciifolding", "lowercase")))))
-                .mappings(m -> {
-                    for (var lang : allLanguages) {
-                        m.properties("name." + lang, k -> k
-                                .text(p -> p
-                                        .analyzer("universal_analyzer")
-                                        .fields("keyword", f -> f
-                                                .keyword(kw -> kw.normalizer("universal_normalizer")))));
-                    }
-                    m.properties("bbox", g -> g.geoShape(p -> p));
-                    m.properties("area", n -> n.float_(f -> f));
-                    return m;
-                }));
-
-        return targetIndex;
+    var alias = esClient.indices().getAlias(c -> c.name(indexAlias)).result();
+    if (alias.containsKey(indexName)) {
+      return indexAlias + "2";
     }
+    return indexName;
+  }
 
-    private static String getTargetIndexName(String indexAlias, ElasticsearchClient esClient) throws Exception {
-        var indexName = indexAlias + "1";
-        if (!esClient.indices().existsAlias(c -> c.name(indexAlias)).value()) {
-            return indexName;
-        }
-        var alias = esClient.indices().getAlias(c -> c.name(indexAlias)).result();
-        if (alias.containsKey(indexName)) {
-            return indexAlias + "2";
-        }
-        return indexName;
-    }
-
-    public static void switchAlias(ElasticsearchClient esClient, String indexAlias, String targetIndex)
-            throws Exception {
-        esClient.indices().updateAliases(c -> c.actions(a -> a.remove(i -> i.index("*").alias(indexAlias)))
-                .actions(a -> a.add(c2 -> c2.index(targetIndex).alias(indexAlias))));
-    }
+  public static void switchAlias(ElasticsearchClient esClient, String indexAlias, String targetIndex)
+      throws Exception {
+    esClient.indices().updateAliases(c -> c.actions(a -> a.remove(i -> i.index("*").alias(indexAlias)))
+        .actions(a -> a.add(c2 -> c2.index(targetIndex).alias(indexAlias))));
+  }
 }

@@ -643,7 +643,8 @@ public class PlanetSearchProfile implements Profile {
     try {
       var bbox = new BBoxDocument();
       bbox.area = feature.areaMeters();
-
+      var lngLatCenterPoint = GeoUtils.worldToLatLonCoords(feature.centroid()).getCoordinate();
+      bbox.center = new double[] { lngLatCenterPoint.getX(), lngLatCenterPoint.getY() };
       bbox.setBBox(polygon);
       for (String lang : supportedLanguages) {
         CoalesceIntoMap(bbox.name, lang, feature.getString("name:" + lang));
