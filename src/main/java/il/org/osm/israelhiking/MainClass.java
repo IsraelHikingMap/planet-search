@@ -36,7 +36,7 @@ public class MainClass {
                     "points");
             var bboxIndexAlias = args.getString("es-bbox-index-alias", "Elasticsearch index to populate bounding boxes",
                     "bbox");
-            var supportedLanguages = args.getString("languages", "Languages to support", "en,he,ru,ar").split(",");
+            var supportedLanguages = args.getString("languages", "Languages to support", "en,he,ru,ar,es").split(",");
             var externalFilePath = args.getString("external-file-path", "External file path", "");
             var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias,
                     supportedLanguages);
