@@ -55,6 +55,10 @@ public class ElasticsearchHelper {
         .toArray(String[]::new);
     esClient.indices().create(c -> c.index(targetIndex)
         .settings(s -> s
+            // Build-time write tuning: this index isn't served until the alias swaps, so disabling
+            // refresh/replicas is safe; restoreSearchSettings re-enables them before the swap.
+            .refreshInterval(t -> t.time("-1"))
+            .numberOfReplicas("0")
             .analysis(a -> a
                 .charFilter("hebrew_niqqud", cf -> cf
                     .definition(d -> d
@@ -142,6 +146,14 @@ public class ElasticsearchHelper {
           m.properties("poiFeatureClass", n -> n.keyword(f -> f));
           m.properties("poiAreaNormalized", n -> n.float_(f -> f.index(false)));
           m.properties("intermittent", n -> n.boolean_(f -> f.index(false)));
+          // Additive: docs without these fields use missing:1.0 at query time.
+          m.properties("prominence", n -> n.float_(f -> f));
+          // index:false so weights can be re-tuned without a reindex; doc_values stay readable.
+          m.properties("prom_base", n -> n.float_(f -> f.index(false)));
+          m.properties("prom_qrank_norm", n -> n.float_(f -> f.index(false)));
+          m.properties("prom_meta", n -> n.float_(f -> f.index(false)));
+          m.properties("ele_norm", n -> n.float_(f -> f.index(false)));
+          m.properties("qrank_raw", n -> n.long_(f -> f.index(false)));
           return m;
         }));
 
@@ -158,6 +170,9 @@ public class ElasticsearchHelper {
         .toArray(String[]::new);
     esClient.indices().create(c -> c.index(targetIndex)
         .settings(s -> s
+            // Build-time write tuning (see createPointsIndex) — restored before the alias swap.
+            .refreshInterval(t -> t.time("-1"))
+            .numberOfReplicas("0")
             .analysis(a -> a
                 .charFilter("hebrew_niqqud", cf -> cf
                     .definition(d -> d
@@ -229,5 +244,14 @@ public class ElasticsearchHelper {
   public static void finalizeRun(ElasticRunContext context) throws Exception {
     ElasticsearchHelper.switchAlias(context.esClient, context.pointsIndexAlias(), context.pointsIndexTarget());
     ElasticsearchHelper.switchAlias(context.esClient, context.bboxIndexAlias(), context.bboxIndexTarget());
+  }
+
+  public static void restoreSearchSettings(ElasticsearchClient esClient, String targetIndex)
+      throws Exception {
+    esClient.indices().putSettings(p -> p
+        .index(targetIndex)
+        .settings(s -> s
+            .refreshInterval(t -> t.time("1s"))
+            .numberOfReplicas("1")));
   }
 }

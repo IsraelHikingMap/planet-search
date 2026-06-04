@@ -32,6 +32,8 @@ import il.org.osm.israelhiking.ElasticsearchHelper.ElasticRunContext;
 public class PlanetSearchProfile implements Profile {
   private PlanetilerConfig config;
   private ElasticRunContext context;
+  // Empty index when no QRank file is provided (local builds) — lookups return 0.
+  private final QRankIndex qrankIndex;
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
@@ -40,8 +42,13 @@ public class PlanetSearchProfile implements Profile {
   private static final Map<String, MinWayIdFinder> Waterways = new ConcurrentHashMap<>();
 
   public PlanetSearchProfile(PlanetilerConfig config, ElasticRunContext context) {
+    this(config, context, QRankIndex.empty());
+  }
+
+  public PlanetSearchProfile(PlanetilerConfig config, ElasticRunContext context, QRankIndex qrankIndex) {
     this.config = config;
     this.context = context;
+    this.qrankIndex = qrankIndex;
   }
 
   /*
@@ -97,6 +104,84 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.website = feature.getString("website");
     if (feature.hasTag("intermittent", "yes")) {
       pointDocument.intermittent = true;
+    }
+    setProminence(pointDocument, feature);
+    setPopulation(pointDocument, feature);
+  }
+
+  // Reads tags directly from the feature, not poiCategory, which is assigned later in some emit paths.
+  private void setProminence(PointDocument pointDocument, WithTags feature) {
+    long qrankRaw = qrankIndex.getByWikidata(pointDocument.wikidata);
+    double ele = parseFirstNumber(feature.getString("ele"));
+    boolean hasImage = pointDocument.image != null || pointDocument.wikimedia_commons != null;
+    boolean hasWebsite = pointDocument.website != null;
+    boolean hasWikidata = pointDocument.wikidata != null;
+
+    ProminenceCalculator.Result r = ProminenceCalculator.compute(
+        feature.getString("natural"),
+        feature.getString("place"),
+        feature.getString("boundary"),
+        feature.getString("tourism"),
+        feature.getString("historic"),
+        feature.getString("waterway"),
+        ele, hasImage, hasWebsite, hasWikidata, qrankRaw);
+
+    pointDocument.prominence = r.prominence;
+    pointDocument.prom_base = r.base;
+    pointDocument.prom_qrank_norm = r.qrankNorm;
+    pointDocument.prom_meta = r.meta;
+    pointDocument.ele_norm = r.eleNorm;
+    pointDocument.qrank_raw = r.qrankRaw > 0 ? r.qrankRaw : null;
+  }
+
+  private void setPopulation(PointDocument pointDocument, WithTags feature) {
+    String place = feature.getString("place");
+    if (place == null) {
+      return;
+    }
+    double parsed = parseFirstNumber(feature.getString("population"));
+    if (!Double.isNaN(parsed) && parsed > 0) {
+      pointDocument.population = (int) Math.min(parsed, Integer.MAX_VALUE);
+      return;
+    }
+    // Fallback when the population tag is missing; a real value (above) always overrides this.
+    switch (place) {
+      case "city":    pointDocument.population = 1_000_000; break;
+      case "town":    pointDocument.population = 50_000; break;
+      case "village": pointDocument.population = 2_000; break;
+      case "hamlet":  pointDocument.population = 200; break;
+      default:        pointDocument.population = 20; break;
+    }
+  }
+
+  static double parseFirstNumber(String raw) {
+    if (raw == null) {
+      return Double.NaN;
+    }
+    StringBuilder sb = new StringBuilder();
+    boolean seenDigit = false;
+    boolean seenDot = false;
+    for (int i = 0; i < raw.length(); i++) {
+      char c = raw.charAt(i);
+      if (c >= '0' && c <= '9') {
+        sb.append(c);
+        seenDigit = true;
+      } else if (c == '.' && seenDigit && !seenDot) {
+        sb.append(c);
+        seenDot = true;
+      } else if ((c == ',' || c == ' ' || c == '\'') && seenDigit) {
+        // skip thousands separator within a number
+      } else if (seenDigit) {
+        break;
+      }
+    }
+    if (!seenDigit) {
+      return Double.NaN;
+    }
+    try {
+      return Double.parseDouble(sb.toString());
+    } catch (NumberFormatException e) {
+      return Double.NaN;
     }
   }
 
@@ -642,6 +727,11 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
+    // Floor emit paths that skip convertTagsToDocument: a null prominence becomes missing:1.0 at
+    // query time, letting an unscored doc beat a real scored feature (whose prominence is <1).
+    if (pointDocument.prominence == null) {
+      pointDocument.prominence = (float) ProminenceCalculator.FLOOR;
+    }
     try {
       this.context.esClient().index(i -> i
           .index(this.context.pointsIndexTarget())
