@@ -139,7 +139,7 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.website = feature.getString("website");
     setProminence(pointDocument, feature);
     setPopulation(pointDocument, feature);
-    pointDocument.feature_class = OsmTagUtils.classifyFeatureClass(tags);
+    pointDocument.poiFeatureClass = OsmTagUtils.classifyFeatureClass(tags);
   }
 
   /**
@@ -165,7 +165,7 @@ public class PlanetSearchProfile implements Profile {
         feature.getString("waterway"),
         ele, hasImage, hasWebsite, hasWikidata, qrankRaw);
 
-    pointDocument.prominence = r.prominence;
+    pointDocument.poiProminence = r.prominence;
 
     setEnrichmentSignals(pointDocument, feature);
   }
@@ -180,7 +180,7 @@ public class PlanetSearchProfile implements Profile {
     // area_norm — geometry-dependent, so only when we actually hold a polygon-capable SourceFeature.
     if (feature instanceof SourceFeature sf && sf.canBePolygon()) {
       try {
-        pointDocument.area_norm = normalizeArea(sf.areaMeters());
+        pointDocument.poiAreaNorm = normalizeArea(sf.areaMeters());
       } catch (Exception e) {
         // Bad polygon geometry — leave area_norm null, never fail the build. Logged at FINE (not
         // WARNING) because a few unbuildable polygons is an expected data condition in this
@@ -755,7 +755,7 @@ public class PlanetSearchProfile implements Profile {
     // feature_class here too, so every emit path carries the same ranking signals.
     setProminence(pointDocument, feature);
     setPopulation(pointDocument, feature);
-    pointDocument.feature_class = OsmTagUtils.classifyFeatureClass(feature::getString);
+    pointDocument.poiFeatureClass = OsmTagUtils.classifyFeatureClass(feature::getString);
     insertPointToElasticsearch(pointDocument, docId);
   }
 
@@ -770,7 +770,7 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
-    pointDocument.prominence = flooredProminence(pointDocument.prominence);
+    pointDocument.poiProminence = flooredProminence(pointDocument.poiProminence);
     stats.emittedCount.increment();
     stats.emittedPointsCount.increment();
     bulkIngester.add(BulkOperation.of(op -> op

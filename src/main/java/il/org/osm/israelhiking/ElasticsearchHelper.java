@@ -264,14 +264,15 @@ public class ElasticsearchHelper {
                             .normalizer(isHebrew ? "hebrew_normalizer" : "universal_normalizer")))));
           }
           m.properties("location", g -> g.geoPoint(p -> p));
-          // Ranking signals (additive; docs without these use missing:1.0 at query time).
-          m.properties("prominence", n -> n.float_(f -> f));   // hot path: field_value_factor
-          m.properties("population", n -> n.integer(f -> f));  // place/admin layer
+          // Computed ranking signals (additive; docs without these use missing:1.0 at query time).
+          // poi* prefix marks them as calculated, not raw OSM tags.
+          m.properties("poiProminence", n -> n.float_(f -> f));   // hot path: field_value_factor
+          m.properties("population", n -> n.integer(f -> f));     // place/admin layer
           // Coarse feature type ("peak"/"lake"/"city"...) for class-match ranking; keyword for exact
           // term match with doc_values for query-time comparison.
-          m.properties("feature_class", n -> n.keyword(f -> f));
+          m.properties("poiFeatureClass", n -> n.keyword(f -> f));
           // Enrichment signals (index:false query-time scoring inputs; doc_values readable by script).
-          m.properties("area_norm", n -> n.float_(f -> f.index(false)));
+          m.properties("poiAreaNorm", n -> n.float_(f -> f.index(false)));
           m.properties("intermittent", n -> n.boolean_(f -> f.index(false)));
           return m;
         }));

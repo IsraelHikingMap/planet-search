@@ -26,17 +26,18 @@ class PointDocument {
   public String website;
   public double[] location;
 
-  // Ranking signals (null => omitted from JSON, ES uses missing:1.0).
+  // Computed ranking signals (null => omitted from JSON, ES uses missing:1.0). Prefixed poi* like
+  // the other computed fields so it's clear they are calculated, not raw OSM tags.
   // Composite prominence in [0,1], floored >0 so a query-time multiply never zeroes.
-  public Float prominence;
+  public Float poiProminence;
   // Log-normalized polygon area in [0,1]; a size proxy (a large lake outranks a same-named pond).
   // Set only for polygons, null otherwise.
-  public Float area_norm;
+  public Float poiAreaNorm;
   // True for OSM intermittent=yes (seasonal water); a query-time down-weight. Null when absent.
   public Boolean intermittent;
   // Population — place/admin layer only; null for POIs.
   public Integer population;
   // Coarse feature type from the primary OSM type tags ("peak", "lake", "city", ...), used as a
   // query-time ranking signal. Distinct from poiCategory (an app/source bucket). Null when unknown.
-  public String feature_class;
+  public String poiFeatureClass;
 }
