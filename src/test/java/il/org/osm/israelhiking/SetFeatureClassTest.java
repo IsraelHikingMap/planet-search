@@ -10,8 +10,8 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for the OSM-tag -> feature_class classifier ({@code classifyFeatureClass}, the pure
- * core of {@code setFeatureClass}). Pins the landform vocabulary expansion (canyon/gorge/mesa/
+ * Unit tests for the OSM-tag -> feature_class classifier ({@code classifyFeatureClass}). Pins the
+ * landform vocabulary expansion (canyon/gorge/mesa/
  * plateau/arch/cave/wetland and the arete/crater/mountain_range folds) and guards the pre-existing
  * mappings against regression. Doc-side classes here must each have a {@code class_groups} entry in
  * updated_score.yml, or the query-time pclass boost is a silent no-op.
@@ -24,7 +24,7 @@ public class SetFeatureClassTest {
     }
 
     private static String classify(Map<String, String> m) {
-        return PlanetSearchProfile.classifyFeatureClass(tags(m));
+        return OsmTagUtils.classifyFeatureClass(tags(m));
     }
 
     // --- new landform classes ------------------------------------------------

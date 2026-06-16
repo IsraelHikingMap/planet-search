@@ -37,12 +37,7 @@
       <scope>test</scope>
     </dependency>
 
-    <!--
-      ADR-0002 (intentional ES version skew): this 8.x Java client runs against a 7.17 server in
-      compatibility mode to get the BulkIngester path. This skew is INTENTIONAL — do NOT "fix" it by
-      downgrading the client to 7.x or upgrading the server to 8.x. NEST (vendor/Site) stays on 7.x to
-      match the server. See docs/adr/0002-intentional-es-version-skew.md.
-    -->
+    <!-- 8.x client intentionally runs against the 7.17 server in compatibility mode (BulkIngester path). -->
     <dependency>
       <groupId>co.elastic.clients</groupId>
       <artifactId>elasticsearch-java</artifactId>

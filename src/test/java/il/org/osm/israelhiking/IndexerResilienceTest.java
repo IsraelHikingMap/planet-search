@@ -63,7 +63,7 @@ class IndexerResilienceTest {
     private LongAdder failedBboxCount;
     private LongAdder transientPointsCharges;
     private LongAdder transientBboxCharges;
-    private PlanetSearchProfile.AccountingBulkListener listener;
+    private AccountingBulkListener listener;
 
     @BeforeEach
     void setUp() {
@@ -72,7 +72,7 @@ class IndexerResilienceTest {
         failedBboxCount = new LongAdder();
         transientPointsCharges = new LongAdder();
         transientBboxCharges = new LongAdder();
-        listener = new PlanetSearchProfile.AccountingBulkListener(
+        listener = new AccountingBulkListener(
                 esClient, indexedCount, failedPointsCount, failedBboxCount,
                 transientPointsCharges, transientBboxCharges, POINTS_INDEX, millis -> { /* no sleep */ });
     }
@@ -83,26 +83,26 @@ class IndexerResilienceTest {
 
     @Test
     void classification_transientTransportErrorsAreRetryable() {
-        assertTrue(PlanetSearchProfile.AccountingBulkListener.isRetryable(
+        assertTrue(AccountingBulkListener.isRetryable(
                 new SocketTimeoutException("30,000 milliseconds timeout on connection")));
-        assertTrue(PlanetSearchProfile.AccountingBulkListener.isRetryable(new ConnectException("refused")));
-        assertTrue(PlanetSearchProfile.AccountingBulkListener.isRetryable(new IOException("connection reset")));
+        assertTrue(AccountingBulkListener.isRetryable(new ConnectException("refused")));
+        assertTrue(AccountingBulkListener.isRetryable(new IOException("connection reset")));
         // wrapped cause is unwrapped
-        assertTrue(PlanetSearchProfile.AccountingBulkListener.isRetryable(
+        assertTrue(AccountingBulkListener.isRetryable(
                 new RuntimeException("wrapped", new SocketTimeoutException("timeout"))));
     }
 
     @Test
     void classification_4xxAndPlainRuntimeAreNotRetryable() {
         // A plain RuntimeException with no transient cause is non-retryable.
-        assertFalse(PlanetSearchProfile.AccountingBulkListener.isRetryable(new RuntimeException("bad request")));
+        assertFalse(AccountingBulkListener.isRetryable(new RuntimeException("bad request")));
         // HTTP statuses: 5xx/429 retryable, 4xx not.
-        assertTrue(PlanetSearchProfile.AccountingBulkListener.isRetryableStatus(429));
-        assertTrue(PlanetSearchProfile.AccountingBulkListener.isRetryableStatus(502));
-        assertTrue(PlanetSearchProfile.AccountingBulkListener.isRetryableStatus(503));
-        assertTrue(PlanetSearchProfile.AccountingBulkListener.isRetryableStatus(504));
-        assertFalse(PlanetSearchProfile.AccountingBulkListener.isRetryableStatus(400));
-        assertFalse(PlanetSearchProfile.AccountingBulkListener.isRetryableStatus(404));
+        assertTrue(AccountingBulkListener.isRetryableStatus(429));
+        assertTrue(AccountingBulkListener.isRetryableStatus(502));
+        assertTrue(AccountingBulkListener.isRetryableStatus(503));
+        assertTrue(AccountingBulkListener.isRetryableStatus(504));
+        assertFalse(AccountingBulkListener.isRetryableStatus(400));
+        assertFalse(AccountingBulkListener.isRetryableStatus(404));
     }
 
     @Test
@@ -119,7 +119,7 @@ class IndexerResilienceTest {
 
     private static void assertWithinJitter(int attempt, long cap) {
         for (int i = 0; i < 200; i++) {
-            long b = PlanetSearchProfile.AccountingBulkListener.backoffMillis(attempt);
+            long b = AccountingBulkListener.backoffMillis(attempt);
             assertTrue(b >= cap / 2 && b <= cap,
                     "attempt " + attempt + " backoff " + b + " out of [" + (cap / 2) + "," + cap + "]");
         }
@@ -179,7 +179,7 @@ class IndexerResilienceTest {
         assertEquals(0, indexedCount.sum());
         assertEquals(0, failedPointsCount.sum(), "transient timeouts are NOT genuine data failures");
         assertEquals(4, transientPointsCharges.sum(), "exhausted points ops land in the transient bucket");
-        verify(esClient, times(PlanetSearchProfile.AccountingBulkListener.MAX_RETRY_ATTEMPTS))
+        verify(esClient, times(AccountingBulkListener.MAX_RETRY_ATTEMPTS))
                 .bulk(this.<BulkRequest>anyBulkFn());
     }
 
@@ -271,28 +271,28 @@ class IndexerResilienceTest {
     @Test
     void guardThresholds_genuineIsStrict_transientIsGenerous() {
         // Floors when emitted is tiny.
-        assertEquals(50L, PlanetSearchProfile.genuineFailureThreshold(0));
-        assertEquals(50L, PlanetSearchProfile.genuineFailureThreshold(1_000));
-        assertEquals(5_000L, PlanetSearchProfile.transientChargeThreshold(0));
-        assertEquals(5_000L, PlanetSearchProfile.transientChargeThreshold(1_000_000));
+        assertEquals(50L, IndexingStats.genuineFailureThreshold(0));
+        assertEquals(50L, IndexingStats.genuineFailureThreshold(1_000));
+        assertEquals(5_000L, IndexingStats.transientChargeThreshold(0));
+        assertEquals(5_000L, IndexingStats.transientChargeThreshold(1_000_000));
 
         // At whole-planet scale (~25M points) the percentages dominate the floor.
         long emitted = 25_000_000L;
         // 0.0001% of 25M = 25 -> still floored to 50 (genuine bar stays strict).
-        assertEquals(50L, PlanetSearchProfile.genuineFailureThreshold(emitted));
+        assertEquals(50L, IndexingStats.genuineFailureThreshold(emitted));
         // 0.05% of 25M = 12,500 -> above the 5,000 floor.
-        assertEquals(12_500L, PlanetSearchProfile.transientChargeThreshold(emitted));
+        assertEquals(12_500L, IndexingStats.transientChargeThreshold(emitted));
     }
 
     @Test
     void guard_161PhantomTransientTimeouts_doNotFailTheBuild_butAMassBreakDoes() {
         // The incident: 161 transient charges on a whole-planet build must be tolerated.
         long emitted = 25_000_000L;
-        assertFalse(161 > PlanetSearchProfile.transientChargeThreshold(emitted),
+        assertFalse(161 > IndexingStats.transientChargeThreshold(emitted),
                 "161 phantom transient charges must be within tolerance");
         // ...but a genuine mass mapping break (say 1% of points) must still fail.
         long massBreak = 250_000L;
-        assertTrue(massBreak > PlanetSearchProfile.genuineFailureThreshold(emitted),
+        assertTrue(massBreak > IndexingStats.genuineFailureThreshold(emitted),
                 "a real mass data break must trip the strict genuine-failure guard");
     }
 

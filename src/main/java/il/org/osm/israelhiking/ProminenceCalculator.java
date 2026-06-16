@@ -1,28 +1,16 @@
 package il.org.osm.israelhiking;
 
 /**
- * Computes a composite {@code prominence} score in [0,1] for a feature, used at query time as a
- * {@code field_value_factor} multiplier so a major peak / well-known place outranks an obscure node
- * with the same name.
+ * Computes a composite prominence score in [0,1], used at query time as a field_value_factor
+ * multiplier so a major peak / well-known place outranks an obscure node with the same name.
  *
- * <p>Formula (research-derived; see mapeak-research-findings.md):
- * <pre>
- *   prominence = clamp01( 0.05 + 0.45*base + 0.40*qnorm + 0.10*meta )
- * </pre>
- * <ul>
- *   <li><b>floor 0.05</b> — never zero, so a query-time multiply never annihilates a hit.</li>
- *   <li><b>base</b> — feature-class prior (peak scales with elevation; place hierarchy city&gt;town&gt;
- *       village; national park; viewpoint/historic; water/spring; else a small baseline).</li>
- *   <li><b>qnorm</b> — log-normalized QRank (Wikimedia pageviews), only when a wikidata tag is present
- *       and found in the QRank table; 0 otherwise. {@code log(qrank)/log(QRANK_REF)} clamped to [0,1].</li>
- *   <li><b>meta</b> — richness: presence of image / website / wikipedia(=wikidata) tags.</li>
- * </ul>
+ * Formula: prominence = clamp01( 0.05 + 0.45*base + 0.40*qnorm + 0.10*meta )
+ *   - floor 0.05: never zero, so a query-time multiply never annihilates a hit.
+ *   - base: feature-class prior (elevation-scaled peaks, place hierarchy, parks, water, baseline).
+ *   - qnorm: log-normalized QRank (Wikimedia pageviews), 0 when no wikidata/QRank hit.
+ *   - meta: richness from image / website / wikidata tags.
  *
- * <p>Pure and side-effect-free so it is unit-testable without planetiler/ES.
- *
- * <p>This is the build-time half of ADR-0001 (build-time-vs-query-time prominence split): all
- * ranking signals are computed here at index build, never at query time. See
- * docs/adr/0001-build-time-vs-query-time-prominence-split.md.
+ * Pure and side-effect-free so it is unit-testable without planetiler/ES.
  */
 final class ProminenceCalculator {
 
@@ -35,7 +23,13 @@ final class ProminenceCalculator {
 
   private ProminenceCalculator() {}
 
-  /** Result holder carrying the final score plus raw components (stored index:false for re-tuning). */
+  /**
+   * Holder for the final {@code prominence} score plus the intermediate components that fed it.
+   * Only {@code prominence} is read by the indexer (written to the document); the components are
+   * retained because {@link ProminenceCalculatorTest} asserts on them to pin the composite math
+   * (e.g. eleNorm normalizes high for a tall peak, qrankNorm log-normalizes a big QRank). They are
+   * NOT stored in Elasticsearch — ADR-0027 removed the raw-component index fields.
+   */
   static final class Result {
     final float prominence;
     final float base;

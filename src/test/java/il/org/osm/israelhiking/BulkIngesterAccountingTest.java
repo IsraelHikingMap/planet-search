@@ -35,7 +35,7 @@ import co.elastic.clients.elasticsearch.core.bulk.OperationType;
  * Regression guard for the lossless BulkIngester indexing invariant (Story 0.5).
  *
  * <p>The production listener is the behavior-preserving extract
- * {@link PlanetSearchProfile.AccountingBulkListener}; the per-item classification
+ * {@link AccountingBulkListener}; the per-item classification
  * logic is identical to the former anonymous inner class. Driving its
  * {@code afterBulk} overloads directly lets us assert, deterministically and
  * without a live Elasticsearch, that:
@@ -71,7 +71,7 @@ class BulkIngesterAccountingTest {
     private LongAdder failedBboxCount;
     private LongAdder transientPointsCharges;
     private LongAdder transientBboxCharges;
-    private PlanetSearchProfile.AccountingBulkListener listener;
+    private AccountingBulkListener listener;
 
     private Logger profileLogger;
     private RecordingHandler handler;
@@ -85,7 +85,7 @@ class BulkIngesterAccountingTest {
         transientPointsCharges = new LongAdder();
         transientBboxCharges = new LongAdder();
         // No-op sleeper so backoff retries run instantly in tests.
-        listener = new PlanetSearchProfile.AccountingBulkListener(
+        listener = new AccountingBulkListener(
                 esClient, indexedCount, failedPointsCount, failedBboxCount,
                 transientPointsCharges, transientBboxCharges, POINTS_INDEX, millis -> {});
 
@@ -223,8 +223,8 @@ class BulkIngesterAccountingTest {
      */
     private boolean failsBuild() {
         long emittedPoints = indexedCount.sum() + failedPointsCount.sum() + transientPointsCharges.sum();
-        return failedPointsCount.sum() > PlanetSearchProfile.genuineFailureThreshold(emittedPoints)
-                || transientPointsCharges.sum() > PlanetSearchProfile.transientChargeThreshold(emittedPoints);
+        return failedPointsCount.sum() > IndexingStats.genuineFailureThreshold(emittedPoints)
+                || transientPointsCharges.sum() > IndexingStats.transientChargeThreshold(emittedPoints);
     }
 
     /** Mirrors PlanetSearchProfile.getFailedCount(): points + bbox (the lossless total). */

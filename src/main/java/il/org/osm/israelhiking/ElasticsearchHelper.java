@@ -22,43 +22,34 @@ public class ElasticsearchHelper {
 
   private static final Logger LOGGER = Logger.getLogger(ElasticsearchHelper.class.getName());
 
-  // --- ADR-0011 item 2: Hebrew matres-lectionis, DOUBLED-ONLY rule (he-scoped) -----------------
-  // The PATTERN strings are the regex text sent verbatim to ES (Java "\\u" => one backslash + "u",
-  // which ES/Lucene parses as a unicode escape). The replacement is a single Hebrew code point.
-  // DOUBLED-ONLY: collapse a doubled vav/yod to a single one; NEVER drop a single interior vav/yod
-  // (that fuller rule fixes HV01/HV02 but merges ~7 homographs — deferred for client sign-off).
-  static final String HEBREW_VAV = "ו"; // ו
-  static final String HEBREW_YOD = "י"; // י
+  // Hebrew matres-lectionis, doubled-only fold (he-scoped). The PATTERN strings are regex text sent
+  // verbatim to ES (Java "\\u" => one backslash, which ES/Lucene parses as a unicode escape); the
+  // replacement is a single Hebrew code point. Collapse a doubled vav/yod to a single one; never
+  // drop a single interior vav/yod (that fuller rule would merge ~7 real homographs).
+  static final String HEBREW_VAV = "ו";
+  static final String HEBREW_YOD = "י";
   static final String HEBREW_DOUBLED_VAV_PATTERN = "\\u05D5\\u05D5";
   static final String HEBREW_DOUBLED_YOD_PATTERN = "\\u05D9\\u05D9";
 
   /**
-   * PURE reference implementation of the doubled-only matres rule, so a unit test can assert it
-   * collapses doubled vav/yod but leaves single (and other) letters untouched — without a live ES.
-   * Applies the SAME pattern/replacement constants the index char_filters use. Note the patterns
-   * carry a doubled backslash for ES's regex parser; in plain Java regex one backslash addresses a
-   * unicode escape, so the test compiles the de-escaped form (see HebrewMatresRuleTest).
+   * Pure reference implementation of the doubled-only matres rule, so a unit test can assert it
+   * collapses doubled vav/yod but leaves single (and other) letters untouched without a live ES.
    */
   static String applyHebrewMatresDoubledOnly(String input) {
     if (input == null) {
       return null;
     }
-    // Java's own \\uXXXX in a regex literal == the code point; collapse doubled -> single.
     return input
         .replaceAll("וו", HEBREW_VAV)
         .replaceAll("יי", HEBREW_YOD);
   }
 
+  // Socket timeout 180s (not the 30s default) so a whole-planet bulk-fill survives long ES pauses
+  // without charging committed batches as failures; connect timeout stays short so a down cluster
+  // fails fast. Units are milliseconds.
   public static ElasticsearchClient createElasticsearchClient(String esAddress) {
     Logger.getLogger("org.elasticsearch.client.RestClient").setLevel(Level.OFF);
     RestClient restClient = RestClient.builder(HttpHost.create(esAddress))
-        // Step D — indexer resilience: the default per-request socket timeout is 30s,
-        // which is too tight for a whole-planet bulk-fill on a constrained box under
-        // merge/GC pressure. A single ES pause longer than 30s made the client give up
-        // and report "30,000 milliseconds timeout on connection", charging whole bulk
-        // batches as failures even though ES had (likely) committed them. Raise the
-        // socket (read) timeout to 180s; keep the connect timeout short (10s) so a
-        // genuinely-down cluster still fails fast. Units are milliseconds.
         .setRequestConfigCallback(rc -> rc
             .setConnectTimeout(10_000)
             .setSocketTimeout(180_000))
@@ -68,20 +59,13 @@ public class ElasticsearchHelper {
   }
 
   /**
-   * Return the number of documents in the index the given alias currently
-   * resolves to (the LIVE / served index), or 0 if the alias does not exist or
-   * the cluster cannot be probed.
+   * Return the number of documents in the index the given alias currently resolves to (the live /
+   * served index), or 0 if the alias does not exist or the cluster cannot be probed. Counts against
+   * the alias, not getTargetIndexName (the build writes to the inactive target, which is ~0).
    *
-   * <p>This counts against the alias name itself, so Elasticsearch resolves it to
-   * whatever underlying index is live right now (points1 or points2). It must NOT
-   * be confused with {@link #getTargetIndexName} — the build always writes to the
-   * INACTIVE target index, so counting the target would always report ~0 and would
-   * never protect anything. The guard cares about the live data the alias serves.
-   *
-   * <p>Robustness: a missing alias (fresh cluster / first ever build) yields 0 so the very first
-   * build is never blocked. But if the alias EXISTS and its doc-count read fails, we DO NOT fail
-   * open to 0 — that would let a transient read error defeat the guard and wipe a populated live
-   * index. In that case we rethrow so {@link #assertSafeToReindex} blocks the reindex (fail CLOSED).
+   * A missing alias yields 0 so the first-ever build is never blocked. But if the alias exists and
+   * its doc-count read fails, do NOT fail open to 0 (that would let a transient error defeat the
+   * guard) — rethrow so assertSafeToReindex blocks the reindex (fail closed).
    */
   public static long getLiveAliasDocCount(ElasticsearchClient esClient, String indexAlias) {
     boolean aliasExists;
@@ -116,26 +100,20 @@ public class ElasticsearchHelper {
   }
 
   /**
-   * Refuse to destroy a populated, live index unless an intentional reindex was
-   * requested. Computes the LIVE (currently-aliased) doc-count and, if it is at or
-   * above {@code minProtectDocs} while {@code forceReindex} is false, throws before
-   * any index is deleted/recreated.
-   *
-   * <p>This is the root fix for the incident where {@code docker compose up site}
-   * pulled the indexer with its default {@code area=us/colorado} and reindexed OVER
-   * the live whole-planet index, dropping it from 22.8M docs to ~83k.
+   * Refuse to destroy a populated, live index unless an intentional reindex was requested. Throws
+   * before any index is deleted/recreated when the live doc-count is at/above minProtectDocs and
+   * forceReindex is false.
    *
    * @param esClient       the ES client
    * @param indexAlias     the alias whose live index must be protected (e.g. "points")
-   * @param minProtectDocs threshold at/above which the live index is considered
-   *                       "populated" and protected (default 1_000_000)
+   * @param minProtectDocs threshold at/above which the live index is protected (default 1_000_000)
    * @param forceReindex   true to bypass the guard for a legitimate rebuild
    * @throws IllegalStateException if the live index is protected and force was not set
    */
   public static void assertSafeToReindex(ElasticsearchClient esClient, String indexAlias,
       long minProtectDocs, boolean forceReindex) {
-    // Check the override BEFORE reading the live count: a forced rebuild bypasses the guard
-    // entirely, so a count read-error must not block a legitimate `make prod` force build.
+    // Check the override before reading the live count: a forced rebuild bypasses the guard, so a
+    // count read-error must not block a legitimate force build.
     if (forceReindex) {
       LOGGER.warning("Safety guard: --force-reindex set — bypassing live-index protection for alias '"
           + indexAlias + "'.");
@@ -178,11 +156,9 @@ public class ElasticsearchHelper {
         .toArray(String[]::new);
     esClient.indices().create(c -> c.index(targetIndex)
         .settings(s -> s
-            // Build-time write tuning: the index being built lives under the
-            // "2" suffix and isn't served until the alias swaps, so nobody
-            // searches it during the build. Disabling periodic refresh and
-            // replicas removes the biggest per-document overhead in bulk
-            // indexing. They are restored right before the alias swap.
+            // Build-time write tuning: the target index isn't served until the alias swaps, so
+            // disabling periodic refresh and replicas removes the biggest bulk-indexing overhead.
+            // Restored right before the alias swap.
             .refreshInterval(t -> t.time("-1"))
             .numberOfReplicas("0")
             .analysis(a -> a
@@ -191,20 +167,11 @@ public class ElasticsearchHelper {
                         .patternReplace(pr -> pr
                             .pattern("[\\u05B0-\\u05C7]")
                             .replacement(""))))
-                // Step E / ADR-0011 item 2 — Hebrew matres-lectionis normalization, DOUBLED-ONLY
-                // (conservative). Collapses a doubled vav (וו -> ו) and a doubled yod (יי -> י)
-                // ONLY. It deliberately does NOT drop a SINGLE interior vav/yod: that fuller rule
-                // would fix the client's exact אופניים/אפניים case (HV01/HV02) but it also merges
-                // ~7 real homographs (אור/אר, דוד/דד, סוף/סף...), so it is deferred for client
-                // sign-off. Doubled-only is the safe, ~zero-homograph-break win. Applied ONLY to
-                // the he-scoped analyzer/normalizer below (NOT the shared universal ones) so the
-                // blast radius is contained to Hebrew. ו = vav (ו), י = yod (י).
-                // NOTE on escaping: the PATTERN is a regex sent to ES as the literal text
-                // "\\u05D5\\u05D5" (Java "\\" => one backslash), which ES/Lucene's regex engine
-                // parses as two vav code points. The REPLACEMENT is a literal (NOT regex), so it
-                // must carry the ACTUAL Hebrew character (the vav/yod glyph itself, single code
-                // point). Pattern + replacement are pulled from the package-private constants below
-                // so HebrewMatresRuleTest exercises the same doubled-only rule.
+                // Hebrew matres-lectionis fold, doubled-only: collapse doubled vav (וו -> ו) and
+                // doubled yod (יי -> י). Deliberately does NOT drop a single interior vav/yod
+                // (that fuller rule would merge ~7 real homographs). Applied only to the he-scoped
+                // analyzer/normalizer so the blast radius stays in Hebrew. The pattern is a regex
+                // (two vav/yod code points); the replacement is a literal single Hebrew glyph.
                 .charFilter("hebrew_matres", cf -> cf
                     .definition(d -> d
                         .patternReplace(pr -> pr
@@ -215,9 +182,9 @@ public class ElasticsearchHelper {
                         .patternReplace(pr -> pr
                             .pattern(HEBREW_DOUBLED_YOD_PATTERN)
                             .replacement(HEBREW_YOD))))
-                // Edge-ngram INDEX-side token filter (ADR-0010 opt D): emit 2..15-char edge n-grams
-                // so a prefix matches a stored gram in O(1) term lookups — recall is independent of
-                // match_phrase_prefix's max_expansions cap.
+                // Edge-ngram index-side token filter: emit 2..15-char edge n-grams so a prefix
+                // matches a stored gram in O(1) term lookups, independent of match_phrase_prefix's
+                // max_expansions cap.
                 .filter("edge_ngram_2_15", tf -> tf
                     .definition(d -> d
                         .edgeNgram(en -> en.minGram(2).maxGram(15))))
@@ -248,9 +215,9 @@ public class ElasticsearchHelper {
                         .charFilter("hebrew_niqqud")
                         .tokenizer("standard")
                         .filter("asciifolding", "lowercase", "edge_ngram_2_15")))
-                // SEARCH analyzer for the *.prefix subfield: SAME pipeline MINUS edge_ngram, so the
-                // query term is NOT itself exploded into grams (otherwise "ba" would match anything
-                // sharing a 2-gram). This index-vs-search split is the whole point of opt D.
+                // SEARCH analyzer for the *.prefix subfield: same pipeline minus edge_ngram, so the
+                // query term is not itself exploded into grams (otherwise "ba" would match anything
+                // sharing a 2-gram).
                 .analyzer("prefix_search_analyzer", an -> an
                     .custom(ca -> ca
                         .charFilter("hebrew_niqqud")
@@ -260,7 +227,7 @@ public class ElasticsearchHelper {
           for (var lang : allLanguages) {
             // name.he gets the Hebrew-scoped analyzer (doubled-matres collapse); every other
             // language keeps universal_analyzer. The .prefix subfield (edge-ngram) is added on all
-            // languages for cap-independent prefix recall (ADR-0010 opt D).
+            // languages for cap-independent prefix recall.
             var isHebrew = "he".equals(lang);
             m.properties("name." + lang, k -> k
                 .text(p -> p
@@ -272,10 +239,9 @@ public class ElasticsearchHelper {
                         .text(pt -> pt
                             .analyzer("prefix_index_analyzer")
                             .searchAnalyzer("prefix_search_analyzer")))));
-            // alt_names.<lang> — SEPARATE demoted variant-name field (ADR-0011 item 1). NOT folded
-            // into name (folding breaks ranking/display/ADR-0009). Same analyzer choice as name so
-            // he variants get the matres collapse too. No .prefix subfield (alt prefix is out of
-            // this bundle's query design).
+            // alt_names.lang — separate demoted variant-name field, not folded into name (folding
+            // breaks ranking/display). Same analyzer choice as name so he variants get the matres
+            // collapse too. No .prefix subfield.
             m.properties("alt_names." + lang, k -> k
                 .text(p -> p
                     .analyzer(isHebrew ? "hebrew_analyzer" : "universal_analyzer")
@@ -284,22 +250,13 @@ public class ElasticsearchHelper {
                             .normalizer(isHebrew ? "hebrew_normalizer" : "universal_normalizer")))));
           }
           m.properties("location", g -> g.geoPoint(p -> p));
-          // Ranking signals (additive — existing queries are unaffected; docs without
-          // these fields use missing:1.0 at query time).
+          // Ranking signals (additive; docs without these use missing:1.0 at query time).
           m.properties("prominence", n -> n.float_(f -> f));   // hot path: field_value_factor
           m.properties("population", n -> n.integer(f -> f));  // place/admin layer
-          // Coarse feature type ("peak"/"lake"/"city"...) for class-match ranking. keyword: exact
-          // term match only (no analysis), low cardinality, doc_values for query-time comparison.
+          // Coarse feature type ("peak"/"lake"/"city"...) for class-match ranking; keyword for exact
+          // term match with doc_values for query-time comparison.
           m.properties("feature_class", n -> n.keyword(f -> f));
-          // Raw components kept for re-tuning weights without a reindex: not searchable
-          // (index:false) but doc_values stay on so they remain readable.
-          m.properties("prom_base", n -> n.float_(f -> f.index(false)));
-          m.properties("prom_qrank_norm", n -> n.float_(f -> f.index(false)));
-          m.properties("prom_meta", n -> n.float_(f -> f.index(false)));
-          m.properties("ele_norm", n -> n.float_(f -> f.index(false)));
-          m.properties("qrank_raw", n -> n.long_(f -> f.index(false)));
-          // ADR-0014 enrichment signals (all index:false — query-time scoring inputs, re-weighted
-          // in the script without a reindex; doc_values stay on so the script can read them).
+          // Enrichment signals (index:false query-time scoring inputs; doc_values readable by script).
           m.properties("area_norm", n -> n.float_(f -> f.index(false)));
           m.properties("intermittent", n -> n.boolean_(f -> f.index(false)));
           return m;
@@ -375,10 +332,9 @@ public class ElasticsearchHelper {
   }
 
   /**
-   * Restore normal search-time settings on a freshly-built index before it goes
-   * live: re-enable periodic refresh (createPointsIndex/createBBoxIndex disable
-   * it for faster bulk writes) and add one replica for redundancy. Call this
-   * after the final flush and a one-off refresh, just before switchAlias.
+   * Restore normal search-time settings before an index goes live: re-enable periodic refresh and
+   * add one replica (createPointsIndex/createBBoxIndex disable both for faster bulk writes). Call
+   * after the final flush and refresh, just before switchAlias.
    */
   public static void restoreSearchSettings(ElasticsearchClient esClient, String targetIndex)
       throws Exception {
@@ -390,12 +346,10 @@ public class ElasticsearchHelper {
   }
 
   /**
-   * Live document statistics for an index/alias used by the post-build reconcile
-   * gate. {@code count} is the number of live (non-deleted) documents; {@code deleted}
-   * is the number of soft-deleted docs still pending merge. During a build that
-   * re-emits the same id (dedup overwrites), the OLD version becomes a deleted doc,
-   * so {@code count + deleted} approximates the number of distinct index operations
-   * applied — which is what we compare against emitted points.
+   * Live document statistics used by the post-build reconcile gate. count is live (non-deleted)
+   * docs; deleted is soft-deleted docs pending merge. A re-emitted id overwrites and turns the old
+   * version into a deleted doc, so count + deleted approximates the distinct index ops applied,
+   * which is what we compare against emitted points.
    */
   public record IndexDocsStats(long count, long deleted) {
     public long countPlusDeleted() {
@@ -404,11 +358,9 @@ public class ElasticsearchHelper {
   }
 
   /**
-   * Read live doc-count + deleted-count for the index the given alias resolves to.
-   * Uses the indices stats API (total across primaries+replicas folded to primaries
-   * via the alias) so docs.deleted is available. Returns {@code null} when the alias
-   * can't be probed, so the caller can decide to fail-open rather than block a build
-   * on a transient stats hiccup.
+   * Read live doc-count + deleted-count for the index the given alias resolves to, via the indices
+   * stats API (so docs.deleted is available). Returns null when the alias can't be probed, so the
+   * caller can fail open rather than block a build on a transient stats hiccup.
    */
   public static IndexDocsStats getLiveAliasDocsStats(ElasticsearchClient esClient, String indexAlias) {
     try {
@@ -436,17 +388,11 @@ public class ElasticsearchHelper {
   }
 
   /**
-   * Decide whether a freshly-built, now-live points index is acceptably complete.
-   * Pure (no I/O) so it is directly unit-testable. The "expected" number of live
-   * documents is {@code emittedPoints - genuineDataFailures} (transient charges are
-   * NOT subtracted: those ops were likely committed by ES even though the client
-   * timed out, so they should still be present in the live count).
-   *
-   * <p>Because re-emitting the same id overwrites in place, the comparison is made
-   * against {@code count + deleted} (the number of distinct index ops that landed),
-   * not the bare live {@code count} — otherwise legitimate dedup overwrites would
-   * look like loss. The build fails when the landed count is short of expected by
-   * more than {@code shortfallTolerance} (a fraction, e.g. 0.001 for 0.1%).
+   * Decide whether a freshly-built, now-live points index is acceptably complete. Pure (no I/O) so
+   * it is directly unit-testable. Expected live docs = emittedPoints - genuineDataFailures
+   * (transient charges are NOT subtracted: ES likely committed them after the client timed out).
+   * Compares against count + deleted (distinct ops landed), not the bare count, so dedup overwrites
+   * don't look like loss. Fails when the shortfall exceeds shortfallTolerance (e.g. 0.001 = 0.1%).
    *
    * @return null when within tolerance; otherwise a human-readable failure message.
    */
