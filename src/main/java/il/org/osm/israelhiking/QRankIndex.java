@@ -12,20 +12,14 @@ import java.util.logging.Logger;
 import java.util.zip.GZIPInputStream;
 
 /**
- * In-memory lookup of QRank (Wikimedia pageview rank) by Wikidata Q-id.
+ * In-memory lookup of QRank (Wikimedia pageview rank) by Wikidata Q-id. QRank
+ * (https://qrank.toolforge.org, CC0) ranks entities by aggregated pageviews — a "how much do people
+ * look this up" signal. The qrank.csv.gz file has an Entity,QRank header and ~28.7M rows.
  *
- * <p>QRank (https://qrank.toolforge.org, CC0) ranks Wikidata entities by aggregated Wikimedia
- * pageviews — a strong "how much do people look this up" signal, better aligned with an outdoor
- * product than Wikipedia-inlink importance. The file {@code qrank.csv.gz} has a header
- * {@code Entity,QRank} and ~28.7M rows like {@code Q665321,1234567}.
- *
- * <p>Backed by carrotsearch HPPC {@link LongIntHashMap} (a planetiler-bundled dependency — no new
- * pom entry). QRank's max (~559M) fits an {@code int}. ~28.7M entries ≈ 0.4–0.6 GB resident.
- *
- * <p>The {@link #load(Path)} factory accepts a null/missing/empty path and returns an EMPTY index
- * whose lookups all return 0 — the escape hatch for local testing on a Geofabrik extract without
- * shipping the 363 MB file. The map is built once before the planetiler pass and only read
- * (concurrently, safely) during it.
+ * Backed by carrotsearch HPPC LongIntHashMap (planetiler-bundled); QRank's max (~559M) fits an int,
+ * ~28.7M entries ≈ 0.4–0.6 GB resident. load() accepts a null/missing/empty path and returns an empty
+ * index whose lookups all return 0, so local builds can run without the 363 MB file. Built once before
+ * the planetiler pass and only read (concurrently, safely) during it.
  */
 class QRankIndex {
   private static final Logger LOGGER = Logger.getLogger(QRankIndex.class.getName());
@@ -42,8 +36,8 @@ class QRankIndex {
   }
 
   /**
-   * Load a gzipped {@code qrank.csv.gz}. If {@code csvGz} is null, missing, or empty, returns an
-   * empty index (no exception) so local builds can run without the file.
+   * Load a gzipped qrank.csv.gz. If csvGz is null, missing, or empty, returns an empty index (no
+   * exception) so local builds can run without the file.
    */
   static QRankIndex load(Path csvGz) {
     if (csvGz == null || !Files.isRegularFile(csvGz)) {
@@ -82,8 +76,8 @@ class QRankIndex {
   }
 
   /**
-   * Raw QRank for an OSM {@code wikidata} tag value (e.g. {@code "Q665321"}), or 0 if the tag is
-   * absent, malformed, or not in the table.
+   * Raw QRank for an OSM wikidata tag value (e.g. "Q665321"), or 0 if the tag is absent, malformed,
+   * or not in the table.
    */
   long getByWikidata(String wikidata) {
     if (wikidata == null || wikidata.length() < 2 || wikidata.charAt(0) != 'Q') {

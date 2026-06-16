@@ -5,7 +5,7 @@ import java.util.concurrent.atomic.LongAdder;
 /**
  * Cohesive holder for the bulk-indexing accounting counters and the failure-threshold logic, kept
  * out of PlanetSearchProfile (whose focus is OSM-feature -> document conversion). The counters are
- * the lossless-indexing invariant: {@code emitted == indexed + failed (+ transient)}. They are
+ * the lossless-indexing invariant: emitted == indexed + failed (+ transient). They are
  * mutated from two places — PlanetSearchProfile on every emit (the emitted buckets), and
  * AccountingBulkListener from the bulk callbacks (indexed/failed/transient) — so the LongAdders are
  * exposed for the listener to share.

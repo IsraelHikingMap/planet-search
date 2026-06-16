@@ -24,11 +24,9 @@ final class ProminenceCalculator {
   private ProminenceCalculator() {}
 
   /**
-   * Holder for the final {@code prominence} score plus the intermediate components that fed it.
-   * Only {@code prominence} is read by the indexer (written to the document); the components are
-   * retained because {@link ProminenceCalculatorTest} asserts on them to pin the composite math
-   * (e.g. eleNorm normalizes high for a tall peak, qrankNorm log-normalizes a big QRank). They are
-   * NOT stored in Elasticsearch — ADR-0027 removed the raw-component index fields.
+   * Holds the final prominence score plus the components that fed it. Only prominence is written to
+   * the document; the components are kept so ProminenceCalculatorTest can assert on the composite
+   * math (e.g. eleNorm is high for a tall peak). They are not stored in Elasticsearch.
    */
   static final class Result {
     final float prominence;
@@ -49,12 +47,12 @@ final class ProminenceCalculator {
   }
 
   /**
-   * @param naturalTag  value of the OSM {@code natural} tag (peak/spring/...), or null
-   * @param placeTag    value of the OSM {@code place} tag (city/town/village/...), or null
-   * @param boundaryTag value of the OSM {@code boundary} tag (national_park/protected_area/...), or null
-   * @param tourismTag  value of the OSM {@code tourism} tag (viewpoint/attraction/...), or null
-   * @param historicTag value of the OSM {@code historic} tag, or null
-   * @param waterwayTag value of the OSM {@code waterway} tag, or null
+   * @param naturalTag  value of the OSM natural tag (peak/spring/...), or null
+   * @param placeTag    value of the OSM place tag (city/town/village/...), or null
+   * @param boundaryTag value of the OSM boundary tag (national_park/protected_area/...), or null
+   * @param tourismTag  value of the OSM tourism tag (viewpoint/attraction/...), or null
+   * @param historicTag value of the OSM historic tag, or null
+   * @param waterwayTag value of the OSM waterway tag, or null
    * @param ele         parsed elevation in meters, or Double.NaN if absent
    * @param hasImage    image / wikimedia_commons tag present
    * @param hasWebsite  website tag present

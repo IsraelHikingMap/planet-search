@@ -143,9 +143,8 @@ public class PlanetSearchProfile implements Profile {
   }
 
   /**
-   * Compute the composite prominence score from OSM tags + QRank and store it on the document. Only
-   * the composite is stored — ADR-0027 removed the raw-component fields. Reads tags directly, not
-   * poiCategory, which is assigned later in some emit paths.
+   * Compute the composite prominence score from OSM tags + QRank and store it on the document. Reads
+   * tags directly, not poiCategory, which is assigned later in some emit paths.
    */
   private void setProminence(PointDocument pointDocument, WithTags feature) {
     long qrankRaw = qrankIndex.getByWikidata(pointDocument.wikidata);
@@ -873,7 +872,7 @@ public class PlanetSearchProfile implements Profile {
     return stats.getEmittedPointsCount();
   }
 
-  /** Two-bucket points guard: see {@link IndexingStats#hasIndexingFailures()}. */
+  /** Two-bucket points guard: see IndexingStats.hasIndexingFailures(). */
   public boolean hasIndexingFailures() {
     return stats.hasIndexingFailures();
   }
