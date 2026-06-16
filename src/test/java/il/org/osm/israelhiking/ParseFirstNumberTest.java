@@ -70,4 +70,26 @@ public class ParseFirstNumberTest {
         // AC3 verbatim: "1,234 m" -> 1234.0 (comma stripped as thousands sep, " m" ends the number).
         assertEquals(1234.0, OsmTagUtils.parseFirstNumber("1,234 m"), 1e-9);
     }
+
+    @Test
+    public void negativeElevation() {
+        // Below-sea-level elevations are real (Dead Sea region) — a leading '-' must be honored.
+        assertEquals(-413.0, OsmTagUtils.parseFirstNumber("-413"), 1e-9);
+    }
+
+    @Test
+    public void negativeWithUnitSuffix() {
+        assertEquals(-413.0, OsmTagUtils.parseFirstNumber("-413 m"), 1e-9);
+    }
+
+    @Test
+    public void loneMinusIsNaN() {
+        // A '-' with no digits is not a usable number.
+        assertTrue(Double.isNaN(OsmTagUtils.parseFirstNumber("-")));
+    }
+
+    @Test
+    public void minusThenNonNumericIsNaN() {
+        assertTrue(Double.isNaN(OsmTagUtils.parseFirstNumber("-abc")));
+    }
 }

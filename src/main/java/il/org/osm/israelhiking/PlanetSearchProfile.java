@@ -743,14 +743,19 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.wikidata = feature.getString("wikidata");
     pointDocument.image = feature.getString("image");
     pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+    pointDocument.website = feature.getString("website");
     pointDocument.poiSource = "OSM";
     var docId = sourceFeatureToDocumentId(feature);
     var point = feature.canBePolygon() ? (Point) feature.centroidIfConvex()
         : GeoUtils.point(feature.worldGeometry().getCoordinate());
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
     pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
-    // This inline path never ran classification, so classify here too so building/station/forest
-    // docs carry the same class-match ranking signal as every other emit path.
+    // This inline path builds its own PointDocument and (unlike convertTagsToDocument) never ran the
+    // ranking signals, so a wikidata-documented landmark caught here would otherwise go in with the
+    // bare prominence FLOOR. Run prominence (which also sets area_norm/intermittent) + population +
+    // feature_class here too, so every emit path carries the same ranking signals.
+    setProminence(pointDocument, feature);
+    setPopulation(pointDocument, feature);
     pointDocument.feature_class = OsmTagUtils.classifyFeatureClass(feature::getString);
     insertPointToElasticsearch(pointDocument, docId);
   }

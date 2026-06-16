@@ -288,8 +288,10 @@ final class OsmTagUtils {
   }
 
   /**
-   * Parse the first number out of a free-text OSM value like "4302", "14,115 ft", "1 000", "yes".
-   * Returns Double.NaN when there is no usable number. Never throws.
+   * Parse the first number out of a free-text OSM value like "4302", "14,115 ft", "1 000", "-413",
+   * "yes". A leading '-' is honored (below-sea-level elevations are real — e.g. the Dead Sea region),
+   * but a '-' AFTER digits ends the number ("100-200" -> 100). Returns Double.NaN when there is no
+   * usable number. Never throws.
    */
   static double parseFirstNumber(String raw) {
     if (raw == null) {
@@ -298,18 +300,23 @@ final class OsmTagUtils {
     StringBuilder sb = new StringBuilder();
     boolean seenDigit = false;
     boolean seenDot = false;
+    boolean seenSign = false;
     for (int i = 0; i < raw.length(); i++) {
       char c = raw.charAt(i);
       if (c >= '0' && c <= '9') {
         sb.append(c);
         seenDigit = true;
+      } else if (c == '-' && !seenDigit && !seenSign) {
+        // leading minus only (before any digit) — a negative value such as a below-sea-level ele
+        sb.append(c);
+        seenSign = true;
       } else if (c == '.' && seenDigit && !seenDot) {
         sb.append(c);
         seenDot = true;
       } else if ((c == ',' || c == ' ' || c == '\'') && seenDigit) {
         // thousands separator within a number — skip it
       } else if (seenDigit) {
-        break; // number ended (e.g. " ft", "-")
+        break; // number ended (e.g. " ft", a trailing "-" range separator)
       }
     }
     if (!seenDigit) {
