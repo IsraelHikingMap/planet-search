@@ -14,14 +14,13 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for ADR-0011 item 1 alt_name indexing — the pure {@code buildAltNames} helper that
- * {@code addAltNames} delegates to (extracted so the {@code ;}-split / trim / de-dup /
- * old_name-exclusion logic is testable without a {@code WithTags} or a real {@code BulkIngester},
- * mirroring the {@code flooredProminence} pattern).
+ * Unit tests for alt_name indexing — the pure buildAltNames helper that addAltNames delegates to
+ * (extracted so the ;-split / trim / de-dup / old_name-exclusion logic is testable without a
+ * WithTags or a real BulkIngester).
  *
- * <p>The MOST LIKELY correctness bug (called out in ADR-0011) is the multi-value {@code ;} split:
- * the existing {@code CoalesceIntoMap} keeps only the first value and never splits, so the new code
- * had to add splitting. These tests pin that, plus the explicit {@code old_name} exclusion.
+ * The most likely correctness bug is the multi-value ; split: CoalesceIntoMap keeps only the first
+ * value and never splits, so the new code had to add splitting. These tests pin that, plus the
+ * explicit old_name exclusion.
  */
 @Tag("unit")
 public class AddAltNamesTest {

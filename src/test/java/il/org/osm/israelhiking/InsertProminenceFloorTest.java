@@ -10,20 +10,18 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 /**
- * Guards the INSERT-path prominence safety floor (FR-1.4, AC1).
+ * Guards the INSERT-path prominence safety floor.
  *
- * <p>This is distinct from {@code ProminenceCalculatorTest.prominenceIsNeverZero}, which guards the
- * CALCULATOR floor. Some emit paths (ski-lift ways, relation-completion) never run
- * {@code convertTagsToDocument}, so {@code pointDocument.prominence} arrives null at
- * {@code insertPointToElasticsearch}. The insert-path floor must turn that null into
- * {@code (float) ProminenceCalculator.FLOOR} (0.05) so it can't serialize as null —
- * which, given {@code @JsonInclude(NON_NULL)}, would be OMITTED from _source -> field_value_factor
- * {@code missing:1.0} -> the doc unfairly outranks a real, scored feature (prominence &lt; 1).
+ * This is distinct from ProminenceCalculatorTest.prominenceIsNeverZero, which guards the CALCULATOR
+ * floor. Some emit paths (ski-lift ways, relation-completion) never run convertTagsToDocument, so
+ * pointDocument.prominence arrives null at insertPointToElasticsearch. The insert-path floor must
+ * turn that null into (float) ProminenceCalculator.FLOOR (0.05) so it can't serialize as null —
+ * which, given @JsonInclude(NON_NULL), would be omitted from _source, making field_value_factor
+ * fall back to missing:1.0 and the doc unfairly outrank a real, scored feature (prominence below 1).
  *
- * <p>The floored logic was extracted to the package-private static {@code flooredProminence(Float)}
- * (a behavior-preserving refactor — no contract/API change) so it can be unit-tested without
- * touching the private {@code insertPointToElasticsearch} / its real {@code BulkIngester}. No mock
- * is needed: the helper is pure.
+ * The floored logic was extracted to the package-private static flooredProminence(Float) so it can
+ * be unit-tested without touching the private insertPointToElasticsearch / its real BulkIngester. No
+ * mock is needed: the helper is pure.
  */
 @Tag("unit")
 public class InsertProminenceFloorTest {
@@ -61,12 +59,11 @@ public class InsertProminenceFloorTest {
     }
 
     /**
-     * Build-time placement invariant (AC4, documentation-grade). These ranking-floor computations
-     * live in the Java indexer ({@code vendor/planet-search}) and are exercised at index/emit time —
-     * NOT at C# query time. Asserting the symbols exist here (package-private static on
-     * {@code PlanetSearchProfile}, alongside {@code ProminenceCalculator.FLOOR}) pins that the
-     * guarded logic is in the indexer module, reinforcing "never compute ranking signals at query
-     * time."
+     * Build-time placement invariant. These ranking-floor computations live in the Java indexer
+     * (vendor/planet-search) and are exercised at index/emit time — NOT at C# query time. Asserting
+     * the symbols exist here (package-private static on PlanetSearchProfile, alongside
+     * ProminenceCalculator.FLOOR) pins that the guarded logic is in the indexer module, reinforcing
+     * "never compute ranking signals at query time."
      */
     @Test
     public void floorLogicLivesInTheIndexerAtBuildTime() throws Exception {

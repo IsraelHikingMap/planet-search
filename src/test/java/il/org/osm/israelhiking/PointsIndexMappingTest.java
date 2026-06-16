@@ -26,16 +26,14 @@ import co.elastic.clients.util.ObjectBuilder;
 import jakarta.json.stream.JsonGenerator;
 
 /**
- * Asserts the Step E reindex-bundle mapping/analyzer additions are actually emitted by
- * {@code createPointsIndex}. The existing {@code ElasticsearchServiceTest} mocks the indices client
- * but never inspects the BUILT request; here we capture the {@link CreateIndexRequest} (the
- * {@code create(Function)} convenience overload applies the builder lambda and delegates to the
- * mockable {@code create(CreateIndexRequest)}), serialize it to JSON, and assert the new
- * fields/analyzers are present.
+ * Asserts the reindex-bundle mapping/analyzer additions are actually emitted by createPointsIndex.
+ * ElasticsearchServiceTest mocks the indices client but never inspects the built request; here we
+ * capture the CreateIndexRequest (the create(Function) convenience overload applies the builder
+ * lambda and delegates to the mockable create(CreateIndexRequest)), serialize it to JSON, and
+ * assert the new fields/analyzers are present.
  *
- * <p>Covers: edge-ngram name.&lt;lang&gt;.prefix subfield with a non-ngram search_analyzer
- * (ADR-0010 opt D); the he-scoped matres char_filters + hebrew analyzer/normalizer (ADR-0011 item
- * 2); and the separate alt_names.&lt;lang&gt; field (ADR-0011 item 1).
+ * Covers: edge-ngram name.[lang].prefix subfield with a non-ngram search_analyzer; the he-scoped
+ * matres char_filters + hebrew analyzer/normalizer; and the separate alt_names.[lang] field.
  */
 @Tag("unit")
 @ExtendWith(MockitoExtension.class)

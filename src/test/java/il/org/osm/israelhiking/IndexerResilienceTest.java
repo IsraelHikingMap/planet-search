@@ -38,14 +38,11 @@ import co.elastic.clients.elasticsearch.core.bulk.OperationType;
 import co.elastic.clients.util.ObjectBuilder;
 
 /**
- * Step D — indexer resilience. Exercises the three new behaviours without a live
- * Elasticsearch:
- * <ol>
- *   <li>retry classification (which Throwables/HTTP statuses are retryable);</li>
- *   <li>the bounded retry/backoff in the whole-batch (Throwable) path — recovery,
- *       per-item 4xx NOT retried, and transient-bucket charging once exhausted;</li>
- *   <li>the two-bucket guard thresholds and the post-build reconcile gate.</li>
- * </ol>
+ * Indexer resilience. Exercises the three new behaviours without a live Elasticsearch:
+ *  - retry classification (which Throwables/HTTP statuses are retryable);
+ *  - the bounded retry/backoff in the whole-batch (Throwable) path — recovery, per-item 4xx NOT
+ *    retried, and transient-bucket charging once exhausted;
+ *  - the two-bucket guard thresholds and the post-build reconcile gate.
  */
 @Tag("unit")
 @ExtendWith(MockitoExtension.class)

@@ -30,7 +30,7 @@ import static org.mockito.Mockito.*;
  * pulled the indexer (default area=us/colorado) and reindexed OVER the live
  * whole-planet index, dropping it from 22.8M docs to ~83k.
  *
- * <p>The guard checks the LIVE (currently-aliased) doc-count — NOT the inactive
+ * The guard checks the LIVE (currently-aliased) doc-count — NOT the inactive
  * target index the build writes to — so a legitimate alias-rotation rebuild still
  * works once it passes --force-reindex.
  */
@@ -47,7 +47,7 @@ class ReindexSafetyGuardTest {
 
     private final String alias = "points";
 
-    /** Make the alias exist and resolve to {@code liveDocs} live documents. */
+    /** Make the alias exist and resolve to liveDocs live documents. */
     private void stubLiveCount(long liveDocs) throws IOException {
         when(esClient.indices()).thenReturn(indicesClient);
         when(indicesClient.existsAlias(

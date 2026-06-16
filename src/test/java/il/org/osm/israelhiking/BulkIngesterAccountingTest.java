@@ -32,28 +32,23 @@ import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
 import co.elastic.clients.elasticsearch.core.bulk.OperationType;
 
 /**
- * Regression guard for the lossless BulkIngester indexing invariant (Story 0.5).
+ * Regression guard for the lossless BulkIngester indexing invariant.
  *
- * <p>The production listener is the behavior-preserving extract
- * {@link AccountingBulkListener}; the per-item classification
- * logic is identical to the former anonymous inner class. Driving its
- * {@code afterBulk} overloads directly lets us assert, deterministically and
- * without a live Elasticsearch, that:
- * <ol>
- *   <li>AC1 — a bulk item failure is <em>surfaced</em> (counted via failedCount and
- *       logged at WARNING), never swallowed; the success path increments indexedCount.</li>
- *   <li>AC2 — lossless accounting: every item the listener sees is classified as exactly
- *       one of indexed / failed, so indexed + failed == items submitted.</li>
- *   <li>AC3 — a whole-batch failure (the {@code Throwable} overload) adds the entire batch
- *       to failedCount and is logged at SEVERE, and the fail-the-build decision is taken.</li>
- * </ol>
+ * The production listener is the behavior-preserving extract AccountingBulkListener; the per-item
+ * classification logic is identical to the former anonymous inner class. Driving its afterBulk
+ * overloads directly lets us assert, deterministically and without a live Elasticsearch, that:
+ *  - a bulk item failure is surfaced (counted via failedCount and logged at WARNING), never
+ *    swallowed; the success path increments indexedCount;
+ *  - lossless accounting: every item the listener sees is classified as exactly one of
+ *    indexed / failed, so indexed + failed == items submitted;
+ *  - a whole-batch failure (the Throwable overload) adds the entire batch to failedCount and is
+ *    logged at SEVERE, and the fail-the-build decision is taken.
  *
- * <p>Approach: per the story, exercising the real {@code BulkIngester} (approach a) is awkward
- * against the 8.x client because it derives an internal {@code ElasticsearchAsyncClient} from
- * the transport; we use approach (b): a behavior-preserving extract of the listener so it can be
- * unit-constructed and driven directly. The end-to-end reconciliation
- * (emitted == indexed + failed against the live fixture, indexed == ES {@code _count(points)})
- * is deferred to the orchestrator's shared-ES run.
+ * Approach: exercising the real BulkIngester is awkward against the 8.x client because it derives
+ * an internal ElasticsearchAsyncClient from the transport; we use a behavior-preserving extract of
+ * the listener so it can be unit-constructed and driven directly. The end-to-end reconciliation
+ * (emitted == indexed + failed against the live fixture, indexed == ES _count(points)) is deferred
+ * to the orchestrator's shared-ES run.
  */
 @Tag("unit")
 @ExtendWith(MockitoExtension.class)

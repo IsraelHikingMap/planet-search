@@ -10,11 +10,11 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for the OSM-tag -> feature_class classifier ({@code classifyFeatureClass}). Pins the
- * landform vocabulary expansion (canyon/gorge/mesa/
- * plateau/arch/cave/wetland and the arete/crater/mountain_range folds) and guards the pre-existing
- * mappings against regression. Doc-side classes here must each have a {@code class_groups} entry in
- * updated_score.yml, or the query-time pclass boost is a silent no-op.
+ * Unit tests for the OSM-tag -> feature_class classifier (classifyFeatureClass). Pins the landform
+ * vocabulary expansion (canyon/gorge/mesa/plateau/arch/cave/wetland and the
+ * arete/crater/mountain_range folds) and guards the pre-existing mappings against regression.
+ * Doc-side classes here must each have a class_groups entry in updated_score.yml, or the query-time
+ * pclass boost is a silent no-op.
  */
 @Tag("unit")
 public class SetFeatureClassTest {
@@ -87,7 +87,7 @@ public class SetFeatureClassTest {
         assertNull(classify(Map.of("landuse", "forest")));
     }
 
-    // --- built / POI classes (ADR-0019) --------------------------------------
+    // --- built / POI classes --------------------------------------
 
     @Test
     public void lodgingTourismMapsToLodging() {

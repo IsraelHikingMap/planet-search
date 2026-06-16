@@ -6,15 +6,15 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for ADR-0011 item 2 — the Hebrew matres-lectionis DOUBLED-ONLY rule that the he-scoped
- * char_filters (hebrew_matres / hebrew_matres_yod) apply. We exercise the pure reference
- * implementation {@code ElasticsearchHelper.applyHebrewMatresDoubledOnly} (same rule the index
- * char_filters encode) so the doubled-vs-single behaviour is pinned without a live cluster.
+ * Unit tests for the Hebrew matres-lectionis DOUBLED-ONLY rule that the he-scoped char_filters
+ * (hebrew_matres / hebrew_matres_yod) apply. We exercise the pure reference implementation
+ * ElasticsearchHelper.applyHebrewMatresDoubledOnly (same rule the index char_filters encode) so the
+ * doubled-vs-single behaviour is pinned without a live cluster.
  *
- * <p>SCOPE NOTE (honest): doubled-only is the SAFE, ~zero-homograph-break rule the parent chose. It
- * does NOT fix the client's אופניים/אפניים case (HV01/HV02) — that needs the deferred
- * single-interior-vav rule, which breaks ~7 real homographs (אור/אר, דוד/דד, ...) and is parked for
- * client sign-off. These tests assert exactly that boundary.
+ * Scope: doubled-only is the safe, ~zero-homograph-break rule. It does NOT fix the client's
+ * אופניים/אפניים case — that needs the deferred single-interior-vav rule, which breaks ~7 real
+ * homographs (אור/אר, דוד/דד, ...) and is parked for client sign-off. These tests assert exactly
+ * that boundary.
  */
 @Tag("unit")
 public class HebrewMatresRuleTest {
@@ -54,7 +54,7 @@ public class HebrewMatresRuleTest {
 
     @Test
     public void doesNotFixTheClientDefectiveSpelling() {
-        // HONEST boundary (the core ADR-0011 caveat): the client's defective spelling אפניים differs
+        // Honest boundary: the client's defective spelling אפניים differs
         // from the full אופניים by a MISSING interior vav — NOT a doubled letter. The doubled-only
         // rule does collapse the doubled YOD that both forms share (אופניים->אופנים, אפניים->אפנים),
         // but it leaves the vav difference intact, so the two forms STILL do not collide. Fixing
