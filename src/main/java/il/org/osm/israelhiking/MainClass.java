@@ -99,9 +99,6 @@ public class MainClass {
             ElasticsearchHelper.restoreSearchSettings(esClient, targetPointsIndex);
             ElasticsearchHelper.restoreSearchSettings(esClient, targetBBoxIndex);
 
-            ElasticsearchHelper.switchAlias(esClient, pointsIndexAlias, targetPointsIndex);
-            ElasticsearchHelper.switchAlias(esClient, bboxIndexAlias, targetBBoxIndex);
-
             // bbox geo_shape rejects (degenerate OSM geometries) are tolerated since they don't
             // affect name search, but surfaced so they're never silent.
             if (profile.getFailedBboxCount() > 0) {
@@ -123,22 +120,30 @@ public class MainClass {
             if (profile.hasIndexingFailures()) {
                 throw new IllegalStateException("Indexing finished with " + profile.getFailedPointsCount()
                         + " genuine + " + profile.getTransientPointsCharges()
-                        + " transient failed POINTS document(s) out of " + profile.getEmittedCount()
+                        + " transient failed POINTS document(s) out of " + profile.getEmittedPointsCount()
                         + " emitted (" + profile.getIndexedCount() + " indexed, "
                         + profile.getFailedBboxCount() + " bbox dropped). "
                         + "Refusing to treat a partial points index as success.");
             }
 
-            // Post-build reconcile gate (the backstop): read the live points alias doc-stats and
-            // compare against emitted - genuine-data-failures. Re-emitting the same id overwrites in
-            // place, so compare against count+deleted (distinct ops landed) not the bare live count,
-            // to avoid mistaking legitimate dedup for loss. Fail if short by more than 0.1%.
-            var pointsStats = ElasticsearchHelper.getLiveAliasDocsStats(esClient, pointsIndexAlias);
+            // Post-build reconcile gate (the backstop): read the freshly-built target index's
+            // doc-stats DIRECTLY (not via the alias, which still points at the old live index — the
+            // swap below only happens once every guard passes) and compare against emitted -
+            // genuine-data-failures. Re-emitting the same id overwrites in place, so compare against
+            // count+deleted (distinct ops landed) not the bare count, to avoid mistaking legitimate
+            // dedup for loss. Fail if short by more than 0.1%.
+            var pointsStats = ElasticsearchHelper.getLiveAliasDocsStats(esClient, targetPointsIndex);
             String reconcileFailure = ElasticsearchHelper.reconcileLivePoints(
                     profile.getEmittedPointsCount(), profile.getFailedPointsCount(), pointsStats, 0.001);
             if (reconcileFailure != null) {
                 throw new IllegalStateException(reconcileFailure);
             }
+
+            // Every guard passed — only NOW promote the new indices to live. Doing this last keeps
+            // the lossless guarantee: a partial/broken build throws above and the old index stays
+            // aliased, instead of a broken index being promoted before the checks run.
+            ElasticsearchHelper.switchAlias(esClient, pointsIndexAlias, targetPointsIndex);
+            ElasticsearchHelper.switchAlias(esClient, bboxIndexAlias, targetBBoxIndex);
         } finally {
             esClient.close();
         }

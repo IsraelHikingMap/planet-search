@@ -494,7 +494,7 @@ public class PlanetSearchProfile implements Profile {
         var minIdFeature = mergedFeature.representingFeature;
 
         var pointDocument = new PointDocument();
-        convertTagsToDocument(pointDocument, feature);
+        convertTagsToDocument(pointDocument, minIdFeature);
         for (String language : supportedLanguages) {
           CoalesceIntoMap(pointDocument.name, language, minIdFeature.getString("mtb:name:" + language));
         }

@@ -106,6 +106,22 @@ public class PointsIndexMappingTest {
     }
 
     @Test
+    public void hebrewPrefixSubfieldFoldsMatresLikeTheMainHebrewField() throws Exception {
+        var json = createPointsIndexJson();
+        // The he-scoped prefix analyzers (prefix pipeline + the doubled-matres folds) must be
+        // defined, so name.he's edge-grams fold doubled vav/yod the same way hebrew_analyzer does
+        // on the main field — otherwise a Hebrew as-you-type prefix query recalls differently from
+        // the full-token query.
+        assertTrue(json.contains("hebrew_prefix_index_analyzer"),
+                "the he-scoped prefix INDEX analyzer (matres + edge_ngram) must be defined and bound");
+        assertTrue(json.contains("hebrew_prefix_search_analyzer"),
+                "the he-scoped prefix SEARCH analyzer (matres, no edge_ngram) must be defined and bound");
+        // Non-Hebrew languages keep the plain prefix analyzers (no matres) — the binding stays split.
+        assertTrue(json.contains("prefix_index_analyzer"),
+                "the plain prefix index analyzer must remain for non-Hebrew languages");
+    }
+
+    @Test
     public void mappingDeclaresSeparateAltNamesFieldPerLanguage() throws Exception {
         var json = createPointsIndexJson();
         assertTrue(json.contains("alt_names.default"), "alt_names.default must be mapped");

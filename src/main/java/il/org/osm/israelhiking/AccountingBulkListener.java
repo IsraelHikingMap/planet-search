@@ -110,18 +110,34 @@ final class AccountingBulkListener implements BulkListener<Void> {
 
   @Override
   public void afterBulk(long executionId, BulkRequest request, List<Void> contexts, BulkResponse response) {
-    if (response.errors()) {
-      response.items().forEach(item -> {
-        if (item.error() != null) {
-          recordFailure(item.index());
-          LOGGER.warning(() -> "Failed to index id=" + item.id() + " into " + item.index()
-              + ": " + item.error().reason());
-        } else {
-          indexedCount.increment();
-        }
-      });
-    } else {
+    if (!response.errors()) {
       indexedCount.add(response.items().size());
+      return;
+    }
+    // A 200-with-errors response can mix indexed items, genuine per-item 4xx (mapping/parse), and
+    // retryable per-item statuses (429/5xx from a full bulk queue or a rebalancing shard). The
+    // BulkIngester does NOT auto-retry these — only the Throwable overload does — so classify here
+    // the same way reconcileRetryResponse does: count successes, charge 4xx as genuine, and feed the
+    // retryable subset through the backoff path instead of charging it as a genuine data failure.
+    List<BulkOperation> operations = request.operations();
+    List<BulkOperation> retryable = new ArrayList<>();
+    List<BulkResponseItem> items = response.items();
+    for (int i = 0; i < items.size(); i++) {
+      BulkResponseItem item = items.get(i);
+      if (item.error() == null) {
+        indexedCount.increment();
+      } else if (isRetryableStatus(item.status()) && i < operations.size()) {
+        retryable.add(operations.get(i));
+      } else {
+        recordFailure(item.index());
+        LOGGER.warning(() -> "Failed to index id=" + item.id() + " into " + item.index()
+            + ": " + item.error().reason());
+      }
+    }
+    if (!retryable.isEmpty()) {
+      LOGGER.warning(() -> "Bulk request " + executionId + " had " + retryable.size()
+          + " retryable per-item failure(s); resubmitting with backoff.");
+      resubmitWithBackoff(executionId, retryable);
     }
   }
 

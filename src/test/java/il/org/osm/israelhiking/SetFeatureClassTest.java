@@ -71,6 +71,21 @@ public class SetFeatureClassTest {
     }
 
     @Test
+    public void waterRiverAndCanalAreNotMislabelledAsLake() {
+        // natural=water + water=river|canal are common (wide-river / canal surfaces); they must not
+        // be classified as lakes. Unknown sub-types get the neutral "water", never "lake".
+        assertEquals("river", classify(Map.of("natural", "water", "water", "river")));
+        assertEquals("canal", classify(Map.of("natural", "water", "water", "canal")));
+        assertEquals("lagoon", classify(Map.of("natural", "water", "water", "lagoon")));
+        assertEquals("water", classify(Map.of("natural", "water", "water", "oxbow")));
+        // lake/reservoir/pond and the no-subtype base case stay as before.
+        assertEquals("lake", classify(Map.of("natural", "water", "water", "lake")));
+        assertEquals("reservoir", classify(Map.of("natural", "water", "water", "reservoir")));
+        assertEquals("pond", classify(Map.of("natural", "water", "water", "pond")));
+        assertEquals("lake", classify(Map.of("natural", "water")));
+    }
+
+    @Test
     public void unrecognisedNaturalFallsBackToNaturalCatchAll() {
         // sand/dune/basin/... deliberately stay in the generic catch-all (OUTDOOR_GENERIC group).
         assertEquals("natural", classify(Map.of("natural", "sand")));

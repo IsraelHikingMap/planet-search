@@ -262,6 +262,67 @@ class IndexerResilienceTest {
     }
 
     // ---------------------------------------------------------------------------
+    // 2b) Initial bulk-response path (200-with-errors, no Throwable)
+    // ---------------------------------------------------------------------------
+
+    @Test
+    void initialResponse_perItem4xxIsChargedGenuine_notRetried() throws Exception {
+        // A 200-with-errors response: op0 ok, op1 a 400 mapping error, op2 ok. The 400 is a
+        // genuine data failure and must not be resubmitted.
+        BulkRequest request = requestWithOperations(3, POINTS_INDEX);
+        BulkResponse mixed = BulkResponse.of(b -> b.took(1).errors(true).items(List.of(
+                item(POINTS_INDEX, "op-0", 200, false),
+                item(POINTS_INDEX, "op-1", 400, true),
+                item(POINTS_INDEX, "op-2", 200, false))));
+
+        listener.afterBulk(1L, request, List.of(), mixed);
+
+        assertEquals(2, indexedCount.sum());
+        assertEquals(1, failedPointsCount.sum(), "a 400 per-item error is a genuine data failure");
+        assertEquals(0, transientCharges());
+        verify(esClient, times(0)).bulk(this.<BulkRequest>anyBulkFn());
+    }
+
+    @Test
+    void initialResponse_perItemRetryableStatusIsResubmitted_notChargedGenuine() throws Exception {
+        // The bug_002 regression: a per-item 503 inside a 200-with-errors response is retryable —
+        // it must go through the backoff path, NOT straight into the genuine-failure bucket.
+        BulkRequest request = requestWithOperations(3, POINTS_INDEX);
+        BulkResponse mixed = BulkResponse.of(b -> b.took(1).errors(true).items(List.of(
+                item(POINTS_INDEX, "op-0", 200, false),
+                item(POINTS_INDEX, "op-1", 503, true),
+                item(POINTS_INDEX, "op-2", 200, false))));
+        // The lone retried op succeeds on resubmit.
+        when(esClient.bulk(this.<BulkRequest>anyBulkFn())).thenReturn(successResponse(1));
+
+        listener.afterBulk(2L, request, List.of(), mixed);
+
+        assertEquals(3, indexedCount.sum(), "2 indexed on the initial pass + 1 recovered on resubmit");
+        assertEquals(0, failedPointsCount.sum(), "a 503 is retryable, never a genuine failure");
+        assertEquals(0, transientCharges());
+        verify(esClient, times(1)).bulk(this.<BulkRequest>anyBulkFn());
+    }
+
+    @Test
+    void initialResponse_retryablePersists_landsInTransientBucket() throws Exception {
+        // A per-item 503 that never recovers exhausts retries and lands in the transient bucket —
+        // never the strict genuine bucket.
+        BulkRequest request = requestWithOperations(2, POINTS_INDEX);
+        BulkResponse mixed = BulkResponse.of(b -> b.took(1).errors(true).items(List.of(
+                item(POINTS_INDEX, "op-0", 200, false),
+                item(POINTS_INDEX, "op-1", 503, true))));
+        BulkResponse stillFailing = BulkResponse.of(b -> b.took(1).errors(true).items(List.of(
+                item(POINTS_INDEX, "op-1", 503, true))));
+        when(esClient.bulk(this.<BulkRequest>anyBulkFn())).thenReturn(stillFailing);
+
+        listener.afterBulk(3L, request, List.of(), mixed);
+
+        assertEquals(1, indexedCount.sum());
+        assertEquals(0, failedPointsCount.sum(), "a persistently-503 item is never a genuine failure");
+        assertEquals(1, transientPointsCharges.sum(), "it lands in the transient bucket after retries");
+    }
+
+    // ---------------------------------------------------------------------------
     // 3) Two-bucket guard thresholds
     // ---------------------------------------------------------------------------
 

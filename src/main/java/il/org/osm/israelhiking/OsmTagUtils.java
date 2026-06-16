@@ -177,7 +177,14 @@ final class OsmTagUtils {
           case "lake":      fc = "lake"; break;
           case "reservoir": fc = "reservoir"; break;
           case "pond":      fc = "pond"; break;
-          default:          fc = "lake"; break;
+          // river/canal surfaces are common as natural=water + water=river|canal; reuse the
+          // waterway classes so a wide river isn't mis-ranked as a lake.
+          case "river":     fc = "river"; break;
+          case "canal":     fc = "canal"; break;
+          case "lagoon":    fc = "lagoon"; break;
+          // Neutral generic for any other sub-type (oxbow, stream_pool, wastewater, ...) — better
+          // a coarse "water" than a wrong "lake".
+          default:          fc = "water"; break;
         }
       }
     } else if (waterway != null) {
@@ -287,11 +294,18 @@ final class OsmTagUtils {
     return fc;
   }
 
+  // Magnitude multipliers glued to the digits rescale them: "1.5M" -> 1_500_000, "50k" -> 50_000.
+  // GLUED_MAGNITUDE_VALUES is index-aligned to GLUED_MAGNITUDE_SUFFIXES. Lowercase 'm' is excluded:
+  // it's the metres unit, so a glued-unit elevation like "1500m" still parses to 1500 (not mega).
+  private static final String GLUED_MAGNITUDE_SUFFIXES = "kKMB";
+  private static final double[] GLUED_MAGNITUDE_VALUES = { 1e3, 1e3, 1e6, 1e9 };
+
   /**
-   * Parse the first number out of a free-text OSM value like "4302", "14,115 ft", "1 000", "-413",
-   * "yes". A leading '-' is honored (below-sea-level elevations are real — e.g. the Dead Sea region),
-   * but a '-' AFTER digits ends the number ("100-200" -> 100). Returns Double.NaN when there is no
-   * usable number. Never throws.
+   * Parse the first number out of a free-text OSM value ("4302", "14,115 ft", "1 000", "-413",
+   * "1.5M", "yes"). Honors a leading '-'; a '-' after digits ends the number ("100-200" -> 100). A
+   * glued magnitude multiplier rescales the digits (see {@link #GLUED_MAGNITUDE_SUFFIXES}), so
+   * "1.5M" -> 1_500_000 and "50k" -> 50_000. Returns Double.NaN when there is no usable number.
+   * Never throws.
    */
   static double parseFirstNumber(String raw) {
     if (raw == null) {
@@ -301,11 +315,14 @@ final class OsmTagUtils {
     boolean seenDigit = false;
     boolean seenDot = false;
     boolean seenSign = false;
+    boolean lastWasNumeric = false; // last appended char was a digit/dot (not a skipped separator)
+    double multiplier = 1.0;
     for (int i = 0; i < raw.length(); i++) {
       char c = raw.charAt(i);
       if (c >= '0' && c <= '9') {
         sb.append(c);
         seenDigit = true;
+        lastWasNumeric = true;
       } else if (c == '-' && !seenDigit && !seenSign) {
         // leading minus only (before any digit) — a negative value such as a below-sea-level ele
         sb.append(c);
@@ -313,17 +330,25 @@ final class OsmTagUtils {
       } else if (c == '.' && seenDigit && !seenDot) {
         sb.append(c);
         seenDot = true;
+        lastWasNumeric = true;
       } else if ((c == ',' || c == ' ' || c == '\'') && seenDigit) {
         // thousands separator within a number — skip it
+        lastWasNumeric = false;
       } else if (seenDigit) {
-        break; // number ended (e.g. " ft", a trailing "-" range separator)
+        // A magnitude multiplier glued to the digits (no separator) rescales them; it ends the
+        // number, so capture the factor and stop (anything after it is ignored).
+        int magIdx = lastWasNumeric ? GLUED_MAGNITUDE_SUFFIXES.indexOf(c) : -1;
+        if (magIdx >= 0) {
+          multiplier = GLUED_MAGNITUDE_VALUES[magIdx];
+        }
+        break; // number ended (a multiplier, " ft", or a trailing "-" range separator)
       }
     }
     if (!seenDigit) {
       return Double.NaN;
     }
     try {
-      return Double.parseDouble(sb.toString());
+      return Double.parseDouble(sb.toString()) * multiplier;
     } catch (NumberFormatException e) {
       return Double.NaN;
     }

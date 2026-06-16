@@ -222,6 +222,20 @@ public class ElasticsearchHelper {
                     .custom(ca -> ca
                         .charFilter("hebrew_niqqud")
                         .tokenizer("standard")
+                        .filter("asciifolding", "lowercase")))
+                // He-scoped prefix analyzers = the prefix analyzers above + the doubled-matres
+                // folds, so name.he's .prefix edge-grams fold doubled vav/yod the same way the main
+                // name.he field (hebrew_analyzer) does. Without these, a Hebrew as-you-type prefix
+                // query would recall differently from the full-token query the matres fold added.
+                .analyzer("hebrew_prefix_index_analyzer", an -> an
+                    .custom(ca -> ca
+                        .charFilter("hebrew_niqqud", "hebrew_matres", "hebrew_matres_yod")
+                        .tokenizer("standard")
+                        .filter("asciifolding", "lowercase", "edge_ngram_2_15")))
+                .analyzer("hebrew_prefix_search_analyzer", an -> an
+                    .custom(ca -> ca
+                        .charFilter("hebrew_niqqud", "hebrew_matres", "hebrew_matres_yod")
+                        .tokenizer("standard")
                         .filter("asciifolding", "lowercase")))))
         .mappings(m -> {
           for (var lang : allLanguages) {
@@ -237,8 +251,8 @@ public class ElasticsearchHelper {
                             .normalizer(isHebrew ? "hebrew_normalizer" : "universal_normalizer")))
                     .fields("prefix", f -> f
                         .text(pt -> pt
-                            .analyzer("prefix_index_analyzer")
-                            .searchAnalyzer("prefix_search_analyzer")))));
+                            .analyzer(isHebrew ? "hebrew_prefix_index_analyzer" : "prefix_index_analyzer")
+                            .searchAnalyzer(isHebrew ? "hebrew_prefix_search_analyzer" : "prefix_search_analyzer")))));
             // alt_names.lang — separate demoted variant-name field, not folded into name (folding
             // breaks ranking/display). Same analyzer choice as name so he variants get the matres
             // collapse too. No .prefix subfield.
@@ -327,8 +341,17 @@ public class ElasticsearchHelper {
 
   public static void switchAlias(ElasticsearchClient esClient, String indexAlias, String targetIndex)
       throws Exception {
-    esClient.indices().updateAliases(c -> c.actions(a -> a.remove(i -> i.index("*").alias(indexAlias)))
-        .actions(a -> a.add(c2 -> c2.index(targetIndex).alias(indexAlias))));
+    // On the first-ever build no index carries the alias yet. updateAliases is atomic, and a
+    // remove action for an alias that exists on no index can be rejected ("aliases [X] missing"),
+    // which would fail the whole request and leave the freshly built index unaliased. So only
+    // issue the remove when the alias actually exists; otherwise add-only.
+    boolean aliasExists = esClient.indices().existsAlias(c -> c.name(indexAlias)).value();
+    esClient.indices().updateAliases(c -> {
+      if (aliasExists) {
+        c.actions(a -> a.remove(i -> i.index("*").alias(indexAlias)));
+      }
+      return c.actions(a -> a.add(c2 -> c2.index(targetIndex).alias(indexAlias)));
+    });
   }
 
   /**
