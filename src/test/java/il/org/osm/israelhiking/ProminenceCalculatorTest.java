@@ -86,6 +86,22 @@ public class ProminenceCalculatorTest {
     }
 
     @Test
+    public void negativeElevationIsClampedToZeroNorm() {
+        // Dead Sea-region peaks sit below sea level (ele < 0). Math.max(0, ele) must floor the
+        // elevation at 0 so log1p never sees a negative argument (which would yield NaN). The peak
+        // then gets its class prior with no elevation boost, identical to a sea-level peak.
+        var below = ProminenceCalculator.compute("peak", null, null, null, null, null,
+                -413, false, false, false, 0L);
+        var atSea = ProminenceCalculator.compute("peak", null, null, null, null, null,
+                0, false, false, false, 0L);
+        assertEquals(0f, below.eleNorm, 1e-6, "negative elevation should normalize to 0, not NaN");
+        assertEquals(atSea.prominence, below.prominence, 1e-6,
+                "a below-sea-level peak should score like a sea-level peak");
+        assertTrue(below.prominence > 0f && below.prominence <= 1f,
+                "prominence must stay finite and in range, was " + below.prominence);
+    }
+
+    @Test
     public void outputAlwaysInUnitRange() {
         // Even maxed-out inputs stay clamped to [0,1].
         var r = ProminenceCalculator.compute("peak", "city", "national_park", "viewpoint", "ruins",
