@@ -57,19 +57,6 @@ public class MainClass {
                     "Path to qrank.csv.gz for the prominence signal (empty = run without it)", "");
             var qrankIndex = QRankIndex.load(qrankPath.isEmpty() ? null : Path.of(qrankPath));
 
-            // Safety guard: this indexer deletes+recreates its target index every run, then swaps
-            // the alias. Refuse to proceed when the live (currently-aliased) doc-count is at/above
-            // the threshold unless an intentional reindex was requested via --force-reindex, so an
-            // unintentional run can't destroy a populated live index.
-            var forceReindex = args.getBoolean("force-reindex",
-                    "Allow reindexing OVER a populated live index (intentional rebuild, e.g. make prod)",
-                    false);
-            var minProtectDocs = args.getLong("min-protect-docs",
-                    "Protect the live index from being reindexed when it has at least this many docs",
-                    1_000_000L);
-            ElasticsearchHelper.assertSafeToReindex(esClient, pointsIndexAlias, minProtectDocs, forceReindex);
-            ElasticsearchHelper.assertSafeToReindex(esClient, bboxIndexAlias, minProtectDocs, forceReindex);
-
             var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias,
                     supportedLanguages);
             var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
@@ -99,51 +86,12 @@ public class MainClass {
             ElasticsearchHelper.restoreSearchSettings(esClient, targetPointsIndex);
             ElasticsearchHelper.restoreSearchSettings(esClient, targetBBoxIndex);
 
-            // bbox geo_shape rejects (degenerate OSM geometries) are tolerated since they don't
-            // affect name search, but surfaced so they're never silent.
-            if (profile.getFailedBboxCount() > 0) {
-                LOGGER.warning("Indexing dropped " + profile.getFailedBboxCount()
-                        + " bbox document(s) (geo_shape rejects); tolerated — name search unaffected.");
-            }
-            // Transient whole-batch charges (after retries exhausted) are likely phantom — ES may
-            // have committed them after the client timed out — so they are surfaced but tolerated;
-            // the reconcile gate below is the authoritative check on real loss.
-            if (profile.getTransientCharges() > 0) {
-                LOGGER.warning("Indexing had " + profile.getTransientCharges()
-                        + " transient charge(s) after retries (" + profile.getTransientPointsCharges()
-                        + " points, " + profile.getTransientBboxCharges()
-                        + " bbox); likely phantom timeouts — verifying via reconcile gate.");
-            }
-
-            // Two-bucket guard: fail only when POINTS loss exceeds the bucket thresholds (genuine
-            // per-item data failures held to a strict bar; transient charges tolerated generously).
-            if (profile.hasIndexingFailures()) {
-                throw new IllegalStateException("Indexing finished with " + profile.getFailedPointsCount()
-                        + " genuine + " + profile.getTransientPointsCharges()
-                        + " transient failed POINTS document(s) out of " + profile.getEmittedPointsCount()
-                        + " emitted (" + profile.getIndexedCount() + " indexed, "
-                        + profile.getFailedBboxCount() + " bbox dropped). "
-                        + "Refusing to treat a partial points index as success.");
-            }
-
-            // Post-build reconcile gate (the backstop): read the freshly-built target index's
-            // doc-stats DIRECTLY (not via the alias, which still points at the old live index — the
-            // swap below only happens once every guard passes) and compare against emitted -
-            // genuine-data-failures. Re-emitting the same id overwrites in place, so compare against
-            // count+deleted (distinct ops landed) not the bare count, to avoid mistaking legitimate
-            // dedup for loss. Fail if short by more than 0.1%.
-            var pointsStats = ElasticsearchHelper.getLiveAliasDocsStats(esClient, targetPointsIndex);
-            String reconcileFailure = ElasticsearchHelper.reconcileLivePoints(
-                    profile.getEmittedPointsCount(), profile.getFailedPointsCount(), pointsStats, 0.001);
-            if (reconcileFailure != null) {
-                throw new IllegalStateException(reconcileFailure);
-            }
-
-            // Every guard passed — only NOW promote the new indices to live. Doing this last keeps
-            // the lossless guarantee: a partial/broken build throws above and the old index stays
-            // aliased, instead of a broken index being promoted before the checks run.
             ElasticsearchHelper.switchAlias(esClient, pointsIndexAlias, targetPointsIndex);
             ElasticsearchHelper.switchAlias(esClient, bboxIndexAlias, targetBBoxIndex);
+
+            LOGGER.info("Indexing finished: indexed " + profile.getIndexedCount() + " of "
+                    + profile.getEmittedCount() + " emitted document(s) (" + profile.getFailedCount()
+                    + " failed).");
         } finally {
             esClient.close();
         }

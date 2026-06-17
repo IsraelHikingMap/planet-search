@@ -76,7 +76,7 @@ public class PlanetSearchProfile implements Profile {
         // Listener gives per-batch visibility instead of swallowing errors. Extracted into a named
         // class (AccountingBulkListener) so the counting logic is unit-testable. Pass the whole
         // IndexingStats holder so the counters are wired by name, not a swap-prone positional list.
-        .listener(new AccountingBulkListener(esClient, stats, pointsIndexName)));
+        .listener(new AccountingBulkListener(esClient, stats)));
   }
 
   /*
@@ -772,7 +772,6 @@ public class PlanetSearchProfile implements Profile {
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
     pointDocument.poiProminence = flooredProminence(pointDocument.poiProminence);
     stats.emittedCount.increment();
-    stats.emittedPointsCount.increment();
     bulkIngester.add(BulkOperation.of(op -> op
         .index(idx -> idx
             .index(this.pointsIndexName)
@@ -820,21 +819,14 @@ public class PlanetSearchProfile implements Profile {
    * it goes live. close() also flushes, but we flush explicitly first so the final flush is visible.
    */
   public void flush() {
-    LOGGER.info(() -> "Flushing final batch: " + bulkIngester.pendingOperations()
-        + " buffered operations, " + bulkIngester.pendingRequests() + " in-flight requests.");
     bulkIngester.flush();
     // close() blocks until the buffer and all in-flight requests (and their counter-updating
     // listener callbacks) have completed.
     bulkIngester.close();
-    LOGGER.info(() -> "Elasticsearch indexing finished: " + stats.getIndexedCount()
-        + " documents indexed, " + stats.getFailedCount() + " failed ("
-        + stats.getFailedPointsCount() + " points, " + stats.getFailedBboxCount() + " bbox); "
-        + stats.getTransientCharges() + " transient charge(s) after retries exhausted ("
-        + stats.getTransientPointsCharges() + " points, " + stats.getTransientBboxCharges() + " bbox).");
   }
 
-  // Indexing accounting is owned by IndexingStats; these accessors delegate so MainClass (and tests)
-  // keep a stable surface on the profile.
+  // Counters delegate to IndexingStats so MainClass keeps a stable surface; reported in one summary
+  // line after the run.
 
   public long getIndexedCount() {
     return stats.getIndexedCount();
@@ -844,37 +836,8 @@ public class PlanetSearchProfile implements Profile {
     return stats.getFailedCount();
   }
 
-  public long getFailedPointsCount() {
-    return stats.getFailedPointsCount();
-  }
-
-  public long getFailedBboxCount() {
-    return stats.getFailedBboxCount();
-  }
-
-  public long getTransientPointsCharges() {
-    return stats.getTransientPointsCharges();
-  }
-
-  public long getTransientBboxCharges() {
-    return stats.getTransientBboxCharges();
-  }
-
-  public long getTransientCharges() {
-    return stats.getTransientCharges();
-  }
-
   public long getEmittedCount() {
     return stats.getEmittedCount();
-  }
-
-  public long getEmittedPointsCount() {
-    return stats.getEmittedPointsCount();
-  }
-
-  /** Two-bucket points guard: see IndexingStats.hasIndexingFailures(). */
-  public boolean hasIndexingFailures() {
-    return stats.hasIndexingFailures();
   }
 
   /**

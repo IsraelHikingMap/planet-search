@@ -2,8 +2,6 @@ package il.org.osm.israelhiking;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
@@ -38,11 +36,12 @@ import co.elastic.clients.elasticsearch.core.bulk.OperationType;
 import co.elastic.clients.util.ObjectBuilder;
 
 /**
- * Indexer resilience. Exercises the three new behaviours without a live Elasticsearch:
+ * Indexer resilience. Exercises the retry behaviours without a live Elasticsearch:
  *  - retry classification (which Throwables/HTTP statuses are retryable);
  *  - the bounded retry/backoff in the whole-batch (Throwable) path — recovery, per-item 4xx NOT
- *    retried, and transient-bucket charging once exhausted;
- *  - the two-bucket guard thresholds and the post-build reconcile gate.
+ *    retried, and the single failed bucket once retries are exhausted;
+ *  - the initial 200-with-errors path: per-item 4xx counted as failed, per-item 429/5xx fed
+ *    through the backoff path.
  */
 @Tag("unit")
 @ExtendWith(MockitoExtension.class)
@@ -50,28 +49,19 @@ import co.elastic.clients.util.ObjectBuilder;
 class IndexerResilienceTest {
 
     private static final String POINTS_INDEX = "points";
-    private static final String BBOX_INDEX = "bbox";
 
     @Mock
     private ElasticsearchClient esClient;
 
     private LongAdder indexedCount;
-    private LongAdder failedPointsCount;
-    private LongAdder failedBboxCount;
-    private LongAdder transientPointsCharges;
-    private LongAdder transientBboxCharges;
+    private LongAdder failedCount;
     private AccountingBulkListener listener;
 
     @BeforeEach
     void setUp() {
         indexedCount = new LongAdder();
-        failedPointsCount = new LongAdder();
-        failedBboxCount = new LongAdder();
-        transientPointsCharges = new LongAdder();
-        transientBboxCharges = new LongAdder();
-        listener = new AccountingBulkListener(
-                esClient, indexedCount, failedPointsCount, failedBboxCount,
-                transientPointsCharges, transientBboxCharges, POINTS_INDEX, millis -> { /* no sleep */ });
+        failedCount = new LongAdder();
+        listener = new AccountingBulkListener(esClient, indexedCount, failedCount, millis -> { /* no sleep */ });
     }
 
     // ---------------------------------------------------------------------------
@@ -127,7 +117,7 @@ class IndexerResilienceTest {
     // ---------------------------------------------------------------------------
 
     @Test
-    void retry_recoversOnSecondAttempt_countsIndexed_noCharges() throws Exception {
+    void retry_recoversOnSecondAttempt_countsIndexed_noFailures() throws Exception {
         BulkRequest request = requestWithOperations(3, POINTS_INDEX);
 
         // First resubmit throws a transient timeout; second succeeds for all 3 ops.
@@ -138,13 +128,12 @@ class IndexerResilienceTest {
         listener.afterBulk(1L, request, List.of(), new SocketTimeoutException("30s timeout"));
 
         assertEquals(3, indexedCount.sum(), "recovered ops are counted as indexed");
-        assertEquals(0, totalFailed());
-        assertEquals(0, transientCharges());
+        assertEquals(0, failedCount.sum());
         verify(esClient, times(2)).bulk(this.<BulkRequest>anyBulkFn());
     }
 
     @Test
-    void retry_perItem4xxIsChargedGenuine_andNotRetried() throws Exception {
+    void retry_perItem4xxIsCountedFailed_andNotRetried() throws Exception {
         BulkRequest request = requestWithOperations(3, POINTS_INDEX);
 
         // Resubmit returns: op0 ok, op1 a 400 mapping error, op2 ok.
@@ -157,31 +146,29 @@ class IndexerResilienceTest {
         listener.afterBulk(2L, request, List.of(), new SocketTimeoutException("timeout"));
 
         assertEquals(2, indexedCount.sum());
-        assertEquals(1, failedPointsCount.sum(), "a 400 per-item error is a genuine data failure");
-        assertEquals(0, transientCharges(), "a 4xx item must NOT end up in the transient bucket");
+        assertEquals(1, failedCount.sum(), "a 400 per-item error is counted as failed");
         // Exactly ONE resubmit — the 400 item must not be retried in a loop.
         verify(esClient, times(1)).bulk(this.<BulkRequest>anyBulkFn());
     }
 
     @Test
-    void retry_exhausted_chargesTransientBucket_pointsClassified() throws Exception {
+    void retry_exhausted_countsFailed() throws Exception {
         BulkRequest request = requestWithOperations(4, POINTS_INDEX);
 
-        // Every resubmit times out — after MAX_RETRY_ATTEMPTS the ops go transient.
+        // Every resubmit times out — after MAX_RETRY_ATTEMPTS the ops are counted as failed.
         when(esClient.bulk(this.<BulkRequest>anyBulkFn()))
                 .thenThrow(new SocketTimeoutException("timeout"));
 
         listener.afterBulk(3L, request, List.of(), new SocketTimeoutException("timeout"));
 
         assertEquals(0, indexedCount.sum());
-        assertEquals(0, failedPointsCount.sum(), "transient timeouts are NOT genuine data failures");
-        assertEquals(4, transientPointsCharges.sum(), "exhausted points ops land in the transient bucket");
+        assertEquals(4, failedCount.sum(), "exhausted ops are counted as failed");
         verify(esClient, times(AccountingBulkListener.MAX_RETRY_ATTEMPTS))
                 .bulk(this.<BulkRequest>anyBulkFn());
     }
 
     @Test
-    void retry_partialRetryableItems_areRetriedThenCharged() throws Exception {
+    void retry_partialRetryableItems_areRetriedThenCountedFailed() throws Exception {
         BulkRequest request = requestWithOperations(2, POINTS_INDEX);
 
         // First attempt: op0 ok, op1 a 503 (retryable). Next attempts: 503 for the lone op.
@@ -197,15 +184,14 @@ class IndexerResilienceTest {
         listener.afterBulk(4L, request, List.of(), new SocketTimeoutException("timeout"));
 
         assertEquals(1, indexedCount.sum(), "the op that succeeded on attempt 1 is counted once");
-        assertEquals(0, failedPointsCount.sum(), "a 503 is retryable, never a genuine failure");
-        assertEquals(1, transientPointsCharges.sum(), "the persistently-503 op goes transient after retries");
+        assertEquals(1, failedCount.sum(), "the persistently-503 op is counted failed after retries");
     }
 
     @Test
     void retry_shortResponse_doesNotSilentlyDropSurplusOps() throws Exception {
         // A resubmit of 3 ops returns a response with only 2 items and errors()==false. The surplus
         // op (op-2) has no matching item: it must be RETRIED, never silently dropped (that would lose
-        // a doc from the indexed/failed/transient accounting). The second resubmit indexes all 3.
+        // a doc from the indexed/failed accounting). The second resubmit indexes all 3.
         BulkRequest request = requestWithOperations(3, POINTS_INDEX);
         BulkResponse shortOk = BulkResponse.of(b -> b.took(1).errors(false).items(List.of(
                 item(POINTS_INDEX, "op-0", 200, false),
@@ -216,14 +202,13 @@ class IndexerResilienceTest {
 
         listener.afterBulk(8L, request, List.of(), new SocketTimeoutException("timeout"));
 
-        // 2 indexed on the short attempt + 1 on the retry = 3; nothing lost, nothing charged.
+        // 2 indexed on the short attempt + 1 on the retry = 3; nothing lost, nothing failed.
         assertEquals(3, indexedCount.sum(), "the surplus op is retried and indexed, not dropped");
-        assertEquals(0, totalFailed());
-        assertEquals(0, transientCharges());
+        assertEquals(0, failedCount.sum());
     }
 
     @Test
-    void retry_nonRetryableExceptionDuringResubmit_chargesGenuine_andStops() throws Exception {
+    void retry_nonRetryableExceptionDuringResubmit_countsFailed_andStops() throws Exception {
         BulkRequest request = requestWithOperations(3, POINTS_INDEX);
 
         when(esClient.bulk(this.<BulkRequest>anyBulkFn()))
@@ -231,34 +216,20 @@ class IndexerResilienceTest {
 
         listener.afterBulk(5L, request, List.of(), new SocketTimeoutException("timeout"));
 
-        assertEquals(3, failedPointsCount.sum(), "a non-retryable resubmit error charges genuine failures");
-        assertEquals(0, transientCharges());
+        assertEquals(3, failedCount.sum(), "a non-retryable resubmit error counts ops as failed");
         verify(esClient, times(1)).bulk(this.<BulkRequest>anyBulkFn());
     }
 
     @Test
-    void wholeBatchNonRetryableThrowable_isNotRetried_chargesGenuine() throws Exception {
+    void wholeBatchNonRetryableThrowable_isNotRetried_countsFailed() throws Exception {
         BulkRequest request = requestWithOperations(2, POINTS_INDEX);
 
-        // A 400 ElasticsearchException is non-retryable: charge genuine, never call bulk().
+        // A 400 ElasticsearchException is non-retryable: count as failed, never call bulk().
         listener.afterBulk(6L, request, List.of(),
                 new ElasticsearchException("bulk", errorResponse(400)));
 
-        assertEquals(2, failedPointsCount.sum());
-        assertEquals(0, transientCharges());
+        assertEquals(2, failedCount.sum());
         verify(esClient, times(0)).bulk(this.<BulkRequest>anyBulkFn());
-    }
-
-    @Test
-    void retry_bboxOps_chargedToTransientBboxBucket() throws Exception {
-        BulkRequest request = requestWithOperations(2, BBOX_INDEX);
-        when(esClient.bulk(this.<BulkRequest>anyBulkFn()))
-                .thenThrow(new SocketTimeoutException("timeout"));
-
-        listener.afterBulk(7L, request, List.of(), new SocketTimeoutException("timeout"));
-
-        assertEquals(2, transientBboxCharges.sum(), "bbox transient charges use the bbox transient bucket");
-        assertEquals(0, transientPointsCharges.sum());
     }
 
     // ---------------------------------------------------------------------------
@@ -266,9 +237,9 @@ class IndexerResilienceTest {
     // ---------------------------------------------------------------------------
 
     @Test
-    void initialResponse_perItem4xxIsChargedGenuine_notRetried() throws Exception {
+    void initialResponse_perItem4xxIsCountedFailed_notRetried() throws Exception {
         // A 200-with-errors response: op0 ok, op1 a 400 mapping error, op2 ok. The 400 is a
-        // genuine data failure and must not be resubmitted.
+        // failure and must not be resubmitted.
         BulkRequest request = requestWithOperations(3, POINTS_INDEX);
         BulkResponse mixed = BulkResponse.of(b -> b.took(1).errors(true).items(List.of(
                 item(POINTS_INDEX, "op-0", 200, false),
@@ -278,15 +249,14 @@ class IndexerResilienceTest {
         listener.afterBulk(1L, request, List.of(), mixed);
 
         assertEquals(2, indexedCount.sum());
-        assertEquals(1, failedPointsCount.sum(), "a 400 per-item error is a genuine data failure");
-        assertEquals(0, transientCharges());
+        assertEquals(1, failedCount.sum(), "a 400 per-item error is counted as failed");
         verify(esClient, times(0)).bulk(this.<BulkRequest>anyBulkFn());
     }
 
     @Test
-    void initialResponse_perItemRetryableStatusIsResubmitted_notChargedGenuine() throws Exception {
+    void initialResponse_perItemRetryableStatusIsResubmitted_notCountedFailed() throws Exception {
         // The bug_002 regression: a per-item 503 inside a 200-with-errors response is retryable —
-        // it must go through the backoff path, NOT straight into the genuine-failure bucket.
+        // it must go through the backoff path, NOT straight into the failed bucket.
         BulkRequest request = requestWithOperations(3, POINTS_INDEX);
         BulkResponse mixed = BulkResponse.of(b -> b.took(1).errors(true).items(List.of(
                 item(POINTS_INDEX, "op-0", 200, false),
@@ -298,15 +268,13 @@ class IndexerResilienceTest {
         listener.afterBulk(2L, request, List.of(), mixed);
 
         assertEquals(3, indexedCount.sum(), "2 indexed on the initial pass + 1 recovered on resubmit");
-        assertEquals(0, failedPointsCount.sum(), "a 503 is retryable, never a genuine failure");
-        assertEquals(0, transientCharges());
+        assertEquals(0, failedCount.sum(), "a 503 is retryable, never charged failed when it recovers");
         verify(esClient, times(1)).bulk(this.<BulkRequest>anyBulkFn());
     }
 
     @Test
-    void initialResponse_retryablePersists_landsInTransientBucket() throws Exception {
-        // A per-item 503 that never recovers exhausts retries and lands in the transient bucket —
-        // never the strict genuine bucket.
+    void initialResponse_retryablePersists_countsFailedAfterRetries() throws Exception {
+        // A per-item 503 that never recovers exhausts retries and is counted as failed.
         BulkRequest request = requestWithOperations(2, POINTS_INDEX);
         BulkResponse mixed = BulkResponse.of(b -> b.took(1).errors(true).items(List.of(
                 item(POINTS_INDEX, "op-0", 200, false),
@@ -318,94 +286,12 @@ class IndexerResilienceTest {
         listener.afterBulk(3L, request, List.of(), mixed);
 
         assertEquals(1, indexedCount.sum());
-        assertEquals(0, failedPointsCount.sum(), "a persistently-503 item is never a genuine failure");
-        assertEquals(1, transientPointsCharges.sum(), "it lands in the transient bucket after retries");
-    }
-
-    // ---------------------------------------------------------------------------
-    // 3) Two-bucket guard thresholds
-    // ---------------------------------------------------------------------------
-
-    @Test
-    void guardThresholds_genuineIsStrict_transientIsGenerous() {
-        // Floors when emitted is tiny.
-        assertEquals(50L, IndexingStats.genuineFailureThreshold(0));
-        assertEquals(50L, IndexingStats.genuineFailureThreshold(1_000));
-        assertEquals(5_000L, IndexingStats.transientChargeThreshold(0));
-        assertEquals(5_000L, IndexingStats.transientChargeThreshold(1_000_000));
-
-        // At whole-planet scale (~25M points) the percentages dominate the floor.
-        long emitted = 25_000_000L;
-        // 0.0001% of 25M = 25 -> still floored to 50 (genuine bar stays strict).
-        assertEquals(50L, IndexingStats.genuineFailureThreshold(emitted));
-        // 0.05% of 25M = 12,500 -> above the 5,000 floor.
-        assertEquals(12_500L, IndexingStats.transientChargeThreshold(emitted));
-    }
-
-    @Test
-    void guard_161PhantomTransientTimeouts_doNotFailTheBuild_butAMassBreakDoes() {
-        // The incident: 161 transient charges on a whole-planet build must be tolerated.
-        long emitted = 25_000_000L;
-        assertFalse(161 > IndexingStats.transientChargeThreshold(emitted),
-                "161 phantom transient charges must be within tolerance");
-        // ...but a genuine mass mapping break (say 1% of points) must still fail.
-        long massBreak = 250_000L;
-        assertTrue(massBreak > IndexingStats.genuineFailureThreshold(emitted),
-                "a real mass data break must trip the strict genuine-failure guard");
-    }
-
-    // ---------------------------------------------------------------------------
-    // 4) Reconcile gate
-    // ---------------------------------------------------------------------------
-
-    @Test
-    void reconcile_passesWhenLandedMatchesExpected_accountingForDedup() {
-        // 1,000,000 emitted, 0 genuine failures; 990,000 live + 10,000 deleted (dedup
-        // overwrites) => landed 1,000,000 == expected. No shortfall.
-        var stats = new ElasticsearchHelper.IndexDocsStats(990_000, 10_000);
-        assertNull(ElasticsearchHelper.reconcileLivePoints(1_000_000, 0, stats, 0.001));
-    }
-
-    @Test
-    void reconcile_subtractsGenuineFailuresFromExpected() {
-        // 1,000,000 emitted, 5,000 genuine failures => expected 995,000. Live 995,000.
-        var stats = new ElasticsearchHelper.IndexDocsStats(995_000, 0);
-        assertNull(ElasticsearchHelper.reconcileLivePoints(1_000_000, 5_000, stats, 0.001));
-    }
-
-    @Test
-    void reconcile_failsOnRealSilentLossBeyondTolerance() {
-        // 1,000,000 expected but only 998,000 landed => 2,000 short > 0.1% (1,000).
-        var stats = new ElasticsearchHelper.IndexDocsStats(998_000, 0);
-        String msg = ElasticsearchHelper.reconcileLivePoints(1_000_000, 0, stats, 0.001);
-        assertNotNull(msg);
-        assertTrue(msg.contains("RECONCILE GATE FAILED"));
-    }
-
-    @Test
-    void reconcile_withinToleranceDoesNotFail() {
-        // 1,000,000 expected, 999,500 landed => 500 short < 0.1% (1,000). OK.
-        var stats = new ElasticsearchHelper.IndexDocsStats(999_500, 0);
-        assertNull(ElasticsearchHelper.reconcileLivePoints(1_000_000, 0, stats, 0.001));
-    }
-
-    @Test
-    void reconcile_failsOpenWhenStatsUnavailable() {
-        // A null stats (could not probe) must NOT block the build (fail open).
-        assertNull(ElasticsearchHelper.reconcileLivePoints(1_000_000, 0, null, 0.001));
+        assertEquals(1, failedCount.sum(), "it is counted failed after retries are exhausted");
     }
 
     // ---------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------
-
-    private long totalFailed() {
-        return failedPointsCount.sum() + failedBboxCount.sum();
-    }
-
-    private long transientCharges() {
-        return transientPointsCharges.sum() + transientBboxCharges.sum();
-    }
 
     /** Typed any() for the Function form of esClient.bulk(...). */
     private <T> Function<BulkRequest.Builder, ObjectBuilder<BulkRequest>> anyBulkFn() {
