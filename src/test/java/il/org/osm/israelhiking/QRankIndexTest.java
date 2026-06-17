@@ -100,4 +100,62 @@ public class QRankIndexTest {
         assertEquals(0, idx.getByWikidata("notaqid"), "malformed -> 0");
         assertTrue(idx.getByWikidata("Q1") > 0);
     }
+
+    /** Build a gz index from "Q1,5\nQ42,1000000\n..." style lines (header prepended). */
+    private static QRankIndex indexOf(Path dir, String rows) throws IOException {
+        Path gz = dir.resolve("qrank.csv.gz");
+        try (OutputStream os = Files.newOutputStream(gz);
+                GZIPOutputStream gzos = new GZIPOutputStream(os)) {
+            gzos.write(("Entity,QRank\n" + rows).getBytes(StandardCharsets.UTF_8));
+        }
+        return QRankIndex.load(gz);
+    }
+
+    @Test
+    public void multiValueTakesMaxQRank(@TempDir Path dir) throws IOException {
+        // Q42;Q64 -> max QRank wins, regardless of order.
+        var idx = indexOf(dir, "Q42,1000000\nQ64,5\n");
+        assertEquals(1000000, idx.getByWikidata("Q42;Q64"));
+        assertEquals(1000000, idx.getByWikidata("Q64;Q42"));
+    }
+
+    @Test
+    public void multiValueSkipsUnknownParts(@TempDir Path dir) throws IOException {
+        var idx = indexOf(dir, "Q64,5\n");
+        assertEquals(5, idx.getByWikidata("Q999;Q64"), "unknown part contributes 0, known part wins");
+    }
+
+    @Test
+    public void whitespaceIsTrimmed(@TempDir Path dir) throws IOException {
+        var idx = indexOf(dir, "Q42,1000000\nQ64,5\n");
+        assertEquals(1000000, idx.getByWikidata(" Q42 "));
+        assertEquals(1000000, idx.getByWikidata("Q42; Q64"), "space after the separator is trimmed");
+    }
+
+    @Test
+    public void lowercaseQAccepted(@TempDir Path dir) throws IOException {
+        var idx = indexOf(dir, "Q42,1000000\n");
+        assertEquals(1000000, idx.getByWikidata("q42"));
+    }
+
+    @Test
+    public void multiValueAllMalformedReturnsZero(@TempDir Path dir) throws IOException {
+        var idx = indexOf(dir, "Q42,1000000\n");
+        assertEquals(0, idx.getByWikidata("Q999;foo;"), "all parts unknown/malformed -> 0");
+        assertEquals(0, idx.getByWikidata(";"));
+        assertEquals(0, idx.getByWikidata("Q;Q"));
+    }
+
+    @Test
+    public void multiValueSeparatorEdgePositions(@TempDir Path dir) throws IOException {
+        // The manual indexOf-walk differs from String.split() exactly at trailing/leading/double
+        // separators (split drops trailing empties; the walk visits the empty tail). A valid Q-id
+        // must still be found regardless of where empty parts sit around it.
+        var idx = indexOf(dir, "Q42,1000000\nQ64,5\n");
+        assertEquals(1000000, idx.getByWikidata("Q42;"), "trailing separator: valid part still found");
+        assertEquals(1000000, idx.getByWikidata(";Q42"), "leading separator: empty first part skipped");
+        assertEquals(1000000, idx.getByWikidata("Q42;;Q64"), "double separator: empty middle part skipped");
+        assertEquals(1000000, idx.getByWikidata("Q42 ; Q64"), "spaces on both sides of the separator");
+        assertEquals(1000000, idx.getByWikidata("Q999;Q42;"), "unknown + valid + empty trailing");
+    }
 }

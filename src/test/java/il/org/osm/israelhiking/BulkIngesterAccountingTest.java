@@ -69,8 +69,9 @@ class BulkIngesterAccountingTest {
     void setUp() {
         indexedCount = new LongAdder();
         failedCount = new LongAdder();
-        // No-op sleeper so backoff retries run instantly in tests.
-        listener = new AccountingBulkListener(esClient, indexedCount, failedCount, millis -> {});
+        // No-op sleeper + direct executor: retries run inline, so counts are deterministic.
+        listener = new AccountingBulkListener(esClient, indexedCount, failedCount, millis -> {},
+                TestExecutors.directExecutor());
 
         // Capture log records so "surfaced" can be asserted (logged AND counted),
         // proving the old catch(Exception){/*swallow*/} pattern is gone.
@@ -104,13 +105,13 @@ class BulkIngesterAccountingTest {
 
     @Test
     void afterBulk_successPath_incrementsIndexedCount() {
-        // errors()==false: the listener fast-paths the whole batch as indexed.
+        // errors()==false with one item per op: the listener fast-paths the whole batch as indexed.
         BulkResponse response = BulkResponse.of(b -> b
                 .took(5)
                 .errors(false)
                 .items(List.of(item("ok-1", false), item("ok-2", false), item("ok-3", false))));
 
-        listener.afterBulk(2L, emptyRequest(), Collections.emptyList(), response);
+        listener.afterBulk(2L, requestWithOperations(3), Collections.emptyList(), response);
 
         assertEquals(3, indexedCount.sum());
         assertEquals(0, failedCount.sum());
@@ -126,7 +127,8 @@ class BulkIngesterAccountingTest {
                 item("bad-2", true));
         BulkResponse response = responseWithErrors(items);
 
-        listener.afterBulk(3L, emptyRequest(), Collections.emptyList(), response);
+        // Request must carry one op per item: the per-item path walks request.operations().
+        listener.afterBulk(3L, requestWithOperations(items.size()), Collections.emptyList(), response);
 
         assertEquals(2, indexedCount.sum());
         assertEquals(2, failedCount.sum());
@@ -144,7 +146,7 @@ class BulkIngesterAccountingTest {
         }
         BulkResponse response = responseWithErrors(items);
 
-        listener.afterBulk(4L, emptyRequest(), Collections.emptyList(), response);
+        listener.afterBulk(4L, requestWithOperations(emitted), Collections.emptyList(), response);
 
         long indexed = indexedCount.sum();
         long failed = failedCount.sum();

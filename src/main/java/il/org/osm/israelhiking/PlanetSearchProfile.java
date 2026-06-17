@@ -31,6 +31,7 @@ import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._helpers.bulk.BulkIngester;
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
+import co.elastic.clients.transport.BackoffPolicy;
 
 public class PlanetSearchProfile implements Profile {
   private static final Logger LOGGER = Logger.getLogger(PlanetSearchProfile.class.getName());
@@ -48,9 +49,10 @@ public class PlanetSearchProfile implements Profile {
   // features from multiple worker threads, so BulkIngester (concurrent add() internally) fits
   // better than hand-locked BulkRequests.
   private final BulkIngester<Void> bulkIngester;
-  // Indexing accounting counters + failure thresholds, kept in their own holder (not the focus of
-  // this class). PlanetSearchProfile increments the emitted buckets on each emit; the listener
-  // shares the same LongAdders to record indexed/failed/transient outcomes from the bulk callbacks.
+  // Held so finishIndexing() can drain its offloaded retries before the alias swap.
+  private final AccountingBulkListener bulkListener;
+  // Indexing accounting counters, kept in their own holder (not the focus of this class). This class
+  // increments emitted on each emit; the listener shares the same LongAdders to record indexed/failed.
   private final IndexingStats stats = new IndexingStats();
 
   public static final String POINTS_LAYER_NAME = "global_points";
@@ -67,16 +69,16 @@ public class PlanetSearchProfile implements Profile {
     this.supportedLanguages = supportedLnaguages;
     this.bboxIndexName = bboxIndexName;
     this.qrankIndex = qrankIndex;
+    this.bulkListener = new AccountingBulkListener(esClient, stats);
     this.bulkIngester = BulkIngester.of(b -> b
         .client(esClient)
         // Flush whenever any of these thresholds is hit.
         .maxOperations(5_000)
         .maxSize(5 * 1024 * 1024)
         .maxConcurrentRequests(4)
-        // Listener gives per-batch visibility instead of swallowing errors. Extracted into a named
-        // class (AccountingBulkListener) so the counting logic is unit-testable. Pass the whole
-        // IndexingStats holder so the counters are wired by name, not a swap-prone positional list.
-        .listener(new AccountingBulkListener(esClient, stats)));
+        // The listener owns all retry/backoff; pin noBackoff() so the ingester can't double-retry.
+        .backoffPolicy(BackoffPolicy.noBackoff())
+        .listener(bulkListener));
   }
 
   /*
@@ -771,12 +773,13 @@ public class PlanetSearchProfile implements Profile {
 
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
     pointDocument.poiProminence = flooredProminence(pointDocument.poiProminence);
-    stats.emittedCount.increment();
     bulkIngester.add(BulkOperation.of(op -> op
         .index(idx -> idx
             .index(this.pointsIndexName)
             .id(docId)
             .document(pointDocument))));
+    // Count emitted only after add() accepts the op.
+    stats.emittedCount.increment();
   }
 
   private void insertBboxToElasticsearch(SourceFeature feature, String[] supportedLanguages) {
@@ -799,12 +802,13 @@ public class PlanetSearchProfile implements Profile {
         CoalesceIntoMap(bbox.name, "default", feature.getString("name"));
       }
       String bboxDocId = sourceFeatureToDocumentId(feature);
-      stats.emittedCount.increment();
       bulkIngester.add(BulkOperation.of(op -> op
           .index(idx -> idx
               .index(this.bboxIndexName)
               .id(bboxDocId)
               .document(bbox))));
+      // Count emitted only after add() accepts the op.
+      stats.emittedCount.increment();
     } catch (Exception e) {
       // Only geometry/serialization building can throw here; indexing errors are counted by the
       // bulk listener.
@@ -814,15 +818,17 @@ public class PlanetSearchProfile implements Profile {
   }
 
   /**
-   * Flush every buffered document and wait for in-flight bulk requests to complete. Call after
-   * planetiler.run() and before the alias swap / refresh, so the new index is fully populated when
-   * it goes live. close() also flushes, but we flush explicitly first so the final flush is visible.
+   * Terminal: flush every buffered document, close the bulk ingester, and drain offloaded retries.
+   * Call once after planetiler.run() and before the alias swap / refresh, so the new index is fully
+   * populated when it goes live. Not repeatable — it shuts the retry pool down.
    */
-  public void flush() {
+  public void finishIndexing() {
     bulkIngester.flush();
     // close() blocks until the buffer and all in-flight requests (and their counter-updating
     // listener callbacks) have completed.
     bulkIngester.close();
+    // Drain offloaded retries before the caller swaps the alias, so no re-indexed doc is lost.
+    bulkListener.awaitRetries();
   }
 
   // Counters delegate to IndexingStats so MainClass keeps a stable surface; reported in one summary
@@ -990,6 +996,8 @@ public class PlanetSearchProfile implements Profile {
     setIconColorCategory(pointDocument, feature, new OsmTagUtils.OsmTagCache(feature::getString));
   }
 
+  // TODO(#64): this switch and OsmTagUtils.classifyFeatureClass cover the same OSM keys; unify them
+  // onto a shared class -> {icon, color, category} table in a follow-up.
   private void setIconColorCategory(PointDocument pointDocument, WithTags feature,
       OsmTagUtils.OsmTagCache tags) {
     if ("protected_area".equals(tags.boundary) ||
@@ -1157,7 +1165,7 @@ public class PlanetSearchProfile implements Profile {
 
     // Treat natural=volcano like natural=peak so named summit nodes tagged as volcanoes get
     // icon-peak instead of the icon-search default (which would let processOtherSourceFeature drop
-    // them). setFeatureClass and ProminenceCalculator already map volcano->peak.
+    // them). classifyFeatureClass and ProminenceCalculator already map volcano->peak.
     if ("peak".equals(tags.natural) || "volcano".equals(tags.natural)) {
       pointDocument.poiIconColor = "black";
       pointDocument.poiIcon = "icon-peak";

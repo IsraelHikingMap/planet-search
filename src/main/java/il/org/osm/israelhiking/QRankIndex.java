@@ -77,14 +77,41 @@ class QRankIndex {
 
   /**
    * Raw QRank for an OSM wikidata tag value (e.g. "Q665321"), or 0 if the tag is absent, malformed,
-   * or not in the table.
+   * or not in the table. For a ';'-separated multi-value (e.g. "Q42;Q64") each part is trimmed,
+   * looked up, and the highest QRank wins; a single value takes a no-split fast path.
    */
   long getByWikidata(String wikidata) {
-    if (wikidata == null || wikidata.length() < 2 || wikidata.charAt(0) != 'Q') {
+    if (wikidata == null) {
+      return 0;
+    }
+    if (wikidata.indexOf(';') < 0) {
+      return qrankFor(wikidata.trim()); // single value — no split allocation
+    }
+    // Manual indexOf walk over the ';'-separated parts (no regex/array alloc); empty parts give 0.
+    long best = 0;
+    int start = 0;
+    while (start <= wikidata.length()) {
+      int sep = wikidata.indexOf(';', start);
+      int end = sep < 0 ? wikidata.length() : sep;
+      long q = qrankFor(wikidata.substring(start, end).trim());
+      if (q > best) {
+        best = q;
+      }
+      if (sep < 0) {
+        break;
+      }
+      start = sep + 1;
+    }
+    return best;
+  }
+
+  /** Lookup for one trimmed Q-id token (e.g. "Q665321" / "q665321"); 0 if malformed or absent. */
+  private long qrankFor(String token) {
+    if (token.length() < 2 || (token.charAt(0) != 'Q' && token.charAt(0) != 'q')) {
       return 0;
     }
     try {
-      long qid = Long.parseLong(wikidata, 1, wikidata.length(), 10);
+      long qid = Long.parseLong(token, 1, token.length(), 10);
       return qrankByQid.getOrDefault(qid, 0);
     } catch (NumberFormatException e) {
       return 0;

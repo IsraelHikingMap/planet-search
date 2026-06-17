@@ -61,7 +61,8 @@ class IndexerResilienceTest {
     void setUp() {
         indexedCount = new LongAdder();
         failedCount = new LongAdder();
-        listener = new AccountingBulkListener(esClient, indexedCount, failedCount, millis -> { /* no sleep */ });
+        listener = new AccountingBulkListener(esClient, indexedCount, failedCount, millis -> { /* no sleep */ },
+                TestExecutors.directExecutor());
     }
 
     // ---------------------------------------------------------------------------
@@ -287,6 +288,72 @@ class IndexerResilienceTest {
 
         assertEquals(1, indexedCount.sum());
         assertEquals(1, failedCount.sum(), "it is counted failed after retries are exhausted");
+    }
+
+    @Test
+    void initialResponse_shortResponse_doesNotSilentlyDropSurplusOps() throws Exception {
+        // 3 ops, 2-item response: op-0 ok, op-1 400, op-2 has no item -> must be retried, not dropped.
+        BulkRequest request = requestWithOperations(3, POINTS_INDEX);
+        BulkResponse shortErrors = BulkResponse.of(b -> b.took(1).errors(true).items(List.of(
+                item(POINTS_INDEX, "op-0", 200, false),
+                item(POINTS_INDEX, "op-1", 400, true))));
+        when(esClient.bulk(this.<BulkRequest>anyBulkFn())).thenReturn(successResponse(1));
+
+        listener.afterBulk(9L, request, List.of(), shortErrors);
+
+        assertEquals(2, indexedCount.sum(), "op-0 indexed initially + op-2 recovered on resubmit");
+        assertEquals(1, failedCount.sum(), "op-1's 400 is the only genuine failure");
+        assertEquals(3, indexedCount.sum() + failedCount.sum(), "no surplus op was dropped");
+        verify(esClient, times(1)).bulk(this.<BulkRequest>anyBulkFn());
+    }
+
+    @Test
+    void initialResponse_shortSuccessResponse_retriesSurplusOps_notJustItemCount() throws Exception {
+        // errors()==false but only 2 items for 3 ops: fast path must retry the surplus op, not drop it.
+        BulkRequest request = requestWithOperations(3, POINTS_INDEX);
+        BulkResponse shortOk = BulkResponse.of(b -> b.took(1).errors(false).items(List.of(
+                item(POINTS_INDEX, "op-0", 200, false),
+                item(POINTS_INDEX, "op-1", 200, false))));
+        when(esClient.bulk(this.<BulkRequest>anyBulkFn())).thenReturn(successResponse(1));
+
+        listener.afterBulk(11L, request, List.of(), shortOk);
+
+        assertEquals(3, indexedCount.sum(), "2 indexed on the short success + 1 surplus op recovered on retry");
+        assertEquals(0, failedCount.sum());
+        assertEquals(3, indexedCount.sum() + failedCount.sum(), "no surplus op dropped on the no-error path");
+    }
+
+    @Test
+    void awaitRetries_blocksUntilOffloadedRetryCompletes() throws Exception {
+        // Real background pool: afterBulk returns before the retry lands; awaitRetries() must block until it does.
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        // Signal entry into backoff, then park — keeps the retry in-flight while we assert nothing counted yet.
+        AccountingBulkListener.Sleeper gatedSleep = millis -> {
+            started.countDown();
+            release.await();
+        };
+        var bg = new AccountingBulkListener(esClient, indexedCount, failedCount, gatedSleep, pool);
+        when(esClient.bulk(this.<BulkRequest>anyBulkFn())).thenReturn(successResponse(2));
+        BulkRequest request = requestWithOperations(2, POINTS_INDEX);
+
+        try {
+            bg.afterBulk(10L, request, List.of(), new SocketTimeoutException("timeout"));
+            // Bounded wait so a never-starting retry fails the test instead of hanging the suite.
+            assertTrue(started.await(10, java.util.concurrent.TimeUnit.SECONDS),
+                    "the offloaded retry should reach the backoff sleep off the calling thread");
+            assertEquals(0, indexedCount.sum(), "retry has not run yet — afterBulk returned without blocking");
+
+            release.countDown();
+            bg.awaitRetries();   // must block until the retry completes
+
+            assertEquals(2, indexedCount.sum(), "awaitRetries drained the in-flight retry before returning");
+            assertEquals(0, failedCount.sum());
+        } finally {
+            release.countDown();      // unblock any parked task on an assertion-failure path
+            pool.shutdownNow();       // never leak the pool even if awaitRetries() wasn't reached
+        }
     }
 
     // ---------------------------------------------------------------------------

@@ -107,6 +107,7 @@ final class ProminenceCalculator {
   }
 
   static double clamp01(double v) {
+    if (Double.isNaN(v)) return 0; // Math.min/max pass NaN through; never let it reach the ES score
     if (v < 0) return 0;
     if (v > 1) return 1;
     return v;

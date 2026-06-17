@@ -77,9 +77,9 @@ public class MainClass {
             planetiler.overwriteOutput(Path.of("data", "target", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"));
             planetiler.run();
 
-            // Flush and wait for in-flight bulk requests before the alias swap, then refresh so
-            // docs are searchable.
-            profile.flush();
+            // Flush, drain retries, and wait for in-flight bulk requests before the alias swap, then
+            // refresh so docs are searchable.
+            profile.finishIndexing();
             esClient.indices().refresh(r -> r.index(targetPointsIndex, targetBBoxIndex));
 
             // Restore normal refresh/replica settings (disabled during the build) before going live.

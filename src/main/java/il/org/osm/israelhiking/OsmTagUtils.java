@@ -116,8 +116,10 @@ final class OsmTagUtils {
   }
 
   /**
-   * Pure core of setFeatureClass, so the OSM-tag -> feature_class switch is unit-testable from a
-   * literal tag map. Returns null when nothing recognised is present.
+   * Maps OSM tags to a coarse feature_class, unit-testable from a literal tag map. Returns null when
+   * nothing recognised is present.
+   * TODO(#64): this switch and PlanetSearchProfile.setIconColorCategory cover the same OSM keys;
+   * unify them onto a shared class -> {icon, color, category} table in a follow-up.
    */
   static String classifyFeatureClass(Function<String, String> tagLookup) {
     return classifyFeatureClass(new OsmTagCache(tagLookup));
