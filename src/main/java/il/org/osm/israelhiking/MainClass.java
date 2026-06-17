@@ -86,12 +86,49 @@ public class MainClass {
             ElasticsearchHelper.restoreSearchSettings(esClient, targetPointsIndex);
             ElasticsearchHelper.restoreSearchSettings(esClient, targetBBoxIndex);
 
-            ElasticsearchHelper.switchAlias(esClient, pointsIndexAlias, targetPointsIndex);
-            ElasticsearchHelper.switchAlias(esClient, bboxIndexAlias, targetBBoxIndex);
+            long emitted = profile.getEmittedCount();
+            long indexed = profile.getIndexedCount();
+            long failed = profile.getFailedCount();
+            // Log the accounting BEFORE the swap so the numbers are visible even when the gate below
+            // refuses to promote the index.
+            LOGGER.info("Indexing finished: indexed " + indexed + " of " + emitted
+                    + " emitted document(s) (" + failed + " failed).");
 
-            LOGGER.info("Indexing finished: indexed " + profile.getIndexedCount() + " of "
-                    + profile.getEmittedCount() + " emitted document(s) (" + profile.getFailedCount()
-                    + " failed).");
+            // Lossless-accounting gate: every emitted op must end up counted as indexed or failed. A
+            // mismatch means some ops were abandoned (e.g. retry tasks dropped when the drain timed
+            // out and shutdownNow() discarded queued resubmits), so the new index is incomplete.
+            // Refuse the alias swap rather than promote a silently-short index over the live one; the
+            // freshly built target is left with refreshInterval=-1 / replicas=0 / unaliased for the
+            // operator to inspect or rerun.
+            long abandoned = emitted - indexed - failed;
+            if (abandoned != 0) {
+                throw new IllegalStateException("Refusing alias swap: accounting invariant broken — "
+                        + abandoned + " of " + emitted + " emitted op(s) were neither indexed nor"
+                        + " failed (indexed=" + indexed + ", failed=" + failed + "). Target indices "
+                        + targetPointsIndex + " / " + targetBBoxIndex + " were NOT promoted and remain"
+                        + " unaliased with refreshInterval=-1, replicas=0.");
+            }
+
+            // The two swaps are independent updateAliases requests, so a failure on the second leaves
+            // the first already promoted. Track progress so the failure names the inconsistent state
+            // (points live on the new build, bbox still on the old index) instead of a bare stack trace.
+            boolean pointsSwapped = false;
+            try {
+                ElasticsearchHelper.switchAlias(esClient, pointsIndexAlias, targetPointsIndex);
+                pointsSwapped = true;
+                ElasticsearchHelper.switchAlias(esClient, bboxIndexAlias, targetBBoxIndex);
+            } catch (Exception e) {
+                LOGGER.severe("Alias swap failed"
+                        + (pointsSwapped
+                                ? " AFTER promoting points to " + targetPointsIndex
+                                        + " but BEFORE promoting bbox: the '" + pointsIndexAlias
+                                        + "' alias is live on the new build while '" + bboxIndexAlias
+                                        + "' still points at the previous bbox index — aliases are"
+                                        + " now MISMATCHED across the two builds."
+                                : ": no alias was changed; the previous indices remain live.")
+                        + " Manual intervention required. Cause: " + e.getMessage());
+                throw e;
+            }
         } finally {
             esClient.close();
         }

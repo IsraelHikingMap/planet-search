@@ -355,4 +355,36 @@ final class OsmTagUtils {
       return Double.NaN;
     }
   }
+
+  /**
+   * Population for a feature, as a place/admin-layer ranking signal. Pure so the parse/clamp/ladder
+   * is unit-testable without planetiler/ES.
+   *
+   * <ul>
+   *   <li>Returns null when {@code place} is null (POIs carry no population).</li>
+   *   <li>A finite, positive {@code populationTag} wins, clamped to {@link Integer#MAX_VALUE}.
+   *       isFinite (not just !NaN) rejects a garbage tag that overflows to +Infinity — otherwise the
+   *       clamp would pin it to MAX_VALUE and make e.g. a hamlet the most populous place.</li>
+   *   <li>Otherwise a settlement ladder fallback (city/town/village/hamlet) when the tag is missing.</li>
+   *   <li>A non-settlement {@code place} (island/locality/sea/suburb/...) returns null so the field
+   *       is omitted and ES uses missing:1.0, rather than a fabricated value that demotes it below
+   *       the neutral baseline.</li>
+   * </ul>
+   */
+  static Integer computePopulation(String place, String populationTag) {
+    if (place == null) {
+      return null;
+    }
+    double parsed = parseFirstNumber(populationTag);
+    if (Double.isFinite(parsed) && parsed > 0) {
+      return (int) Math.min(parsed, Integer.MAX_VALUE);
+    }
+    switch (place) {
+      case "city":    return 1_000_000;
+      case "town":    return 50_000;
+      case "village": return 2_000;
+      case "hamlet":  return 200;
+      default:        return null;
+    }
+  }
 }

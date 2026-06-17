@@ -209,24 +209,8 @@ public class PlanetSearchProfile implements Profile {
 
   /** Population is a place/admin-layer signal only — set it for settlements, leave POIs null. */
   private void setPopulation(PointDocument pointDocument, WithTags feature) {
-    String place = feature.getString("place");
-    if (place == null) {
-      return;
-    }
-    double parsed = OsmTagUtils.parseFirstNumber(feature.getString("population"));
-    if (!Double.isNaN(parsed) && parsed > 0) {
-      pointDocument.population = (int) Math.min(parsed, Integer.MAX_VALUE);
-      return;
-    }
-    // Ladder fallback when the population tag is missing (covers the ~80% of villages/hamlets
-    // that have no number). A real value always overrides this.
-    switch (place) {
-      case "city":    pointDocument.population = 1_000_000; break;
-      case "town":    pointDocument.population = 50_000; break;
-      case "village": pointDocument.population = 2_000; break;
-      case "hamlet":  pointDocument.population = 200; break;
-      default:        pointDocument.population = 20; break;
-    }
+    pointDocument.population =
+        OsmTagUtils.computePopulation(feature.getString("place"), feature.getString("population"));
   }
 
   private void setDifficulty(PointDocument pointDocument, WithTags feature) {
