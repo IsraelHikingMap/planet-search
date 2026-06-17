@@ -27,10 +27,8 @@ public class MainClass {
     }
 
     static void run(Arguments args) throws Exception {
-        // skip-tiles (default OFF): collapse the vector-tile pyramid to a trivial z0 tile so the
-        // .pmtiles archive write becomes near-instant for an ES-only reindex. ES ingest is
-        // independent of tile zoom, so the search index is built identically; only map tiles are
-        // degraded to a stub. Leave OFF for any build whose tiles are consumed.
+        // ES ingest is independent of tile zoom, so collapsing tiles to z0 builds the search index
+        // identically while making the .pmtiles archive a near-instant stub — only map tiles degrade.
         boolean skipTiles = args.getBoolean("skip-tiles",
                 "Collapse tile output to z0 (near-instant archive) to speed up an ES-only reindex; "
                         + "map tiles become a stub. Default false — leave off when tiles are needed.",
@@ -65,15 +63,12 @@ public class MainClass {
 
             String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
             planetiler.setProfile(profile);
-            // Geofabrik has no whole-planet file, so area=planet uses the aws:latest source (the
-            // s3://osm-pds mirror with the full planet.osm.pbf); everything else uses geofabrik:<area>.
-            // override this default with osm_path="path/to/data.osm.pbf"
+            // Geofabrik has no whole-planet file, so area=planet uses the aws:latest s3://osm-pds mirror.
             String osmSourceUrl = "planet".equals(area) ? "aws:latest" : "geofabrik:" + area;
             planetiler.addOsmSource("osm", Path.of("data", "sources", area + ".osm.pbf"), osmSourceUrl);
             if ("" != externalFilePath) {
                 planetiler.addGeoJsonSource("external", Path.of(externalFilePath));
             }
-            // override this default with mbtiles="path/to/output.mbtiles"
             planetiler.overwriteOutput(Path.of("data", "target", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"));
             planetiler.run();
 

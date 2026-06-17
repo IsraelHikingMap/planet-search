@@ -9,8 +9,7 @@ import java.util.Map;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 class PointDocument {
   public Map<String, String> name = new HashMap<String, String>();
-  // Variant names (alt_name/official_name/short_name/...) per language, kept separate from name
-  // and searched at lower boost. Null until a variant tag is present.
+  // Kept separate from name and searched at a lower boost; folding variants into name hurts ranking.
   public Map<String, List<String>> alt_names;
   public Map<String, String> description = new HashMap<String, String>();
   public String wikidata;
@@ -21,23 +20,17 @@ class PointDocument {
   public String poiIconColor;
   public String poiSource;
   public String poiDifficulty;
-  /** Length is in meters */
-  public double poiLength = 0;
+  public double poiLength = 0; // meters
   public String website;
   public double[] location;
 
-  // Computed ranking signals (null => omitted from JSON, ES uses missing:1.0). Prefixed poi* like
-  // the other computed fields so it's clear they are calculated, not raw OSM tags.
-  // Composite prominence in [0,1], floored >0 so a query-time multiply never zeroes.
+  // Computed ranking signals (null => omitted from JSON, ES uses missing:1.0). The poi* prefix marks
+  // them as calculated, not raw OSM tags.
   public Float poiProminence;
-  // Log-normalized polygon area in [0,1]; a size proxy (a large lake outranks a same-named pond).
-  // Set only for polygons, null otherwise.
+  // A size proxy (a large lake outranks a same-named pond); set only for polygons.
   public Float poiAreaNorm;
-  // True for OSM intermittent=yes (seasonal water); a query-time down-weight. Null when absent.
   public Boolean intermittent;
-  // Population — place/admin layer only; null for POIs.
   public Integer population;
-  // Coarse feature type from the primary OSM type tags ("peak", "lake", "city", ...), used as a
-  // query-time ranking signal. Distinct from poiCategory (an app/source bucket). Null when unknown.
+  // Distinct from poiCategory (an app/source bucket); this is the OSM feature type ("peak"/"lake"/...).
   public String poiFeatureClass;
 }

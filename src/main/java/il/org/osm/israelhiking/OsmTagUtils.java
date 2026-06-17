@@ -55,8 +55,7 @@ final class OsmTagUtils {
     }
   }
 
-  // Language-neutral OSM variant-name tag bases (no :lang suffix); also have per-language forms
-  // (alt_name:he, ...). old_name excluded — a stale former name can overtake the real one.
+  // old_name excluded — a stale former name can overtake the real one.
   private static final String[] ALT_NAME_TAG_BASES = {
       "alt_name", "official_name", "short_name", "loc_name", "int_name"
   };
@@ -83,7 +82,6 @@ final class OsmTagUtils {
         altNames.put(language, collected);
       }
     }
-    // Bare (language-neutral) tags go under "default".
     var collectedDefault = collectVariants(tagLookup, ALT_NAME_TAG_BASES);
     if (collectedDefault != null) {
       if (altNames == null) {
@@ -172,7 +170,6 @@ final class OsmTagUtils {
         case "mountain_range":        fc = "peak"; break;     // fold: high-ground kin
         default:                      fc = "natural"; break;
       }
-      // refine natural=water by its sub-type (lake vs reservoir vs pond)
       String water = tags.water;
       if ("water".equals(natural) && water != null) {
         switch (water) {

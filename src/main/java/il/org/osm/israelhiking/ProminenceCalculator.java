@@ -14,37 +14,12 @@ package il.org.osm.israelhiking;
  */
 final class ProminenceCalculator {
 
-  /** QRank reference ceiling for log-normalization — a realistic famous-place QRank. Calibrate. */
   static final double QRANK_REF = 3_000_000.0;
-  /** Highest summit on Earth (m), used to normalize elevation. */
   static final double MAX_ELE_M = 8849.0;
-  /** Floor so prominence is never 0 (a 0 would zero out a multiply). */
+  /** A 0 would zero out the query-time multiply, so prominence is floored, never zero. */
   static final double FLOOR = 0.05;
 
   private ProminenceCalculator() {}
-
-  /**
-   * Holds the final prominence score plus the components that fed it. Only prominence is written to
-   * the document; the components are kept so ProminenceCalculatorTest can assert on the composite
-   * math (e.g. eleNorm is high for a tall peak). They are not stored in Elasticsearch.
-   */
-  static final class Result {
-    final float prominence;
-    final float base;
-    final float qrankNorm;
-    final float meta;
-    final float eleNorm;
-    final long qrankRaw;
-
-    Result(float prominence, float base, float qrankNorm, float meta, float eleNorm, long qrankRaw) {
-      this.prominence = prominence;
-      this.base = base;
-      this.qrankNorm = qrankNorm;
-      this.meta = meta;
-      this.eleNorm = eleNorm;
-      this.qrankRaw = qrankRaw;
-    }
-  }
 
   /**
    * @param naturalTag  value of the OSM natural tag (peak/spring/...), or null
@@ -58,8 +33,9 @@ final class ProminenceCalculator {
    * @param hasWebsite  website tag present
    * @param hasWikidata wikidata tag present (proxy for "documented in wikipedia/wikidata")
    * @param qrankRaw    raw QRank value (0 if absent/unknown)
+   * @return composite prominence in [0,1]
    */
-  static Result compute(String naturalTag, String placeTag, String boundaryTag, String tourismTag,
+  static float compute(String naturalTag, String placeTag, String boundaryTag, String tourismTag,
       String historicTag, String waterwayTag, double ele, boolean hasImage, boolean hasWebsite,
       boolean hasWikidata, long qrankRaw) {
 
@@ -70,9 +46,7 @@ final class ProminenceCalculator {
 
     double meta = clamp01(0.40 * (hasImage ? 1 : 0) + 0.35 * (hasWebsite ? 1 : 0) + 0.25 * (hasWikidata ? 1 : 0));
 
-    double prom = clamp01(FLOOR + 0.45 * base + 0.40 * qnorm + 0.10 * meta);
-
-    return new Result((float) prom, (float) base, (float) qnorm, (float) meta, (float) eleNorm, qrankRaw);
+    return (float) clamp01(FLOOR + 0.45 * base + 0.40 * qnorm + 0.10 * meta);
   }
 
   /** Feature-class prior in [0,1]. Highest signal wins (a place that is also a peak gets the peak rule). */

@@ -121,7 +121,6 @@ public class ElasticsearchHelper {
                         .charFilter("hebrew_niqqud", "hebrew_matres", "hebrew_matres_yod")
                         .tokenizer("standard")
                         .filter("asciifolding", "lowercase")))
-                // INDEX analyzer for the *.prefix subfield: universal pipeline + edge_ngram.
                 .analyzer("prefix_index_analyzer", an -> an
                     .custom(ca -> ca
                         .charFilter("hebrew_niqqud")

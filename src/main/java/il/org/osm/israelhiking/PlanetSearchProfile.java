@@ -81,12 +81,6 @@ public class PlanetSearchProfile implements Profile {
         .listener(bulkListener));
   }
 
-  /*
-   * Two-pass processing: pass 1 stores node locations and (via preprocessOsmRelation) the relation
-   * /mtb:name way info the profile needs later; pass 2 emits a point per relation and mtb:name way,
-   * merging the ways and using the first point of the merged linestring.
-   */
-
   static private final void CoalesceIntoMap(Map<String, String> map, String language, String... strings) {
     var value = Arrays.stream(strings)
         .filter(Objects::nonNull)
@@ -158,7 +152,7 @@ public class PlanetSearchProfile implements Profile {
     boolean hasWebsite = pointDocument.website != null;
     boolean hasWikidata = pointDocument.wikidata != null;
 
-    ProminenceCalculator.Result r = ProminenceCalculator.compute(
+    pointDocument.poiProminence = ProminenceCalculator.compute(
         feature.getString("natural"),
         feature.getString("place"),
         feature.getString("boundary"),
@@ -166,8 +160,6 @@ public class PlanetSearchProfile implements Profile {
         feature.getString("historic"),
         feature.getString("waterway"),
         ele, hasImage, hasWebsite, hasWikidata, qrankRaw);
-
-    pointDocument.poiProminence = r.prominence;
 
     setEnrichmentSignals(pointDocument, feature);
   }
@@ -271,7 +263,6 @@ public class PlanetSearchProfile implements Profile {
 
   @Override
   public List<OsmRelationInfo> preprocessOsmRelation(OsmElement.Relation relation) {
-    // If this is a "route" relation ...
     if (relation.hasTag("state", "proposed")) {
       return null;
     }
@@ -285,7 +276,6 @@ public class PlanetSearchProfile implements Profile {
         !"4x4".equals(pointDocument.poiCategory)) {
       return null;
     }
-    // then store a RouteRelationInfo instance with tags we'll need later
     var waysMemberIds = relation.members()
         .stream()
         .filter(member -> member.type() == WAY)
@@ -418,8 +408,6 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void processOsmRelationFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
-    // get all the RouteRelationInfo instances we returned from
-    // preprocessOsmRelation that this way belongs to, including super relations.
     for (var routeInfo : feature.relationInfo(RelationInfo.class, true)) {
       RelationInfo relation = routeInfo.relation();
       synchronized (relation) {

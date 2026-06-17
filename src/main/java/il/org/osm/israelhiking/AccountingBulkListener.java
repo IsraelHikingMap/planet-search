@@ -10,6 +10,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.function.Function;
 import java.util.logging.Logger;
 
 import org.apache.http.conn.ConnectTimeoutException;
@@ -25,8 +26,6 @@ import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
 
 /**
  * BulkListener that surfaces and counts every bulk outcome instead of swallowing errors.
- * Extracted from an anonymous inner class so the per-item classification (indexed vs failed) and
- * the whole-batch failure path are unit-testable by driving afterBulk directly.
  */
 final class AccountingBulkListener implements BulkListener<Void> {
   // Log under the profile's logger so the indexing diagnostics stay in one place (and tests that
@@ -43,42 +42,20 @@ final class AccountingBulkListener implements BulkListener<Void> {
   // 30 min leaves ample room for a queue of batches draining on RETRY_POOL_SIZE threads at shutdown.
   static final long RETRY_DRAIN_TIMEOUT_MINUTES = 30;
 
-  /** Injectable sleep so the backoff is testable without real delays. */
-  @FunctionalInterface
-  interface Sleeper {
-    void sleep(long millis) throws InterruptedException;
-  }
-
   private final ElasticsearchClient esClient;
   private final LongAdder indexedCount;
   private final LongAdder failedCount;
-  private final Sleeper sleeper;
   private final ExecutorService retryExecutor;
 
   AccountingBulkListener(ElasticsearchClient esClient, IndexingStats stats) {
-    this(esClient, stats.indexedCount, stats.failedCount, Thread::sleep, defaultRetryExecutor());
-  }
-
-  /** Full constructor; tests inject a no-op Sleeper and a same-thread executor for determinism. */
-  AccountingBulkListener(ElasticsearchClient esClient, LongAdder indexedCount, LongAdder failedCount,
-      Sleeper sleeper, ExecutorService retryExecutor) {
     this.esClient = esClient;
-    this.indexedCount = indexedCount;
-    this.failedCount = failedCount;
-    this.sleeper = sleeper;
-    this.retryExecutor = retryExecutor;
-  }
-
-  private static ExecutorService defaultRetryExecutor() {
-    return Executors.newFixedThreadPool(RETRY_POOL_SIZE, r -> {
+    this.indexedCount = stats.indexedCount;
+    this.failedCount = stats.failedCount;
+    this.retryExecutor = Executors.newFixedThreadPool(RETRY_POOL_SIZE, r -> {
       Thread t = new Thread(r, "es-bulk-retry");
       t.setDaemon(true);
       return t;
     });
-  }
-
-  private void recordFailure() {
-    failedCount.increment();
   }
 
   @Override
@@ -115,7 +92,7 @@ final class AccountingBulkListener implements BulkListener<Void> {
     } else {
       LOGGER.severe(() -> "Bulk request " + executionId + " failed non-retryably ("
           + describe(failure) + "); counting " + request.operations().size() + " op(s) as failed.");
-      request.operations().forEach(op -> recordFailure());
+      request.operations().forEach(op -> failedCount.increment());
     }
   }
 
@@ -123,6 +100,12 @@ final class AccountingBulkListener implements BulkListener<Void> {
   private void offloadRetry(long executionId, List<BulkOperation> operations) {
     List<BulkOperation> batch = new ArrayList<>(operations);
     retryExecutor.submit(() -> resubmitWithBackoff(executionId, batch));
+  }
+
+  /** Production retry path: resubmit via a fresh synchronous bulk, sleeping the real backoff. */
+  private void resubmitWithBackoff(long executionId, List<BulkOperation> operations) {
+    resubmitWithBackoff(executionId, operations,
+        ops -> esClient.bulk(b -> b.operations(ops)), Thread::sleep);
   }
 
   /**
@@ -143,18 +126,32 @@ final class AccountingBulkListener implements BulkListener<Void> {
     }
   }
 
+  /** One resubmit attempt; the production form calls esClient.bulk, so it carries the checked throw. */
+  @FunctionalInterface
+  interface BulkAttempt {
+    BulkResponse submit(List<BulkOperation> operations) throws Exception;
+  }
+
+  /** Pauses between attempts; the production form is {@code Thread::sleep}. */
+  @FunctionalInterface
+  interface BackoffSleep {
+    void sleep(long millis) throws InterruptedException;
+  }
+
   /**
-   * Resubmit a timed-out batch via a fresh synchronous bulk call, with exponential backoff +
-   * jitter, up to MAX_RETRY_ATTEMPTS times. Each attempt's response is reconciled per item:
-   * successes counted as indexed, per-item 4xx charged as genuine failures (never retried), and
-   * only retryable ops carry over. Whatever remains after the final attempt is counted as failed.
+   * Resubmit a batch up to MAX_RETRY_ATTEMPTS times with exponential backoff + jitter. Each attempt's
+   * response is reconciled per item: successes counted indexed, per-item 4xx charged failed (never
+   * retried), only retryable ops carry over; whatever remains after the final attempt is counted
+   * failed. {@code attempt}/{@code sleep} are the effects this loop performs — production wires them
+   * to esClient.bulk and Thread::sleep; a unit test drives the same loop with a stubbed sequence and
+   * a no-op sleep, so the retry state machine is exercised without a live cluster or real delays.
    */
-  private void resubmitWithBackoff(long executionId, List<BulkOperation> operations) {
+  void resubmitWithBackoff(long executionId, List<BulkOperation> operations,
+      BulkAttempt attempt, BackoffSleep sleep) {
     List<BulkOperation> pending = new ArrayList<>(operations);
-    for (int attempt = 1; attempt <= MAX_RETRY_ATTEMPTS && !pending.isEmpty(); attempt++) {
-      long backoff = backoffMillis(attempt);
+    for (int attemptNo = 1; attemptNo <= MAX_RETRY_ATTEMPTS && !pending.isEmpty(); attemptNo++) {
       try {
-        sleeper.sleep(backoff);
+        sleep.sleep(backoffMillis(attemptNo));
       } catch (InterruptedException ie) {
         Thread.currentThread().interrupt();
         LOGGER.warning("Retry interrupted; charging remaining " + pending.size()
@@ -163,36 +160,32 @@ final class AccountingBulkListener implements BulkListener<Void> {
       }
       final List<BulkOperation> batch = pending;
       try {
-        BulkResponse response = esClient.bulk(b -> b.operations(batch));
-        pending = classifyAndCount(batch, response);
+        pending = classifyAndCount(batch, attempt.submit(batch));
         if (pending.isEmpty()) {
           final int n = batch.size();
-          final int a = attempt;
+          final int a = attemptNo;
           LOGGER.info(() -> "Bulk request " + executionId + " recovered on retry attempt "
               + a + " (" + n + " op(s) re-applied).");
           return;
         }
       } catch (Exception e) {
         if (!isRetryable(e)) {
-          // The whole resubmit hit a non-retryable error — count all pending as failed and stop.
           LOGGER.severe(() -> "Retry of bulk request " + executionId
               + " hit a non-retryable error (" + describe(e) + "); counting "
               + batch.size() + " op(s) as failed.");
-          batch.forEach(op -> recordFailure());
+          batch.forEach(op -> failedCount.increment());
           return;
         }
-        final int a = attempt;
+        final int a = attemptNo;
         LOGGER.warning(() -> "Retry attempt " + a + " for bulk request " + executionId
             + " failed transiently (" + describe(e) + ").");
-        // keep `pending` as-is for the next attempt
       }
     }
-    // Retries exhausted (or interrupted): count whatever is still pending as failed.
     if (!pending.isEmpty()) {
       final int n = pending.size();
       LOGGER.warning(() -> "Bulk request " + executionId + " exhausted retries; counting "
           + n + " op(s) as failed.");
-      pending.forEach(op -> recordFailure());
+      pending.forEach(op -> failedCount.increment());
     }
   }
 
@@ -211,7 +204,7 @@ final class AccountingBulkListener implements BulkListener<Void> {
       } else if (item.error() == null) {
         indexedCount.increment();
       } else {
-        recordFailure();
+        failedCount.increment();
         LOGGER.warning(() -> "Failed to index id=" + item.id() + " into " + item.index()
             + ": " + item.error().reason());
       }

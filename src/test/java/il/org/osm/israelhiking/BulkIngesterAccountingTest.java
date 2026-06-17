@@ -17,13 +17,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
 
-import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch.core.BulkRequest;
 import co.elastic.clients.elasticsearch.core.BulkResponse;
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
@@ -31,32 +25,18 @@ import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
 import co.elastic.clients.elasticsearch.core.bulk.OperationType;
 
 /**
- * Regression guard for the lossless BulkIngester indexing invariant.
- *
- * The production listener is the behavior-preserving extract AccountingBulkListener; the per-item
- * classification logic is identical to the former anonymous inner class. Driving its afterBulk
- * overloads directly lets us assert, deterministically and without a live Elasticsearch, that:
- *  - a bulk item failure is surfaced (counted via failedCount and logged at WARNING), never
- *    swallowed; the success path increments indexedCount;
- *  - lossless accounting: every item the listener sees is classified as exactly one of
- *    indexed / failed, so indexed + failed == items submitted;
- *  - a whole-batch failure (the Throwable overload) adds the entire batch to failedCount and is
- *    logged at SEVERE.
- *
- * Approach: exercising the real BulkIngester is awkward against the 8.x client because it derives
- * an internal ElasticsearchAsyncClient from the transport; we use a behavior-preserving extract of
- * the listener so it can be unit-constructed and driven directly.
+ * Regression guard for the lossless indexing invariant: every item the listener classifies is
+ * counted as exactly one of indexed / failed (indexed + failed == items submitted), a failure is
+ * surfaced (counted AND logged) rather than swallowed, and a non-retryable whole-batch error counts
+ * the whole batch failed. These paths classify inline, so they need no live cluster, retry, or
+ * Elasticsearch client.
  */
 @Tag("unit")
-@ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class BulkIngesterAccountingTest {
 
     private static final String POINTS_INDEX = "points";
 
-    @Mock
-    private ElasticsearchClient esClient;
-
+    private IndexingStats stats;
     private LongAdder indexedCount;
     private LongAdder failedCount;
     private AccountingBulkListener listener;
@@ -67,14 +47,11 @@ class BulkIngesterAccountingTest {
 
     @BeforeEach
     void setUp() {
-        indexedCount = new LongAdder();
-        failedCount = new LongAdder();
-        // No-op sleeper + direct executor: retries run inline, so counts are deterministic.
-        listener = new AccountingBulkListener(esClient, indexedCount, failedCount, millis -> {},
-                TestExecutors.directExecutor());
+        stats = new IndexingStats();
+        indexedCount = stats.indexedCount;
+        failedCount = stats.failedCount;
+        listener = new AccountingBulkListener(null, stats);
 
-        // Capture log records so "surfaced" can be asserted (logged AND counted),
-        // proving the old catch(Exception){/*swallow*/} pattern is gone.
         profileLogger = Logger.getLogger(PlanetSearchProfile.class.getName());
         previousLevel = profileLogger.getLevel();
         profileLogger.setLevel(Level.ALL);

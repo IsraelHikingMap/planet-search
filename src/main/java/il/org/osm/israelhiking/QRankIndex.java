@@ -50,11 +50,11 @@ class QRankIndex {
     try (InputStream fis = Files.newInputStream(csvGz);
         GZIPInputStream gz = new GZIPInputStream(fis, 1 << 16);
         BufferedReader br = new BufferedReader(new InputStreamReader(gz, StandardCharsets.UTF_8), 1 << 20)) {
-      String line = br.readLine(); // header: Entity,QRank
+      String line = br.readLine();
       while ((line = br.readLine()) != null) {
         int comma = line.indexOf(',');
         if (comma <= 1 || line.charAt(0) != 'Q') {
-          continue; // skip malformed / non-Q rows
+          continue;
         }
         try {
           long qid = Long.parseLong(line, 1, comma, 10); // skip the leading 'Q', no substring alloc
@@ -105,7 +105,6 @@ class QRankIndex {
     return best;
   }
 
-  /** Lookup for one trimmed Q-id token (e.g. "Q665321" / "q665321"); 0 if malformed or absent. */
   private long qrankFor(String token) {
     if (token.length() < 2 || (token.charAt(0) != 'Q' && token.charAt(0) != 'q')) {
       return 0;
