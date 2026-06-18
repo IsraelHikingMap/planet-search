@@ -502,6 +502,18 @@ public class PlanetSearchProfile implements Profile {
         var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
         pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
         insertPointToElasticsearch(pointDocument, "OSM_way_" + mergedFeature.minId);
+
+        if (pointDocument.poiIcon == "icon-hike" ||
+            pointDocument.poiIcon == "icon-bike" ||
+            pointDocument.poiIcon == "icon-four-by-four") {
+          continue;
+        }
+        // This is a highway with a name, but it's not just a highway as it has a
+        // different icon, so adding it to the list of points.
+        var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
+            // Override the feature id with the minimal id of the group
+            .setId(minIdFeature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
+        setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
       }
 
       return true;
