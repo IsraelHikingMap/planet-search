@@ -118,7 +118,7 @@ public class ElasticsearchHelper {
                         .filter("asciifolding", "lowercase", "edge_ngram_2_15")))
                 .analyzer("hebrew_prefix_search_analyzer", an -> an
                     .custom(ca -> ca
-                        .charFilter("hebrew_niqqud", "hebrew_matres", "hebrew_matres_yod")
+                        .charFilter("hebrew_niqqud", "hebrew_matres_vav", "hebrew_matres_yod")
                         .tokenizer("standard")
                         .filter("asciifolding", "lowercase")))))
         .mappings(m -> {
