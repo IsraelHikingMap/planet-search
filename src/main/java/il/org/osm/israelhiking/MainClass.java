@@ -47,11 +47,13 @@ public class MainClass {
             String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
             planetiler.setProfile(profile);
             // override this default with osm_path="path/to/data.osm.pbf"
-            planetiler.addOsmSource("osm", Path.of("data", "sources", area + ".osm.pbf"), "geofabrik:" + area);
+            // Geofabrik has no whole-planet file, so area=planet uses the aws:latest
+            // s3://osm-pds mirror.
+            String osmSourceUrl = "planet".equals(area) ? "aws:latest" : "geofabrik:" + area;
+            planetiler.addOsmSource("osm", Path.of("data", "sources", area + ".osm.pbf"), osmSourceUrl);
             if ("" != externalFilePath) {
                 planetiler.addGeoJsonSource("external", Path.of(externalFilePath));
             }
-            // override this default with mbtiles="path/to/output.mbtiles"
             planetiler.overwriteOutput(Path.of("data", "target", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"));
             planetiler.run();
 
