@@ -22,10 +22,7 @@ class PointDocument {
   public double poiLength = 0; // meters
   public String website;
   public double[] location;
-
-  // them as calculated, not raw OSM tags.
   public Float poiProminence;
-  // A size proxy (a large lake outranks a same-named pond); set only for polygons.
   public Float poiAreaNorm;
   public Boolean intermittent;
   public Integer population;
