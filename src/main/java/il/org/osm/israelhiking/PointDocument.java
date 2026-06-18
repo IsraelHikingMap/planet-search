@@ -24,7 +24,6 @@ class PointDocument {
   public String website;
   public double[] location;
 
-  // Computed ranking signals (null => omitted from JSON, ES uses missing:1.0). The poi* prefix marks
   // them as calculated, not raw OSM tags.
   public Float poiProminence;
   // A size proxy (a large lake outranks a same-named pond); set only for polygons.
