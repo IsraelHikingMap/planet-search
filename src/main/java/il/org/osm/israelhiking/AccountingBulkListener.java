@@ -28,18 +28,13 @@ import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
  * BulkListener that surfaces and counts every bulk outcome instead of swallowing errors.
  */
 final class AccountingBulkListener implements BulkListener<Void> {
-  // Log under the profile's logger so the indexing diagnostics stay in one place (and tests that
-  // assert on the PlanetSearchProfile logger still see them).
   private static final Logger LOGGER = Logger.getLogger(PlanetSearchProfile.class.getName());
 
-  // Retry/backoff tuning for the whole-batch transient path.
   static final int MAX_RETRY_ATTEMPTS = 5;          // total resubmits (1s,2s,4s,8s,16s)
   static final long BASE_BACKOFF_MILLIS = 1_000L;   // first backoff
   static final long MAX_BACKOFF_MILLIS = 16_000L;   // cap per attempt
 
   static final int RETRY_POOL_SIZE = 4;
-  // One batch's retries are bounded (~5 attempts x 16s backoff + ES socket timeouts ~= a few minutes);
-  // 30 min leaves ample room for a queue of batches draining on RETRY_POOL_SIZE threads at shutdown.
   static final long RETRY_DRAIN_TIMEOUT_MINUTES = 30;
 
   private final ElasticsearchClient esClient;
