@@ -9,7 +9,6 @@ import java.util.Map;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 class PointDocument {
   public Map<String, String> name = new HashMap<String, String>();
-  // Kept separate from name and searched at a lower boost; folding variants into name hurts ranking.
   public Map<String, List<String>> alt_names;
   public Map<String, String> description = new HashMap<String, String>();
   public String wikidata;
