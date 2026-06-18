@@ -27,14 +27,11 @@ import com.onthegomap.planetiler.reader.WithTags;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
-import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import il.org.osm.israelhiking.ElasticsearchHelper.ElasticRunContext;
 
 public class PlanetSearchProfile implements Profile {
   private PlanetilerConfig config;
-  private ElasticsearchClient esClient;
-  private final String pointsIndexName;
-  private final String bboxIndexName;
-  private final String[] supportedLanguages;
+  private ElasticRunContext context;
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
@@ -42,13 +39,9 @@ public class PlanetSearchProfile implements Profile {
   private static final Map<String, MinWayIdFinder> NamedHighways = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> Waterways = new ConcurrentHashMap<>();
 
-  public PlanetSearchProfile(PlanetilerConfig config, ElasticsearchClient esClient, String pointsIndexName,
-      String bboxIndexName, String[] supportedLnaguages) {
+  public PlanetSearchProfile(PlanetilerConfig config, ElasticRunContext context) {
     this.config = config;
-    this.esClient = esClient;
-    this.pointsIndexName = pointsIndexName;
-    this.supportedLanguages = supportedLnaguages;
-    this.bboxIndexName = bboxIndexName;
+    this.context = context;
   }
 
   /*
@@ -87,7 +80,7 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void convertTagsToDocument(PointDocument pointDocument, WithTags feature) {
-    for (String language : supportedLanguages) {
+    for (String language : this.context.supportedLanguages()) {
       CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language));
       CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language));
     }
@@ -264,8 +257,8 @@ public class PlanetSearchProfile implements Profile {
         processExternalFeautre(feature, features);
         return;
       }
-      if (isBBoxFeature(feature, supportedLanguages)) {
-        insertBboxToElasticsearch(feature, supportedLanguages);
+      if (isBBoxFeature(feature, this.context.supportedLanguages())) {
+        insertBboxToElasticsearch(feature, this.context.supportedLanguages());
       }
       processOsmRelationFeature(feature, features);
       if (processMtbNameFeature(feature, features))
@@ -371,7 +364,7 @@ public class PlanetSearchProfile implements Profile {
 
         var pointDocument = new PointDocument();
         convertTagsToDocument(pointDocument, minIdFeature);
-        for (String language : supportedLanguages) {
+        for (String language : this.context.supportedLanguages()) {
           CoalesceIntoMap(pointDocument.name, language, minIdFeature.getString("mtb:name:" + language));
         }
         if (minIdFeature.hasTag("mtb:name")) {
@@ -612,7 +605,7 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.poiIcon = "icon-wikipedia-w";
       pointDocument.poiCategory = "Wikipedia";
     }
-    for (String language : supportedLanguages) {
+    for (String language : this.context.supportedLanguages()) {
       CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language));
       CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language));
     }
@@ -636,8 +629,8 @@ public class PlanetSearchProfile implements Profile {
 
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
     try {
-      esClient.index(i -> i
-          .index(this.pointsIndexName)
+      this.context.esClient().index(i -> i
+          .index(this.context.pointsIndexTarget())
           .id(docId)
           .document(pointDocument));
     } catch (Exception e) {
@@ -664,8 +657,8 @@ public class PlanetSearchProfile implements Profile {
       if (feature.hasTag("name")) {
         CoalesceIntoMap(bbox.name, "default", feature.getString("name"));
       }
-      esClient.index(i -> i
-          .index(this.bboxIndexName)
+      this.context.esClient().index(i -> i
+          .index(this.context.bboxIndexTarget())
           .id(sourceFeatureToDocumentId(feature))
           .document(bbox));
     } catch (Exception e) {
@@ -766,7 +759,7 @@ public class PlanetSearchProfile implements Profile {
         .setAttr("poiDifficulty", pointDocument.poiDifficulty)
         .setZoomRange(8, 14)
         .setBufferPixels(0);
-    for (String lang : supportedLanguages) {
+    for (String lang : this.context.supportedLanguages()) {
       tileFeature.setAttr("name:" + lang, pointDocument.name.get(lang));
       tileFeature.setAttr("description:" + lang, pointDocument.description.get(lang));
     }

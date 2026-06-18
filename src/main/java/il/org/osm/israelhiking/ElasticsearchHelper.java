@@ -14,6 +14,16 @@ import co.elastic.clients.transport.ElasticsearchTransport;
 import co.elastic.clients.transport.rest_client.RestClientTransport;
 
 public class ElasticsearchHelper {
+
+  public static record ElasticRunContext(
+      ElasticsearchClient esClient,
+      String pointsIndexAlias,
+      String bboxIndexAlias,
+      String pointsIndexTarget,
+      String bboxIndexTarget,
+      String[] supportedLanguages) {
+  }
+
   /**
    * Static utility class should not be instantiated.
    */
@@ -133,5 +143,21 @@ public class ElasticsearchHelper {
       }
       return c.actions(a -> a.add(c2 -> c2.index(targetIndex).alias(indexAlias)));
     });
+  }
+
+  public static ElasticRunContext initRun(ElasticsearchClient esClient,
+      String pointsIndexAlias,
+      String bboxIndexAlias,
+      String[] supportedLanguages) throws Exception {
+    var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias,
+        supportedLanguages);
+    var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
+    return new ElasticRunContext(esClient, pointsIndexAlias, bboxIndexAlias, targetPointsIndex, targetBBoxIndex,
+        supportedLanguages);
+  }
+
+  public static void finalizeRun(ElasticRunContext context) throws Exception {
+    ElasticsearchHelper.switchAlias(context.esClient, context.pointsIndexAlias(), context.pointsIndexTarget());
+    ElasticsearchHelper.switchAlias(context.esClient, context.bboxIndexAlias(), context.bboxIndexTarget());
   }
 }

@@ -3,6 +3,8 @@ package il.org.osm.israelhiking;
 import com.onthegomap.planetiler.Planetiler;
 import com.onthegomap.planetiler.config.Arguments;
 
+import co.elastic.clients.elasticsearch.inference.ElserServiceSettings;
+
 import java.nio.file.Path;
 
 /**
@@ -24,9 +26,6 @@ public class MainClass {
     }
 
     static void run(Arguments args) throws Exception {
-        // Planetiler is a convenience wrapper around the lower-level API for the most
-        // common use-cases.
-        // See ToiletsOverlayLowLevelApi for an example using the lower-level API
         Planetiler planetiler = Planetiler.create(args);
 
         var esAddress = args.getString("es-address", "Elasticsearch address", "http://localhost:9200");
@@ -38,11 +37,9 @@ public class MainClass {
                     "bbox");
             var supportedLanguages = args.getString("languages", "Languages to support", "en,he,ru,ar,es").split(",");
             var externalFilePath = args.getString("external-file-path", "External file path", "");
-            var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias,
+            var context = ElasticsearchHelper.initRun(esClient, pointsIndexAlias, bboxIndexAlias,
                     supportedLanguages);
-            var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
-            var profile = new PlanetSearchProfile(planetiler.config(), esClient, targetPointsIndex, targetBBoxIndex,
-                    supportedLanguages);
+            var profile = new PlanetSearchProfile(planetiler.config(), context);
 
             String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
             planetiler.setProfile(profile);
@@ -57,8 +54,7 @@ public class MainClass {
             planetiler.overwriteOutput(Path.of("data", "target", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"));
             planetiler.run();
 
-            ElasticsearchHelper.switchAlias(esClient, pointsIndexAlias, targetPointsIndex);
-            ElasticsearchHelper.switchAlias(esClient, bboxIndexAlias, targetBBoxIndex);
+            ElasticsearchHelper.finalizeRun(context);
         } finally {
             esClient.close();
         }
