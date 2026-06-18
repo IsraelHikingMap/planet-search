@@ -16,7 +16,6 @@ final class ProminenceCalculator {
 
   static final double QRANK_REF = 3_000_000.0;
   static final double MAX_ELE_M = 8849.0;
-  /** A 0 would zero out the query-time multiply, so prominence is floored, never zero. */
   static final double FLOOR = 0.05;
 
   private ProminenceCalculator() {}
