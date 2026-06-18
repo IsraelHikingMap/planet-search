@@ -19,7 +19,8 @@ class PointDocument {
   public String poiIconColor;
   public String poiSource;
   public String poiDifficulty;
-  public double poiLength = 0; // meters
+  /** Length is in meters */
+  public double poiLength = 0;
   public String website;
   public double[] location;
   public Float poiProminence;
