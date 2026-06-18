@@ -41,18 +41,9 @@ public class PlanetSearchProfile implements Profile {
   private final String pointsIndexName;
   private final String bboxIndexName;
   private final String[] supportedLanguages;
-  // QRank lookup (Wikimedia pageviews by wikidata id) for the prominence signal. Empty index when
-  // no QRank file is provided (local builds), so lookups return 0.
   private final QRankIndex qrankIndex;
-
-  // Bulk indexer: thread-safe, buffers operations and flushes them in batches. Planetiler emits
-  // features from multiple worker threads, so BulkIngester (concurrent add() internally) fits
-  // better than hand-locked BulkRequests.
   private final BulkIngester<Void> bulkIngester;
-  // Held so finishIndexing() can drain its offloaded retries before the alias swap.
   private final AccountingBulkListener bulkListener;
-  // Indexing accounting counters, kept in their own holder (not the focus of this class). This class
-  // increments emitted on each emit; the listener shares the same LongAdders to record indexed/failed.
   private final IndexingStats stats = new IndexingStats();
 
   public static final String POINTS_LAYER_NAME = "global_points";
@@ -92,14 +83,6 @@ public class PlanetSearchProfile implements Profile {
     }
   }
 
-  /**
-   * Populate pointDocument.alt_names from the OSM variant-name tags, keyed by language like name:
-   * suffixed tags (alt_name:lang, ...) under lang, bare tags under "default".
-   *
-   * Unlike CoalesceIntoMap, alt-name tags are frequently multi-valued with ";" (alt_name=A;B;C), so
-   * we split on ";", trim, drop empties and de-dup (order-preserving) into a List so each variant is
-   * a separate token. Built lazily, so a feature with no variant tags leaves alt_names null.
-   */
   private void addAltNames(PointDocument pointDocument, WithTags feature) {
     var altNames = OsmTagUtils.buildAltNames(supportedLanguages, feature::getString);
     if (altNames != null) {
