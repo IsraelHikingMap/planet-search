@@ -126,7 +126,12 @@ public class ElasticsearchHelper {
 
   public static void switchAlias(ElasticsearchClient esClient, String indexAlias, String targetIndex)
       throws Exception {
-    esClient.indices().updateAliases(c -> c.actions(a -> a.remove(i -> i.index("*").alias(indexAlias)))
-        .actions(a -> a.add(c2 -> c2.index(targetIndex).alias(indexAlias))));
+    boolean aliasExists = esClient.indices().existsAlias(c -> c.name(indexAlias)).value();
+    esClient.indices().updateAliases(c -> {
+      if (aliasExists) {
+        c.actions(a -> a.remove(i -> i.index("*").alias(indexAlias)));
+      }
+      return c.actions(a -> a.add(c2 -> c2.index(targetIndex).alias(indexAlias)));
+    });
   }
 }
