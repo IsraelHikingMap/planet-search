@@ -22,14 +22,11 @@ public class ElasticsearchHelper {
 
   private static final Logger LOGGER = Logger.getLogger(ElasticsearchHelper.class.getName());
 
-  // Hebrew matres-lectionis, doubled-only fold (he-scoped). The PATTERN strings are regex text sent
-  // verbatim to ES (Java "\\u" => one backslash, which ES/Lucene parses as a unicode escape); the
-  // replacement is a single Hebrew code point. Collapse a doubled vav/yod to a single one; never
-  // drop a single interior vav/yod (that fuller rule would merge ~7 real homographs).
   static final String HEBREW_VAV = "ו";
   static final String HEBREW_YOD = "י";
   static final String HEBREW_DOUBLED_VAV_PATTERN = "\\u05D5\\u05D5";
   static final String HEBREW_DOUBLED_YOD_PATTERN = "\\u05D9\\u05D9";
+  static final String HEBREW_NIQQUD_PATTERN = "[\\u05B0-\\u05C7]";
 
   /**
    * Pure reference implementation of the doubled-only matres rule, so a unit test can assert it
@@ -44,9 +41,6 @@ public class ElasticsearchHelper {
         .replaceAll("יי", HEBREW_YOD);
   }
 
-  // Socket timeout 180s (not the 30s default) so a whole-planet bulk-fill survives long ES pauses
-  // without charging committed batches as failures; connect timeout stays short so a down cluster
-  // fails fast. Units are milliseconds.
   public static ElasticsearchClient createElasticsearchClient(String esAddress) {
     Logger.getLogger("org.elasticsearch.client.RestClient").setLevel(Level.OFF);
     RestClient restClient = RestClient.builder(HttpHost.create(esAddress))
@@ -68,57 +62,43 @@ public class ElasticsearchHelper {
         .toArray(String[]::new);
     esClient.indices().create(c -> c.index(targetIndex)
         .settings(s -> s
-            // Build-time write tuning: the target index isn't served until the alias swaps, so
-            // disabling periodic refresh and replicas removes the biggest bulk-indexing overhead.
-            // Restored right before the alias swap.
-            .refreshInterval(t -> t.time("-1"))
-            .numberOfReplicas("0")
+            .refreshInterval(t -> t.time("-1")) // avoid refresh while building
+            .numberOfReplicas("0") // reduce coping while building
             .analysis(a -> a
                 .charFilter("hebrew_niqqud", cf -> cf
                     .definition(d -> d
                         .patternReplace(pr -> pr
-                            .pattern("[\\u05B0-\\u05C7]")
-                            .replacement(""))))
-                // Hebrew matres-lectionis fold, doubled-only: collapse doubled vav (וו -> ו) and
-                // doubled yod (יי -> י). Deliberately does NOT drop a single interior vav/yod
-                // (that fuller rule would merge ~7 real homographs). Applied only to the he-scoped
-                // analyzer/normalizer so the blast radius stays in Hebrew. The pattern is a regex
-                // (two vav/yod code points); the replacement is a literal single Hebrew glyph.
-                .charFilter("hebrew_matres", cf -> cf
+                            .pattern(HEBREW_NIQQUD_PATTERN)
+                            .replacement("")))) // remove niqqud comletely
+                .charFilter("hebrew_matres_vav", cf -> cf
                     .definition(d -> d
                         .patternReplace(pr -> pr
                             .pattern(HEBREW_DOUBLED_VAV_PATTERN)
-                            .replacement(HEBREW_VAV))))
+                            .replacement(HEBREW_VAV)))) // replace double וו with single ו
                 .charFilter("hebrew_matres_yod", cf -> cf
                     .definition(d -> d
                         .patternReplace(pr -> pr
                             .pattern(HEBREW_DOUBLED_YOD_PATTERN)
-                            .replacement(HEBREW_YOD))))
-                // Edge-ngram index-side token filter: emit 2..15-char edge n-grams so a prefix
-                // matches a stored gram in O(1) term lookups, independent of match_phrase_prefix's
-                // max_expansions cap.
+                            .replacement(HEBREW_YOD)))) // replace double יי with single י
                 .filter("edge_ngram_2_15", tf -> tf
                     .definition(d -> d
-                        .edgeNgram(en -> en.minGram(2).maxGram(15))))
+                        .edgeNgram(en -> en.minGram(2).maxGram(15)))) // for prefix match
                 .normalizer("universal_normalizer", n -> n
                     .custom(cn -> cn
                         .charFilter("hebrew_niqqud")
                         .filter("asciifolding", "lowercase")))
-                // he-scoped keyword normalizer = universal_normalizer + the doubled-matres folds.
                 .normalizer("hebrew_normalizer", n -> n
                     .custom(cn -> cn
-                        .charFilter("hebrew_niqqud", "hebrew_matres", "hebrew_matres_yod")
+                        .charFilter("hebrew_niqqud", "hebrew_matres_vav", "hebrew_matres_yod")
                         .filter("asciifolding", "lowercase")))
                 .analyzer("universal_analyzer", an -> an
                     .custom(ca -> ca
                         .charFilter("hebrew_niqqud")
                         .tokenizer("standard")
                         .filter("asciifolding", "lowercase")))
-                // Hebrew-scoped text analyzer = universal_analyzer + doubled-only matres folds.
-                // Used on name.he / alt_names.he only.
                 .analyzer("hebrew_analyzer", an -> an
                     .custom(ca -> ca
-                        .charFilter("hebrew_niqqud", "hebrew_matres", "hebrew_matres_yod")
+                        .charFilter("hebrew_niqqud", "hebrew_matres_vav", "hebrew_matres_yod")
                         .tokenizer("standard")
                         .filter("asciifolding", "lowercase")))
                 .analyzer("prefix_index_analyzer", an -> an
@@ -126,21 +106,14 @@ public class ElasticsearchHelper {
                         .charFilter("hebrew_niqqud")
                         .tokenizer("standard")
                         .filter("asciifolding", "lowercase", "edge_ngram_2_15")))
-                // SEARCH analyzer for the *.prefix subfield: same pipeline minus edge_ngram, so the
-                // query term is not itself exploded into grams (otherwise "ba" would match anything
-                // sharing a 2-gram).
                 .analyzer("prefix_search_analyzer", an -> an
                     .custom(ca -> ca
                         .charFilter("hebrew_niqqud")
                         .tokenizer("standard")
                         .filter("asciifolding", "lowercase")))
-                // He-scoped prefix analyzers = the prefix analyzers above + the doubled-matres
-                // folds, so name.he's .prefix edge-grams fold doubled vav/yod the same way the main
-                // name.he field (hebrew_analyzer) does. Without these, a Hebrew as-you-type prefix
-                // query would recall differently from the full-token query the matres fold added.
                 .analyzer("hebrew_prefix_index_analyzer", an -> an
                     .custom(ca -> ca
-                        .charFilter("hebrew_niqqud", "hebrew_matres", "hebrew_matres_yod")
+                        .charFilter("hebrew_niqqud", "hebrew_matres_vav", "hebrew_matres_yod")
                         .tokenizer("standard")
                         .filter("asciifolding", "lowercase", "edge_ngram_2_15")))
                 .analyzer("hebrew_prefix_search_analyzer", an -> an
@@ -150,10 +123,7 @@ public class ElasticsearchHelper {
                         .filter("asciifolding", "lowercase")))))
         .mappings(m -> {
           for (var lang : allLanguages) {
-            // name.he gets the Hebrew-scoped analyzer (doubled-matres collapse); every other
-            // language keeps universal_analyzer. The .prefix subfield (edge-ngram) is added on all
-            // languages for cap-independent prefix recall.
-            var isHebrew = "he".equals(lang);
+            var isHebrew = "he".equals(lang); // Hebrew fields get a diffent configuration
             m.properties("name." + lang, k -> k
                 .text(p -> p
                     .analyzer(isHebrew ? "hebrew_analyzer" : "universal_analyzer")
@@ -164,9 +134,6 @@ public class ElasticsearchHelper {
                         .text(pt -> pt
                             .analyzer(isHebrew ? "hebrew_prefix_index_analyzer" : "prefix_index_analyzer")
                             .searchAnalyzer(isHebrew ? "hebrew_prefix_search_analyzer" : "prefix_search_analyzer")))));
-            // alt_names.lang — separate demoted variant-name field, not folded into name (folding
-            // breaks ranking/display). Same analyzer choice as name so he variants get the matres
-            // collapse too. No .prefix subfield.
             m.properties("alt_names." + lang, k -> k
                 .text(p -> p
                     .analyzer(isHebrew ? "hebrew_analyzer" : "universal_analyzer")
@@ -175,12 +142,8 @@ public class ElasticsearchHelper {
                             .normalizer(isHebrew ? "hebrew_normalizer" : "universal_normalizer")))));
           }
           m.properties("location", g -> g.geoPoint(p -> p));
-          // Computed ranking signals (additive; docs without these use missing:1.0 at query time).
-          // poi* prefix marks them as calculated, not raw OSM tags.
-          m.properties("poiProminence", n -> n.float_(f -> f));   // hot path: field_value_factor
-          m.properties("population", n -> n.integer(f -> f));     // place/admin layer
-          // Coarse feature type ("peak"/"lake"/"city"...) for class-match ranking; keyword for exact
-          // term match with doc_values for query-time comparison.
+          m.properties("poiProminence", n -> n.float_(f -> f));
+          m.properties("population", n -> n.integer(f -> f));
           m.properties("poiFeatureClass", n -> n.keyword(f -> f));
           // Enrichment signals (index:false query-time scoring inputs; doc_values readable by script).
           m.properties("poiAreaNorm", n -> n.float_(f -> f.index(false)));
@@ -201,15 +164,13 @@ public class ElasticsearchHelper {
         .toArray(String[]::new);
     esClient.indices().create(c -> c.index(targetIndex)
         .settings(s -> s
-            // Build-time write tuning (see createPointsIndex) — restored before
-            // the alias swap.
-            .refreshInterval(t -> t.time("-1"))
-            .numberOfReplicas("0")
+            .refreshInterval(t -> t.time("-1")) // avoid refresh while building
+            .numberOfReplicas("0") // reduce coping while building
             .analysis(a -> a
                 .charFilter("hebrew_niqqud", cf -> cf
                     .definition(d -> d
                         .patternReplace(pr -> pr
-                            .pattern("[\\u05B0-\\u05C7]")
+                            .pattern(HEBREW_NIQQUD_PATTERN)
                             .replacement(""))))
                 .normalizer("universal_normalizer", n -> n
                     .custom(cn -> cn
@@ -253,10 +214,6 @@ public class ElasticsearchHelper {
 
   public static void switchAlias(ElasticsearchClient esClient, String indexAlias, String targetIndex)
       throws Exception {
-    // On the first-ever build no index carries the alias yet. updateAliases is atomic, and a
-    // remove action for an alias that exists on no index can be rejected ("aliases [X] missing"),
-    // which would fail the whole request and leave the freshly built index unaliased. So only
-    // issue the remove when the alias actually exists; otherwise add-only.
     boolean aliasExists = esClient.indices().existsAlias(c -> c.name(indexAlias)).value();
     esClient.indices().updateAliases(c -> {
       if (aliasExists) {
@@ -267,9 +224,8 @@ public class ElasticsearchHelper {
   }
 
   /**
-   * Restore normal search-time settings before an index goes live: re-enable periodic refresh and
-   * add one replica (createPointsIndex/createBBoxIndex disable both for faster bulk writes). Call
-   * after the final flush and refresh, just before switchAlias.
+   * Restore normal search-time settings before an index goes live: 
+   * re-enable periodic refresh and add one replica (createPointsIndex/createBBoxIndex disable both for faster bulk writes). 
    */
   public static void restoreSearchSettings(ElasticsearchClient esClient, String targetIndex)
       throws Exception {
