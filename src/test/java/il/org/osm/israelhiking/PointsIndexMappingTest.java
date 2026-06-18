@@ -94,7 +94,7 @@ public class PointsIndexMappingTest {
     @Test
     public void analysisDeclaresHeScopedMatresFiltersAndAnalyzer() throws Exception {
         var json = createPointsIndexJson();
-        assertTrue(json.contains("hebrew_matres"),
+        assertTrue(json.contains("hebrew_matres_vav"),
                 "the he-scoped doubled-vav matres char_filter must be defined");
         assertTrue(json.contains("hebrew_analyzer"),
                 "a Hebrew-scoped analyzer (universal + matres) must be defined");
