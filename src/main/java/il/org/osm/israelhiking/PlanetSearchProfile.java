@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.math.NumberUtils;
@@ -27,9 +28,13 @@ import com.onthegomap.planetiler.reader.WithTags;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
+import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
+
 import il.org.osm.israelhiking.ElasticsearchHelper.ElasticRunContext;
 
 public class PlanetSearchProfile implements Profile {
+  private static final Logger LOGGER = Logger.getLogger(PlanetSearchProfile.class.getName());
+
   private PlanetilerConfig config;
   private ElasticRunContext context;
 
@@ -628,13 +633,20 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
+    addToIngester(BulkOperation.of(op -> op
+        .index(idx -> idx
+            .index(this.context.pointsIndexTarget())
+            .id(docId)
+            .document(pointDocument))), docId);
+  }
+
+  private void addToIngester(BulkOperation operation, String docId) {
     try {
-      this.context.esClient().index(i -> i
-          .index(this.context.pointsIndexTarget())
-          .id(docId)
-          .document(pointDocument));
+      this.context.bulkIngester().add(operation);
+      this.context.stats().emittedCount.increment();
     } catch (Exception e) {
-      // swallow
+      this.context.stats().failedCount.increment();
+      LOGGER.warning(() -> "Failed to enqueue document " + docId + " for indexing: " + e.getMessage());
     }
   }
 
@@ -645,8 +657,10 @@ public class PlanetSearchProfile implements Profile {
     } catch (GeometryException e) {
       return;
     }
+    BBoxDocument bbox;
+    String bboxDocId;
     try {
-      var bbox = new BBoxDocument();
+      bbox = new BBoxDocument();
       bbox.area = feature.areaMeters();
       var lngLatCenterPoint = GeoUtils.worldToLatLonCoords(feature.centroid()).getCoordinate();
       bbox.center = new double[] { lngLatCenterPoint.getX(), lngLatCenterPoint.getY() };
@@ -657,13 +671,17 @@ public class PlanetSearchProfile implements Profile {
       if (feature.hasTag("name")) {
         CoalesceIntoMap(bbox.name, "default", feature.getString("name"));
       }
-      this.context.esClient().index(i -> i
-          .index(this.context.bboxIndexTarget())
-          .id(sourceFeatureToDocumentId(feature))
-          .document(bbox));
+      bboxDocId = sourceFeatureToDocumentId(feature);
     } catch (Exception e) {
-      // swallow
+      LOGGER.warning(() -> "Failed to build bbox document: " + e.getMessage());
+      return;
     }
+    final BBoxDocument document = bbox;
+    addToIngester(BulkOperation.of(op -> op
+        .index(idx -> idx
+            .index(this.context.bboxIndexTarget())
+            .id(bboxDocId)
+            .document(document))), bboxDocId);
   }
 
   /**

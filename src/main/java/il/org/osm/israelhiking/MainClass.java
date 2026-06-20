@@ -52,9 +52,17 @@ public class MainClass {
                 planetiler.addGeoJsonSource("external", Path.of(externalFilePath));
             }
             planetiler.overwriteOutput(Path.of("data", "target", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"));
-            planetiler.run();
 
-            ElasticsearchHelper.finalizeRun(context);
+            boolean finalized = false;
+            try {
+                planetiler.run();
+                ElasticsearchHelper.finalizeRun(context);
+                finalized = true;
+            } finally {
+                if (!finalized) {
+                    ElasticsearchHelper.abortRun(context);
+                }
+            }
         } finally {
             esClient.close();
         }
