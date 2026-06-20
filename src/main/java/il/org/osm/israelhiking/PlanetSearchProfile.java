@@ -984,8 +984,6 @@ public class PlanetSearchProfile implements Profile {
       }
     }
 
-    // Treat natural=volcano like natural=peak so named summit nodes tagged as volcanoes get the
-    // peak icon instead of the icon-search default, which would otherwise drop them.
     String natural = feature.getString("natural");
     if ("peak".equals(natural) || "volcano".equals(natural)) {
       pointDocument.poiIconColor = "black";
