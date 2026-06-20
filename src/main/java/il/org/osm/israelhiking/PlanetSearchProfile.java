@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.math.NumberUtils;
@@ -30,8 +31,11 @@ import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 import il.org.osm.israelhiking.ElasticsearchHelper.ElasticRunContext;
 
 public class PlanetSearchProfile implements Profile {
+  private static final Logger LOGGER = Logger.getLogger(PlanetSearchProfile.class.getName());
+
   private PlanetilerConfig config;
   private ElasticRunContext context;
+  private final QRankIndex qrankIndex;
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
@@ -39,9 +43,10 @@ public class PlanetSearchProfile implements Profile {
   private static final Map<String, MinWayIdFinder> NamedHighways = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> Waterways = new ConcurrentHashMap<>();
 
-  public PlanetSearchProfile(PlanetilerConfig config, ElasticRunContext context) {
+  public PlanetSearchProfile(PlanetilerConfig config, ElasticRunContext context, QRankIndex qrankIndex) {
     this.config = config;
     this.context = context;
+    this.qrankIndex = qrankIndex;
   }
 
   /*
@@ -95,6 +100,57 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.image = feature.getString("image");
     pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
     pointDocument.website = feature.getString("website");
+    pointDocument.poiFeatureClass = OsmTagUtils.classifyFeatureClass(feature::getString);
+    pointDocument.alt_names = OsmTagUtils.buildAltNames(this.context.supportedLanguages(), feature::getString);
+    pointDocument.population = OsmTagUtils.computePopulation(
+        feature.getString("place"), feature.getString("population"));
+    setEnrichmentSignals(pointDocument, feature);
+    // Must run after wikidata/image/website are set above.
+    setProminence(pointDocument, feature);
+  }
+
+  private void setEnrichmentSignals(PointDocument pointDocument, WithTags feature) {
+    if (feature instanceof SourceFeature sf && sf.canBePolygon()) {
+      try {
+        pointDocument.poiAreaNormalized = normalizeArea(sf.areaMeters());
+      } catch (Exception e) {
+        // Unbuildable polygons are common here; never fail the build over one.
+        LOGGER.fine(() -> "poiAreaNormalized skipped for " + sourceFeatureToDocumentId(sf)
+            + " (" + e.getClass().getSimpleName() + ": " + e.getMessage() + ")");
+      }
+    }
+    if (feature.hasTag("intermittent", "yes")) {
+      pointDocument.intermittent = Boolean.TRUE;
+    }
+  }
+
+  static float normalizeArea(double areaM) {
+    if (Double.isNaN(areaM) || areaM <= 0) {
+      return 0f;
+    }
+    double norm = Math.log1p(areaM) / Math.log1p(1e11);
+    return (float) Math.max(0.0, Math.min(1.0, norm));
+  }
+
+  private void setProminence(PointDocument pointDocument, WithTags feature) {
+    long qrankRaw = qrankIndex.getByWikidata(pointDocument.wikidata);
+    double ele = OsmTagUtils.parseFirstNumber(feature.getString("ele"));
+    boolean hasImage = pointDocument.image != null || pointDocument.wikimedia_commons != null;
+    boolean hasWebsite = pointDocument.website != null;
+    boolean hasWikidata = pointDocument.wikidata != null;
+
+    pointDocument.poiProminence = ProminenceCalculator.compute(
+        pointDocument.poiFeatureClass, ele, hasImage, hasWebsite, hasWikidata, qrankRaw);
+  }
+
+  static float flooredProminence(Float prominence) {
+    return prominence == null ? (float) ProminenceCalculator.FLOOR : prominence;
+  }
+
+  static boolean isPlainTrailIcon(String poiIcon) {
+    return "icon-hike".equals(poiIcon)
+        || "icon-bike".equals(poiIcon)
+        || "icon-four-by-four".equals(poiIcon);
   }
 
   private void setDifficulty(PointDocument pointDocument, WithTags feature) {
@@ -496,9 +552,7 @@ public class PlanetSearchProfile implements Profile {
         pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
         insertPointToElasticsearch(pointDocument, "OSM_way_" + mergedFeature.minId);
 
-        if (pointDocument.poiIcon == "icon-hike" ||
-            pointDocument.poiIcon == "icon-bike" ||
-            pointDocument.poiIcon == "icon-four-by-four") {
+        if (isPlainTrailIcon(pointDocument.poiIcon)) {
           continue;
         }
         // This is a highway with a name, but it's not just a highway as it has a
@@ -605,19 +659,7 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.poiIcon = "icon-wikipedia-w";
       pointDocument.poiCategory = "Wikipedia";
     }
-    for (String language : this.context.supportedLanguages()) {
-      CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language));
-      CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language));
-    }
-    if (feature.hasTag("name")) {
-      CoalesceIntoMap(pointDocument.name, "default", feature.getString("name"));
-    }
-    if (feature.hasTag("description")) {
-      CoalesceIntoMap(pointDocument.description, "default", feature.getString("description"));
-    }
-    pointDocument.wikidata = feature.getString("wikidata");
-    pointDocument.image = feature.getString("image");
-    pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+    convertTagsToDocument(pointDocument, feature);
     pointDocument.poiSource = "OSM";
     var docId = sourceFeatureToDocumentId(feature);
     var point = feature.canBePolygon() ? (Point) feature.centroidIfConvex()
@@ -628,6 +670,7 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
+    pointDocument.poiProminence = flooredProminence(pointDocument.poiProminence);
     try {
       this.context.esClient().index(i -> i
           .index(this.context.pointsIndexTarget())

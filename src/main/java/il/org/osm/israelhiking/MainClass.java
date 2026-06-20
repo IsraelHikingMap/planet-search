@@ -3,8 +3,6 @@ package il.org.osm.israelhiking;
 import com.onthegomap.planetiler.Planetiler;
 import com.onthegomap.planetiler.config.Arguments;
 
-import co.elastic.clients.elasticsearch.inference.ElserServiceSettings;
-
 import java.nio.file.Path;
 
 /**
@@ -37,9 +35,12 @@ public class MainClass {
                     "bbox");
             var supportedLanguages = args.getString("languages", "Languages to support", "en,he,ru,ar,es").split(",");
             var externalFilePath = args.getString("external-file-path", "External file path", "");
+            var qrankPath = args.getString("qrank-path",
+                    "Path to qrank.csv.gz for the prominence signal (empty to run without QRank)", "");
+            var qrankIndex = QRankIndex.load(qrankPath.isEmpty() ? null : Path.of(qrankPath));
             var context = ElasticsearchHelper.initRun(esClient, pointsIndexAlias, bboxIndexAlias,
                     supportedLanguages);
-            var profile = new PlanetSearchProfile(planetiler.config(), context);
+            var profile = new PlanetSearchProfile(planetiler.config(), context, qrankIndex);
 
             String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
             planetiler.setProfile(profile);
