@@ -925,6 +925,13 @@ public class PlanetSearchProfile implements Profile {
           pointDocument.poiIcon = "icon-waterhole";
           pointDocument.poiCategory = "Water";
           return;
+        case "peak":
+        case "volcano":
+        case "ridge":
+          pointDocument.poiIconColor = "black";
+          pointDocument.poiIcon = "icon-peak";
+          pointDocument.poiCategory = "Natural";
+          return;
       }
     }
 
@@ -1000,13 +1007,6 @@ public class PlanetSearchProfile implements Profile {
           pointDocument.poiCategory = "Camping";
           return;
       }
-    }
-
-    if ("peak".equals(feature.getString("natural"))) {
-      pointDocument.poiIconColor = "black";
-      pointDocument.poiIcon = "icon-peak";
-      pointDocument.poiCategory = "Natural";
-      return;
     }
 
     if (feature.getString("highway") != null) {
