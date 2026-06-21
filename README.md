@@ -16,6 +16,7 @@ Additional arguments to this wrapper besides the Planetiler's arguments:
 | `es-points-index-alias` | The alias of the index to insert points into, it will create "1" and "2" suffix for the relevant index before switching | `points` |
 | `es-bbox-index-alias` | The alias of the index to insert bounding boxes into, it will create "1" and "2" suffix for the relevant index before switching | `bbox` |
 | `external-file-path` | External geojson file path to allow adding non OSM features to the search and POIs. these features should have a specific format | "empty" |
+| `skip-tiles` | Collapse the tile pyramid to z0 so the `.pmtiles` archive is a near-instant stub, to speed up an Elasticsearch-only reindex. The search index is built identically; only the map tiles degrade, so do not use it for a build whose map tiles are consumed. | `false` |
 
 To run using docker (While having a local elasticsearch running at 9200):
 
