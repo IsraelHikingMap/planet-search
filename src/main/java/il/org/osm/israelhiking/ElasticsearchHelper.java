@@ -28,7 +28,17 @@ public class ElasticsearchHelper {
       String[] supportedLanguages,
       BulkIngester<Void> bulkIngester,
       AccountingBulkListener bulkListener,
-      IndexingStats stats) {
+      IndexingStats stats) implements AutoCloseable {
+
+    @Override
+    public void close() {
+      try {
+        bulkIngester.close();
+      } catch (Exception e) {
+        LOGGER.warning("Bulk ingester close failed during abort: " + e.getMessage());
+      }
+      bulkListener.awaitRetries();
+    }
   }
 
   /**
@@ -184,15 +194,5 @@ public class ElasticsearchHelper {
 
     ElasticsearchHelper.switchAlias(context.esClient, context.pointsIndexAlias(), context.pointsIndexTarget());
     ElasticsearchHelper.switchAlias(context.esClient, context.bboxIndexAlias(), context.bboxIndexTarget());
-  }
-
-  // Releases ingester and retry executor without swapping aliases; safe in a finally after a failed run.
-  public static void abortRun(ElasticRunContext context) {
-    try {
-      context.bulkIngester().close();
-    } catch (Exception e) {
-      LOGGER.warning("Bulk ingester close failed during abort: " + e.getMessage());
-    }
-    context.bulkListener().awaitRetries();
   }
 }

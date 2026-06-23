@@ -31,21 +31,38 @@ final class AccountingBulkListener implements BulkListener<Void> {
   private static final Logger LOGGER = Logger.getLogger(PlanetSearchProfile.class.getName());
 
   static final int MAX_RETRY_ATTEMPTS = 5;
-  static long BASE_BACKOFF_MILLIS = 1_000L;
-  static long MAX_BACKOFF_MILLIS = 16_000L;
+  static final long DEFAULT_BASE_BACKOFF_MILLIS = 1_000L;
+  static final long DEFAULT_MAX_BACKOFF_MILLIS = 16_000L;
 
   static final int RETRY_POOL_SIZE = 4;
-  static final long RETRY_DRAIN_TIMEOUT_MINUTES = 30;
+  static final long DEFAULT_DRAIN_TIMEOUT_MILLIS = 30 * 60 * 1_000L;
 
   private final ElasticsearchClient esClient;
   private final LongAdder indexedCount;
   private final LongAdder failedCount;
   private final ExecutorService retryExecutor;
+  private final long baseBackoffMillis;
+  private final long maxBackoffMillis;
+  private final long drainTimeoutMillis;
 
   AccountingBulkListener(ElasticsearchClient esClient, IndexingStats stats) {
+    this(esClient, stats, DEFAULT_BASE_BACKOFF_MILLIS, DEFAULT_MAX_BACKOFF_MILLIS,
+        DEFAULT_DRAIN_TIMEOUT_MILLIS);
+  }
+
+  AccountingBulkListener(ElasticsearchClient esClient, IndexingStats stats,
+      long baseBackoffMillis, long maxBackoffMillis) {
+    this(esClient, stats, baseBackoffMillis, maxBackoffMillis, DEFAULT_DRAIN_TIMEOUT_MILLIS);
+  }
+
+  AccountingBulkListener(ElasticsearchClient esClient, IndexingStats stats,
+      long baseBackoffMillis, long maxBackoffMillis, long drainTimeoutMillis) {
     this.esClient = esClient;
     this.indexedCount = stats.indexedCount;
     this.failedCount = stats.failedCount;
+    this.baseBackoffMillis = baseBackoffMillis;
+    this.maxBackoffMillis = maxBackoffMillis;
+    this.drainTimeoutMillis = drainTimeoutMillis;
     this.retryExecutor = Executors.newFixedThreadPool(RETRY_POOL_SIZE, r -> {
       Thread t = new Thread(r, "es-bulk-retry");
       t.setDaemon(true);
@@ -84,11 +101,26 @@ final class AccountingBulkListener implements BulkListener<Void> {
     }
   }
 
+  private final class RetryTask implements Runnable {
+    private final long executionId;
+    private final List<BulkOperation> batch;
+
+    RetryTask(long executionId, List<BulkOperation> batch) {
+      this.executionId = executionId;
+      this.batch = batch;
+    }
+
+    @Override
+    public void run() {
+      resubmitWithBackoff(executionId, batch);
+    }
+  }
+
   // Retries run off the ingester scheduler thread so backoff can't head-of-line-block ingest.
   private void offloadRetry(long executionId, List<BulkOperation> operations) {
     List<BulkOperation> batch = new ArrayList<>(operations);
     try {
-      retryExecutor.submit(() -> resubmitWithBackoff(executionId, batch));
+      retryExecutor.execute(new RetryTask(executionId, batch));
     } catch (RejectedExecutionException ree) {
       LOGGER.severe(() -> "Retry pool already shut down for bulk request " + executionId
           + "; counting " + batch.size() + " op(s) as failed.");
@@ -100,22 +132,28 @@ final class AccountingBulkListener implements BulkListener<Void> {
   void awaitRetries() {
     retryExecutor.shutdown();
     try {
-      if (!retryExecutor.awaitTermination(RETRY_DRAIN_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
-        LOGGER.severe("Bulk retries did not drain within " + RETRY_DRAIN_TIMEOUT_MINUTES
-            + " min; forcing shutdown — some re-indexed docs may not have landed before the alias swap.");
-        retryExecutor.shutdownNow();
+      if (!retryExecutor.awaitTermination(drainTimeoutMillis, TimeUnit.MILLISECONDS)) {
+        LOGGER.severe("Bulk retries did not drain within " + drainTimeoutMillis
+            + " ms; forcing shutdown — some re-indexed docs may not have landed before the alias swap.");
+        chargeDropped(retryExecutor.shutdownNow());
       }
     } catch (InterruptedException ie) {
       Thread.currentThread().interrupt();
-      retryExecutor.shutdownNow();
+      chargeDropped(retryExecutor.shutdownNow());
     }
+  }
+
+  private void chargeDropped(List<Runnable> dropped) {
+    dropped.stream()
+        .filter(RetryTask.class::isInstance)
+        .forEach(r -> ((RetryTask) r).batch.forEach(op -> failedCount.increment()));
   }
 
   private void resubmitWithBackoff(long executionId, List<BulkOperation> operations) {
     List<BulkOperation> pending = new ArrayList<>(operations);
     for (int attemptNo = 1; attemptNo <= MAX_RETRY_ATTEMPTS && !pending.isEmpty(); attemptNo++) {
       try {
-        Thread.sleep(backoffMillis(attemptNo));
+        Thread.sleep(backoffMillis(attemptNo, baseBackoffMillis, maxBackoffMillis));
       } catch (InterruptedException ie) {
         Thread.currentThread().interrupt();
         LOGGER.warning("Retry interrupted; charging remaining " + pending.size()
@@ -172,9 +210,9 @@ final class AccountingBulkListener implements BulkListener<Void> {
     return retryable;
   }
 
-  static long backoffMillis(int attempt) {
-    long exp = BASE_BACKOFF_MILLIS << (attempt - 1);
-    long capped = Math.min(exp, MAX_BACKOFF_MILLIS);
+  static long backoffMillis(int attempt, long baseBackoffMillis, long maxBackoffMillis) {
+    long exp = baseBackoffMillis << (attempt - 1);
+    long capped = Math.min(exp, maxBackoffMillis);
     long half = capped / 2;
     return half + ThreadLocalRandom.current().nextLong(half + 1);
   }

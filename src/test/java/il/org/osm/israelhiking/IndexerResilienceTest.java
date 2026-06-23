@@ -20,8 +20,8 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -42,23 +42,9 @@ class IndexerResilienceTest {
 
     private IndexingStats stats;
 
-    private long origBase;
-    private long origMax;
-
     @BeforeEach
     void setUp() {
         stats = new IndexingStats();
-        // Zero the backoff so the retry loop runs instantly.
-        origBase = AccountingBulkListener.BASE_BACKOFF_MILLIS;
-        origMax = AccountingBulkListener.MAX_BACKOFF_MILLIS;
-        AccountingBulkListener.BASE_BACKOFF_MILLIS = 0L;
-        AccountingBulkListener.MAX_BACKOFF_MILLIS = 0L;
-    }
-
-    @AfterEach
-    void tearDown() {
-        AccountingBulkListener.BASE_BACKOFF_MILLIS = origBase;
-        AccountingBulkListener.MAX_BACKOFF_MILLIS = origMax;
     }
 
     private long indexed() {
@@ -95,7 +81,7 @@ class IndexerResilienceTest {
     }
 
     private AccountingBulkListener driveRetryViaAfterBulk(ElasticsearchClient client, int opCount, Throwable wholeBatchFailure) {
-        AccountingBulkListener listener = new AccountingBulkListener(client, stats);
+        AccountingBulkListener listener = new AccountingBulkListener(client, stats, 0L, 0L);
         listener.afterBulk(1L, requestOf(operations(opCount)), List.of(), wholeBatchFailure);
         listener.awaitRetries();
         return listener;
@@ -165,28 +151,18 @@ class IndexerResilienceTest {
 
     @Test
     void backoff_isExponentialBoundedAndCapped() {
-        // backoffMillis reads the (here zeroed) tuning constants, so set production values.
-        long savedBase = AccountingBulkListener.BASE_BACKOFF_MILLIS;
-        long savedMax = AccountingBulkListener.MAX_BACKOFF_MILLIS;
-        AccountingBulkListener.BASE_BACKOFF_MILLIS = 1_000L;
-        AccountingBulkListener.MAX_BACKOFF_MILLIS = 16_000L;
-        try {
-            assertWithinJitter(1, 1_000);
-            assertWithinJitter(2, 2_000);
-            assertWithinJitter(3, 4_000);
-            assertWithinJitter(4, 8_000);
-            assertWithinJitter(5, 16_000);
-            assertWithinJitter(6, 16_000);
-            assertWithinJitter(10, 16_000);
-        } finally {
-            AccountingBulkListener.BASE_BACKOFF_MILLIS = savedBase;
-            AccountingBulkListener.MAX_BACKOFF_MILLIS = savedMax;
-        }
+        assertWithinJitter(1, 1_000);
+        assertWithinJitter(2, 2_000);
+        assertWithinJitter(3, 4_000);
+        assertWithinJitter(4, 8_000);
+        assertWithinJitter(5, 16_000);
+        assertWithinJitter(6, 16_000);
+        assertWithinJitter(10, 16_000);
     }
 
     private static void assertWithinJitter(int attempt, long cap) {
         for (int i = 0; i < 200; i++) {
-            long b = AccountingBulkListener.backoffMillis(attempt);
+            long b = AccountingBulkListener.backoffMillis(attempt, 1_000L, 16_000L);
             assertTrue(b >= cap / 2 && b <= cap,
                     "attempt " + attempt + " backoff " + b + " out of [" + (cap / 2) + "," + cap + "]");
         }
@@ -310,7 +286,7 @@ class IndexerResilienceTest {
                 item("op-0", 200, false),
                 item("op-1", 200, false))));
         ElasticsearchClient client = mockClient(shortOk, successResponse(1));
-        AccountingBulkListener listener = new AccountingBulkListener(client, stats);
+        AccountingBulkListener listener = new AccountingBulkListener(client, stats, 0L, 0L);
 
         listener.afterBulk(1L, requestOf(operations(3)), List.of(), shortOk);
         listener.awaitRetries();
@@ -327,7 +303,7 @@ class IndexerResilienceTest {
                 item("op-0", 200, false),
                 item("op-1", 503, true))));
         ElasticsearchClient client = mockClient(successResponse(1));
-        AccountingBulkListener listener = new AccountingBulkListener(client, stats);
+        AccountingBulkListener listener = new AccountingBulkListener(client, stats, 0L, 0L);
 
         listener.afterBulk(1L, requestOf(operations(2)), List.of(), first);
         listener.awaitRetries();
@@ -383,5 +359,39 @@ class IndexerResilienceTest {
 
     private static co.elastic.clients.elasticsearch.core.BulkRequest requestOf(List<BulkOperation> ops) {
         return co.elastic.clients.elasticsearch.core.BulkRequest.of(b -> b.operations(ops));
+    }
+
+    @Test
+    void drainTimeout_forcedShutdown_chargesEveryRetryOpAsFailed() throws InterruptedException {
+        CountDownLatch release = new CountDownLatch(1);
+        ElasticsearchClient blocking = mock(ElasticsearchClient.class);
+        try {
+            when(blocking.bulk(any(BulkRequest.class))).thenAnswer(inv -> {
+                release.await();
+                return successResponse(1);
+            });
+        } catch (IOException impossible) {
+            throw new AssertionError(impossible);
+        }
+
+        AccountingBulkListener listener = new AccountingBulkListener(blocking, stats, 0L, 0L, 0L);
+        int queuedBatches = 2;
+        int batches = AccountingBulkListener.RETRY_POOL_SIZE + queuedBatches;
+        for (int i = 0; i < batches; i++) {
+            listener.afterBulk(i, requestOf(operations(2)), List.of(), new SocketTimeoutException("timeout"));
+        }
+
+        listener.awaitRetries();
+        assertTrue(failed() >= 2L * queuedBatches,
+                "chargeDropped must charge the queued-never-started batches synchronously on forced shutdown");
+        release.countDown();
+
+        long total = 2L * batches;
+        for (int i = 0; i < 500 && failed() < total; i++) {
+            Thread.sleep(5);
+        }
+        assertEquals(total, failed(),
+                "every retry op — dropped-queued and interrupted-running — is charged failed; none vanish");
+        assertEquals(0, indexed());
     }
 }

@@ -640,7 +640,7 @@ public class PlanetSearchProfile implements Profile {
             .document(pointDocument))), docId);
   }
 
-  private void addToIngester(BulkOperation operation, String docId) {
+  void addToIngester(BulkOperation operation, String docId) {
     try {
       this.context.bulkIngester().add(operation);
       this.context.stats().emittedCount.increment();
@@ -651,16 +651,12 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void insertBboxToElasticsearch(SourceFeature feature, String[] supportedLanguages) {
-    Geometry polygon;
+    String bboxDocId = "<unknown>";
     try {
-      polygon = GeoUtils.worldToLatLonCoords(feature.polygon());
-    } catch (GeometryException e) {
-      return;
-    }
-    BBoxDocument bbox;
-    String bboxDocId;
-    try {
-      bbox = new BBoxDocument();
+      bboxDocId = sourceFeatureToDocumentId(feature);
+      final String docId = bboxDocId;
+      Geometry polygon = GeoUtils.worldToLatLonCoords(feature.polygon());
+      BBoxDocument bbox = new BBoxDocument();
       bbox.area = feature.areaMeters();
       var lngLatCenterPoint = GeoUtils.worldToLatLonCoords(feature.centroid()).getCoordinate();
       bbox.center = new double[] { lngLatCenterPoint.getX(), lngLatCenterPoint.getY() };
@@ -671,17 +667,16 @@ public class PlanetSearchProfile implements Profile {
       if (feature.hasTag("name")) {
         CoalesceIntoMap(bbox.name, "default", feature.getString("name"));
       }
-      bboxDocId = sourceFeatureToDocumentId(feature);
+      addToIngester(BulkOperation.of(op -> op
+          .index(idx -> idx
+              .index(this.context.bboxIndexTarget())
+              .id(docId)
+              .document(bbox))), docId);
     } catch (Exception e) {
-      LOGGER.warning(() -> "Failed to build bbox document: " + e.getMessage());
-      return;
+      this.context.stats().failedCount.increment();
+      final String failedId = bboxDocId;
+      LOGGER.warning(() -> "Failed to build bbox document " + failedId + ": " + e.getMessage());
     }
-    final BBoxDocument document = bbox;
-    addToIngester(BulkOperation.of(op -> op
-        .index(idx -> idx
-            .index(this.context.bboxIndexTarget())
-            .id(bboxDocId)
-            .document(document))), bboxDocId);
   }
 
   /**
