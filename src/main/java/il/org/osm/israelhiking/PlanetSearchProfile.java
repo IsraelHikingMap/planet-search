@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.math.NumberUtils;
@@ -30,6 +31,8 @@ import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 import il.org.osm.israelhiking.ElasticsearchHelper.ElasticRunContext;
 
 public class PlanetSearchProfile implements Profile {
+  private static final Logger LOGGER = Logger.getLogger(PlanetSearchProfile.class.getName());
+
   private PlanetilerConfig config;
   private ElasticRunContext context;
 
@@ -95,6 +98,34 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.image = feature.getString("image");
     pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
     pointDocument.website = feature.getString("website");
+    pointDocument.poiFeatureClass = OsmTagUtils.classifyFeatureClass(feature::getString);
+    pointDocument.alt_names = OsmTagUtils.buildAltNames(this.context.supportedLanguages(), feature::getString);
+    pointDocument.population = OsmTagUtils.computePopulation(
+        feature.getString("place"), feature.getString("population"));
+    setEnrichmentSignals(pointDocument, feature);
+  }
+
+  private void setEnrichmentSignals(PointDocument pointDocument, WithTags feature) {
+    if (feature instanceof SourceFeature sf && sf.canBePolygon()) {
+      try {
+        pointDocument.poiAreaNormalized = normalizeArea(sf.areaMeters());
+      } catch (Exception e) {
+        // Unbuildable polygons are common here; never fail the build over one.
+        LOGGER.fine(() -> "poiAreaNormalized skipped for " + sourceFeatureToDocumentId(sf)
+            + " (" + e.getClass().getSimpleName() + ": " + e.getMessage() + ")");
+      }
+    }
+    if (feature.hasTag("intermittent", "yes")) {
+      pointDocument.intermittent = Boolean.TRUE;
+    }
+  }
+
+  static float normalizeArea(double areaM) {
+    if (Double.isNaN(areaM) || areaM <= 0) {
+      return 0f;
+    }
+    double norm = Math.log1p(areaM) / Math.log1p(1e11);
+    return (float) Math.max(0.0, Math.min(1.0, norm));
   }
 
   private void setDifficulty(PointDocument pointDocument, WithTags feature) {
