@@ -32,10 +32,12 @@ public class ElasticsearchHelper {
 
     @Override
     public void close() {
-      try {
-        bulkIngester.close();
-      } catch (Exception e) {
-        LOGGER.warning("Bulk ingester close failed during abort: " + e.getMessage());
+      if (bulkListener.tryClaimIngesterClose()) {
+        try {
+          bulkIngester.close();
+        } catch (Exception e) {
+          LOGGER.warning("Bulk ingester close failed during abort: " + e.getMessage());
+        }
       }
       bulkListener.awaitRetries();
     }
@@ -185,7 +187,9 @@ public class ElasticsearchHelper {
 
   public static void finalizeRun(ElasticRunContext context) throws Exception {
     context.bulkIngester().flush();
-    context.bulkIngester().close();
+    if (context.bulkListener().tryClaimIngesterClose()) {
+      context.bulkIngester().close();
+    }
     context.bulkListener().awaitRetries();
 
     var stats = context.stats();

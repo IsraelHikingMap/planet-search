@@ -2,11 +2,14 @@ package il.org.osm.israelhiking;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -82,6 +85,7 @@ class DefensiveCatchCoverageTest {
         doThrow(new IllegalStateException("close failed")).when(ingester).close();
 
         AccountingBulkListener listener = mock(AccountingBulkListener.class);
+        when(listener.tryClaimIngesterClose()).thenReturn(true);
 
         ElasticRunContext context = new ElasticRunContext(
                 null, "points", "bbox", "points1", "bbox1",
@@ -92,6 +96,23 @@ class DefensiveCatchCoverageTest {
 
         verify(ingester).close();
         verify(listener).awaitRetries();
+    }
+
+    @Test
+    void finalizeThenAutoClose_doesNotCloseIngesterTwice() {
+        @SuppressWarnings("unchecked")
+        BulkIngester<Void> ingester = mock(BulkIngester.class);
+        AccountingBulkListener listener = new AccountingBulkListener(null, stats);
+
+        ElasticRunContext context = new ElasticRunContext(
+                null, "points", "bbox", "points1", "bbox1",
+                new String[] { "he" }, ingester, listener, stats);
+
+        assertTrue(listener.tryClaimIngesterClose(), "finalizeRun claims the close first");
+        context.close();
+
+        assertFalse(listener.tryClaimIngesterClose(), "the claim is one-shot across finalizeRun + close()");
+        verify(ingester, times(0)).close();
     }
 
     private boolean loggedAtLeast(Level level, String substring) {

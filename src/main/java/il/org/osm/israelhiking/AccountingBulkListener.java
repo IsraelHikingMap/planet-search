@@ -13,6 +13,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.logging.Logger;
 
@@ -28,7 +29,7 @@ import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
 
 final class AccountingBulkListener implements BulkListener<Void> {
-  private static final Logger LOGGER = Logger.getLogger(PlanetSearchProfile.class.getName());
+  private static final Logger LOGGER = Logger.getLogger(AccountingBulkListener.class.getName());
 
   static final int MAX_RETRY_ATTEMPTS = 5;
   static final long DEFAULT_BASE_BACKOFF_MILLIS = 1_000L;
@@ -44,6 +45,8 @@ final class AccountingBulkListener implements BulkListener<Void> {
   private final long baseBackoffMillis;
   private final long maxBackoffMillis;
   private final long drainTimeoutMillis;
+  private final AtomicBoolean drained = new AtomicBoolean(false);
+  private final AtomicBoolean ingesterClosed = new AtomicBoolean(false);
 
   AccountingBulkListener(ElasticsearchClient esClient, IndexingStats stats) {
     this(esClient, stats, DEFAULT_BASE_BACKOFF_MILLIS, DEFAULT_MAX_BACKOFF_MILLIS,
@@ -76,11 +79,12 @@ final class AccountingBulkListener implements BulkListener<Void> {
 
   @Override
   public void afterBulk(long executionId, BulkRequest request, List<Void> contexts, BulkResponse response) {
-    if (!response.errors() && response.items().size() == request.operations().size()) {
-      indexedCount.add(response.items().size());
+    List<BulkResponseItem> items = response.items() == null ? List.of() : response.items();
+    if (!response.errors() && items.size() == request.operations().size()) {
+      indexedCount.add(items.size());
       return;
     }
-    List<BulkOperation> retryable = classifyAndCount(request.operations(), response);
+    List<BulkOperation> retryable = classifyAndCount(request.operations(), items);
     if (!retryable.isEmpty()) {
       LOGGER.warning(() -> "Bulk request " + executionId + " had " + retryable.size()
           + " retryable per-item failure(s); resubmitting with backoff.");
@@ -130,6 +134,9 @@ final class AccountingBulkListener implements BulkListener<Void> {
 
   // Must drain before the alias swap, else in-flight retry docs race the swap.
   void awaitRetries() {
+    if (!drained.compareAndSet(false, true)) {
+      return;
+    }
     retryExecutor.shutdown();
     try {
       if (!retryExecutor.awaitTermination(drainTimeoutMillis, TimeUnit.MILLISECONDS)) {
@@ -141,6 +148,10 @@ final class AccountingBulkListener implements BulkListener<Void> {
       Thread.currentThread().interrupt();
       chargeDropped(retryExecutor.shutdownNow());
     }
+  }
+
+  boolean tryClaimIngesterClose() {
+    return ingesterClosed.compareAndSet(false, true);
   }
 
   private void chargeDropped(List<Runnable> dropped) {
@@ -162,7 +173,8 @@ final class AccountingBulkListener implements BulkListener<Void> {
       }
       final List<BulkOperation> batch = pending;
       try {
-        pending = classifyAndCount(batch, esClient.bulk(BulkRequest.of(b -> b.operations(batch))));
+        BulkResponse response = esClient.bulk(BulkRequest.of(b -> b.operations(batch)));
+        pending = classifyAndCount(batch, response.items() == null ? List.of() : response.items());
         if (pending.isEmpty()) {
           final int n = batch.size();
           final int a = attemptNo;
@@ -191,9 +203,8 @@ final class AccountingBulkListener implements BulkListener<Void> {
     }
   }
 
-  private List<BulkOperation> classifyAndCount(List<BulkOperation> operations, BulkResponse response) {
+  private List<BulkOperation> classifyAndCount(List<BulkOperation> operations, List<BulkResponseItem> items) {
     List<BulkOperation> retryable = new ArrayList<>();
-    List<BulkResponseItem> items = response.items();
     for (int i = 0; i < operations.size(); i++) {
       BulkResponseItem item = i < items.size() ? items.get(i) : null;
       // null: op missing from a short response, retry so it can't vanish from accounting.

@@ -34,7 +34,7 @@ class BulkIngesterAccountingTest {
     private LongAdder failedCount;
     private AccountingBulkListener listener;
 
-    private Logger profileLogger;
+    private Logger listenerLogger;
     private RecordingHandler handler;
     private Level previousLevel;
 
@@ -45,17 +45,17 @@ class BulkIngesterAccountingTest {
         failedCount = stats.failedCount;
         listener = new AccountingBulkListener(null, stats);
 
-        profileLogger = Logger.getLogger(PlanetSearchProfile.class.getName());
-        previousLevel = profileLogger.getLevel();
-        profileLogger.setLevel(Level.ALL);
+        listenerLogger = Logger.getLogger(AccountingBulkListener.class.getName());
+        previousLevel = listenerLogger.getLevel();
+        listenerLogger.setLevel(Level.ALL);
         handler = new RecordingHandler();
-        profileLogger.addHandler(handler);
+        listenerLogger.addHandler(handler);
     }
 
     @AfterEach
     void tearDown() {
-        profileLogger.removeHandler(handler);
-        profileLogger.setLevel(previousLevel);
+        listenerLogger.removeHandler(handler);
+        listenerLogger.setLevel(previousLevel);
     }
 
     @Test
