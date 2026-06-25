@@ -35,6 +35,7 @@ public class PlanetSearchProfile implements Profile {
 
   private PlanetilerConfig config;
   private ElasticRunContext context;
+  private final QRankIndex qrankIndex;
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
@@ -42,9 +43,10 @@ public class PlanetSearchProfile implements Profile {
   private static final Map<String, MinWayIdFinder> NamedHighways = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> Waterways = new ConcurrentHashMap<>();
 
-  public PlanetSearchProfile(PlanetilerConfig config, ElasticRunContext context) {
+  public PlanetSearchProfile(PlanetilerConfig config, ElasticRunContext context, QRankIndex qrankIndex) {
     this.config = config;
     this.context = context;
+    this.qrankIndex = qrankIndex;
   }
 
   /*
@@ -103,6 +105,8 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.population = OsmTagUtils.computePopulation(
         feature.getString("place"), feature.getString("population"));
     setEnrichmentSignals(pointDocument, feature);
+    // Must run after wikidata/image/website are set above.
+    setProminence(pointDocument, feature);
   }
 
   private void setEnrichmentSignals(PointDocument pointDocument, WithTags feature) {
@@ -126,6 +130,21 @@ public class PlanetSearchProfile implements Profile {
     }
     double norm = Math.log1p(areaM) / Math.log1p(1e11);
     return (float) Math.max(0.0, Math.min(1.0, norm));
+  }
+
+  private void setProminence(PointDocument pointDocument, WithTags feature) {
+    long qrankRaw = qrankIndex.getByWikidata(pointDocument.wikidata);
+    double ele = OsmTagUtils.parseFirstNumber(feature.getString("ele"));
+    boolean hasImage = pointDocument.image != null || pointDocument.wikimedia_commons != null;
+    boolean hasWebsite = pointDocument.website != null;
+    boolean hasWikidata = pointDocument.wikidata != null;
+
+    pointDocument.poiProminence = ProminenceCalculator.compute(
+        pointDocument.poiFeatureClass, ele, hasImage, hasWebsite, hasWikidata, qrankRaw);
+  }
+
+  static float flooredProminence(Float prominence) {
+    return prominence == null ? (float) ProminenceCalculator.FLOOR : prominence;
   }
 
   private void setDifficulty(PointDocument pointDocument, WithTags feature) {
@@ -659,6 +678,7 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
+    pointDocument.poiProminence = flooredProminence(pointDocument.poiProminence);
     try {
       this.context.esClient().index(i -> i
           .index(this.context.pointsIndexTarget())
