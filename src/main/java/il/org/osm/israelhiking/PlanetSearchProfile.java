@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.LongAdder;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.math.NumberUtils;
@@ -27,11 +29,35 @@ import com.onthegomap.planetiler.reader.WithTags;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
+import co.elastic.clients.elasticsearch._helpers.bulk.BulkIngester;
+import co.elastic.clients.elasticsearch._helpers.bulk.BulkListener;
+import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
+
 import il.org.osm.israelhiking.ElasticsearchHelper.ElasticRunContext;
 
 public class PlanetSearchProfile implements Profile {
+  private static final Logger LOGGER = Logger.getLogger(PlanetSearchProfile.class.getName());
+
   private PlanetilerConfig config;
   private ElasticRunContext context;
+
+  // Bulk indexer: thread-safe, buffers operations and flushes them in batches.
+  // Planetiler emits features from multiple worker threads, so BulkIngester
+  // (which handles concurrent add() internally) is the right tool rather than
+  // manually batching BulkRequests with our own locking.
+  private final BulkIngester<Void> bulkIngester;
+  // Emitted/attempted docs: incremented once per bulkIngester.add(...). Lets us
+  // assert the lossless invariant emitted == indexed + failed after flush() so a
+  // doc that was emitted but never made it into any bulk batch is detectable.
+  private final LongAdder emittedCount = new LongAdder();
+  // Counters so indexing is observable instead of failing silently. Failures are
+  // split by destination index so we can fail the build on the ones that cause
+  // missing SEARCH results (points) while only warning on bbox geo_shape rejects
+  // (a few degenerate OSM relation geometries ES can't parse; they don't affect
+  // name search).
+  private final LongAdder indexedCount = new LongAdder();
+  private final LongAdder failedPointsCount = new LongAdder();
+  private final LongAdder failedBboxCount = new LongAdder();
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
@@ -42,6 +68,98 @@ public class PlanetSearchProfile implements Profile {
   public PlanetSearchProfile(PlanetilerConfig config, ElasticRunContext context) {
     this.config = config;
     this.context = context;
+    this.bulkIngester = BulkIngester.of(b -> b
+        .client(context.esClient())
+        // Flush whenever any of these thresholds is hit.
+        .maxOperations(5_000)
+        .maxSize(5 * 1024 * 1024)
+        .maxConcurrentRequests(4)
+        // Listener gives us per-batch visibility instead of swallowing errors.
+        // Extracted into a named class (AccountingBulkListener) so the counting
+        // logic is directly unit-testable.
+        .listener(new AccountingBulkListener(
+            indexedCount, failedPointsCount, failedBboxCount, context.pointsIndexTarget())));
+  }
+
+  /**
+   * BulkListener that surfaces and counts every bulk outcome instead of
+   * swallowing errors. Extracted into a static class so the per-item
+   * classification (indexed vs failed) and the whole-batch failure path are
+   * unit-testable by driving {@code afterBulk} directly.
+   */
+  static final class AccountingBulkListener implements BulkListener<Void> {
+    private final LongAdder indexedCount;
+    private final LongAdder failedPointsCount;
+    private final LongAdder failedBboxCount;
+    private final String pointsIndexName;
+
+    AccountingBulkListener(LongAdder indexedCount, LongAdder failedPointsCount, LongAdder failedBboxCount,
+        String pointsIndexName) {
+      this.indexedCount = indexedCount;
+      this.failedPointsCount = failedPointsCount;
+      this.failedBboxCount = failedBboxCount;
+      this.pointsIndexName = pointsIndexName;
+    }
+
+    // A failed item destined for the points index means a missing SEARCH result
+    // (build-breaking); a failed bbox item is a geometry reject (warn-only).
+    private void recordFailure(String index) {
+      if (pointsIndexName != null && pointsIndexName.equals(index)) {
+        failedPointsCount.increment();
+      } else {
+        failedBboxCount.increment();
+      }
+    }
+
+    @Override
+    public void beforeBulk(long executionId, co.elastic.clients.elasticsearch.core.BulkRequest request,
+        List<Void> contexts) {
+      // no-op
+    }
+
+    @Override
+    public void afterBulk(long executionId, co.elastic.clients.elasticsearch.core.BulkRequest request,
+        List<Void> contexts, co.elastic.clients.elasticsearch.core.BulkResponse response) {
+      if (response.errors()) {
+        response.items().forEach(item -> {
+          if (item.error() != null) {
+            recordFailure(item.index());
+            LOGGER.warning(() -> "Failed to index id=" + item.id() + " into " + item.index()
+                + ": " + item.error().reason());
+          } else {
+            indexedCount.increment();
+          }
+        });
+      } else {
+        indexedCount.add(response.items().size());
+      }
+    }
+
+    @Override
+    public void afterBulk(long executionId, co.elastic.clients.elasticsearch.core.BulkRequest request,
+        List<Void> contexts, Throwable failure) {
+      // A whole-batch failure has no per-item index breakdown; classify each
+      // operation by the index it targeted so points failures still break the build.
+      request.operations().forEach(op -> recordFailure(bulkOperationIndex(op)));
+      LOGGER.severe(() -> "Bulk request " + executionId + " failed entirely: " + failure.getMessage());
+    }
+
+    // Best-effort extraction of the destination index from a bulk operation
+    // (index/create/update/delete variants). Null when it can't be determined,
+    // which recordFailure treats as non-points (bbox) — the conservative choice
+    // for the warn-only bucket.
+    private static String bulkOperationIndex(co.elastic.clients.elasticsearch.core.bulk.BulkOperation op) {
+      if (op.isIndex()) {
+        return op.index().index();
+      } else if (op.isCreate()) {
+        return op.create().index();
+      } else if (op.isUpdate()) {
+        return op.update().index();
+      } else if (op.isDelete()) {
+        return op.delete().index();
+      }
+      return null;
+    }
   }
 
   /*
@@ -642,14 +760,12 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
-    try {
-      this.context.esClient().index(i -> i
-          .index(this.context.pointsIndexTarget())
-          .id(docId)
-          .document(pointDocument));
-    } catch (Exception e) {
-      // swallow
-    }
+    emittedCount.increment();
+    bulkIngester.add(BulkOperation.of(op -> op
+        .index(idx -> idx
+            .index(this.context.pointsIndexTarget())
+            .id(docId)
+            .document(pointDocument))));
   }
 
   private void insertBboxToElasticsearch(SourceFeature feature, String[] supportedLanguages) {
@@ -671,13 +787,56 @@ public class PlanetSearchProfile implements Profile {
       if (feature.hasTag("name")) {
         CoalesceIntoMap(bbox.name, "default", feature.getString("name"));
       }
-      this.context.esClient().index(i -> i
-          .index(this.context.bboxIndexTarget())
-          .id(sourceFeatureToDocumentId(feature))
-          .document(bbox));
+      String bboxDocId = sourceFeatureToDocumentId(feature);
+      emittedCount.increment();
+      bulkIngester.add(BulkOperation.of(op -> op
+          .index(idx -> idx
+              .index(this.context.bboxIndexTarget())
+              .id(bboxDocId)
+              .document(bbox))));
     } catch (Exception e) {
-      // swallow
+      // Only geometry/serialization building can throw here now; the actual
+      // indexing is handled (and its errors counted) by the bulk listener.
+      LOGGER.warning(() -> "Failed to build bbox document for "
+          + sourceFeatureToDocumentId(feature) + ": " + e.getMessage());
     }
+  }
+
+  public long getEmittedCount() {
+    return emittedCount.sum();
+  }
+
+  public long getIndexedCount() {
+    return indexedCount.sum();
+  }
+
+  /** Total failed documents across all indices (points + bbox). Keeps the
+   *  lossless invariant emitted == indexed + failed. */
+  public long getFailedCount() {
+    return failedPointsCount.sum() + failedBboxCount.sum();
+  }
+
+  /** Failed documents destined for the points index — these are missing SEARCH
+   *  results and must break the build. */
+  public long getFailedPointsCount() {
+    return failedPointsCount.sum();
+  }
+
+  /** Failed bbox documents (geo_shape rejects on degenerate OSM geometries) —
+   *  warn-only; they don't affect name search. */
+  public long getFailedBboxCount() {
+    return failedBboxCount.sum();
+  }
+
+  /**
+   * True when this run dropped at least one POINTS document: a partial points
+   * index causes missing search results, which CI must treat as a failure rather
+   * than mistake for success. bbox geo_shape rejects are warned-but-tolerated and
+   * deliberately do NOT trip this. Kept as a small pure predicate so the
+   * fail-the-build decision is unit-testable without calling {@code System.exit}.
+   */
+  public boolean hasIndexingFailures() {
+    return failedPointsCount.sum() > 0;
   }
 
   /**
