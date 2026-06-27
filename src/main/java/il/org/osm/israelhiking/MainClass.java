@@ -43,8 +43,7 @@ public class MainClass {
         Planetiler planetiler = Planetiler.create(args);
 
         var esAddress = args.getString("es-address", "Elasticsearch address", "http://localhost:9200");
-        var esClient = ElasticsearchHelper.createElasticsearchClient(esAddress);
-        try {
+        try (var esClient = ElasticsearchHelper.createElasticsearchClient(esAddress)) {
             var pointsIndexAlias = args.getString("es-points-index-alias", "Elasticsearch index to populate points",
                     "points");
             var bboxIndexAlias = args.getString("es-bbox-index-alias", "Elasticsearch index to populate bounding boxes",
@@ -53,24 +52,25 @@ public class MainClass {
             var externalFilePath = args.getString("external-file-path", "External file path", "");
             var context = ElasticsearchHelper.initRun(esClient, pointsIndexAlias, bboxIndexAlias,
                     supportedLanguages);
-            var profile = new PlanetSearchProfile(planetiler.config(), context);
+            try (var bulkListener = context.bulkListener()) {
+                var profile = new PlanetSearchProfile(planetiler.config(), context);
 
-            String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
-            planetiler.setProfile(profile);
-            // override this default with osm_path="path/to/data.osm.pbf"
-            // Geofabrik has no whole-planet file, so area=planet uses the aws:latest
-            // s3://osm-pds mirror.
-            String osmSourceUrl = "planet".equals(area) ? "aws:latest" : "geofabrik:" + area;
-            planetiler.addOsmSource("osm", Path.of("data", "sources", area + ".osm.pbf"), osmSourceUrl);
-            if ("" != externalFilePath) {
-                planetiler.addGeoJsonSource("external", Path.of(externalFilePath));
+                String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
+                planetiler.setProfile(profile);
+                // override this default with osm_path="path/to/data.osm.pbf"
+                // Geofabrik has no whole-planet file, so area=planet uses the aws:latest
+                // s3://osm-pds mirror.
+                String osmSourceUrl = "planet".equals(area) ? "aws:latest" : "geofabrik:" + area;
+                planetiler.addOsmSource("osm", Path.of("data", "sources", area + ".osm.pbf"), osmSourceUrl);
+                if ("" != externalFilePath) {
+                    planetiler.addGeoJsonSource("external", Path.of(externalFilePath));
+                }
+                planetiler.overwriteOutput(
+                        Path.of("data", "target", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"));
+
+                planetiler.run();
+                ElasticsearchHelper.finalizeRun(context);
             }
-            planetiler.overwriteOutput(Path.of("data", "target", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"));
-            planetiler.run();
-
-            ElasticsearchHelper.finalizeRun(context);
-        } finally {
-            esClient.close();
         }
     }
 }
