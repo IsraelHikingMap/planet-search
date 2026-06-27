@@ -1,10 +1,12 @@
 package il.org.osm.israelhiking;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 class PointDocument {
   public Map<String, String> name = new HashMap<String, String>();
+  public Map<String, List<String>> alt_names;
   public Map<String, String> description = new HashMap<String, String>();
   public String wikidata;
   public String image;
@@ -18,4 +20,9 @@ class PointDocument {
   public double poiLength = 0;
   public String website;
   public double[] location;
+  public Float poiProminence;
+  public Float poiAreaNormalized;
+  public Boolean intermittent;
+  public Integer population;
+  public String poiFeatureClass;
 }

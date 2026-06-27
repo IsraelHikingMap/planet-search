@@ -95,6 +95,9 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.image = feature.getString("image");
     pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
     pointDocument.website = feature.getString("website");
+    if (feature.hasTag("intermittent", "yes")) {
+      pointDocument.intermittent = true;
+    }
   }
 
   private void setDifficulty(PointDocument pointDocument, WithTags feature) {
@@ -529,6 +532,9 @@ public class PlanetSearchProfile implements Profile {
 
     var pointDocument = new PointDocument();
     convertTagsToDocument(pointDocument, feature);
+    if (feature.canBePolygon()) {
+      pointDocument.poiAreaNormalized = normalizeArea(feature.areaMeters());
+    }
     pointDocument.poiSource = "OSM";
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
     pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
@@ -555,6 +561,14 @@ public class PlanetSearchProfile implements Profile {
 
     setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
     return true;
+  }
+
+  private float normalizeArea(double areaM) {
+    if (Double.isNaN(areaM) || areaM <= 0) {
+      return 0f;
+    }
+    double norm = Math.log1p(areaM) / Math.log1p(1e11);
+    return (float) Math.max(0.0, Math.min(1.0, norm));
   }
 
   private void addNonIconFeaturesToElasricseach(SourceFeature feature) throws GeometryException {
