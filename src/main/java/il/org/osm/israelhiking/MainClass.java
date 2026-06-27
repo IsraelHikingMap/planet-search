@@ -68,7 +68,31 @@ public class MainClass {
             planetiler.overwriteOutput(Path.of("data", "target", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"));
             planetiler.run();
 
-            ElasticsearchHelper.finalizeRun(context);
+            // Drain buffered inserts, refresh, restore search settings, and swap
+            // the alias. This blocks on the BulkIngester so the failure counters
+            // are final by the time the gate below reads them.
+            ElasticsearchHelper.finalizeRun(context, profile);
+
+            // bbox geo_shape rejects (a few degenerate OSM relation geometries ES
+            // can't parse) are tolerated — they don't affect name search — but we
+            // surface them so they're never silent.
+            if (profile.getFailedBboxCount() > 0) {
+                LOGGER.warning("Indexing dropped " + profile.getFailedBboxCount()
+                        + " bbox document(s) (geo_shape rejects); tolerated — name search unaffected.");
+            }
+
+            // Fail the process if any POINTS document was dropped during indexing.
+            // The BulkIngester listener already counts and logs failures; without a
+            // non-zero exit here CI would mistake a partial points index for success
+            // and silently ship missing search results. Exit non-zero so the build
+            // fails loudly instead.
+            if (profile.hasIndexingFailures()) {
+                throw new IllegalStateException("Indexing finished with " + profile.getFailedPointsCount()
+                        + " failed POINTS document(s) out of " + profile.getEmittedCount()
+                        + " emitted (" + profile.getIndexedCount() + " indexed, "
+                        + profile.getFailedBboxCount() + " bbox dropped). "
+                        + "Refusing to treat a partial points index as success.");
+            }
         } finally {
             esClient.close();
         }

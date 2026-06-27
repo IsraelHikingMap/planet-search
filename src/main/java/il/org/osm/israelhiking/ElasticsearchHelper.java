@@ -55,6 +55,13 @@ public class ElasticsearchHelper {
         .toArray(String[]::new);
     esClient.indices().create(c -> c.index(targetIndex)
         .settings(s -> s
+            // Build-time write tuning: the index being built lives under the
+            // "1"/"2" suffix and isn't served until the alias swaps, so nobody
+            // searches it during the build. Disabling periodic refresh and
+            // replicas removes the biggest per-document overhead in bulk
+            // indexing. They are restored right before the alias swap.
+            .refreshInterval(t -> t.time("-1"))
+            .numberOfReplicas("0")
             .analysis(a -> a
                 .charFilter("hebrew_niqqud", cf -> cf
                     .definition(d -> d
@@ -158,6 +165,10 @@ public class ElasticsearchHelper {
         .toArray(String[]::new);
     esClient.indices().create(c -> c.index(targetIndex)
         .settings(s -> s
+            // Build-time write tuning (see createPointsIndex) — restored before
+            // the alias swap.
+            .refreshInterval(t -> t.time("-1"))
+            .numberOfReplicas("0")
             .analysis(a -> a
                 .charFilter("hebrew_niqqud", cf -> cf
                     .definition(d -> d
@@ -226,8 +237,34 @@ public class ElasticsearchHelper {
         supportedLanguages);
   }
 
-  public static void finalizeRun(ElasticRunContext context) throws Exception {
-    ElasticsearchHelper.switchAlias(context.esClient, context.pointsIndexAlias(), context.pointsIndexTarget());
-    ElasticsearchHelper.switchAlias(context.esClient, context.bboxIndexAlias(), context.bboxIndexTarget());
+  /**
+   * Restore normal search-time settings on a freshly-built index before it goes
+   * live: re-enable periodic refresh (createPointsIndex/createBBoxIndex disable
+   * it for faster bulk writes) and add one replica for redundancy. Call this
+   * after the final flush and a one-off refresh, just before switchAlias.
+   */
+  public static void restoreSearchSettings(ElasticsearchClient esClient, String targetIndex)
+      throws Exception {
+    esClient.indices().putSettings(p -> p
+        .index(targetIndex)
+        .settings(s -> s
+            .refreshInterval(t -> t.time("1s"))
+            .numberOfReplicas("1")));
+  }
+
+  public static void finalizeRun(ElasticRunContext context, PlanetSearchProfile profile) throws Exception {
+    // Drain every buffered document and wait for the in-flight bulk requests to
+    // finish BEFORE the alias swap, so the new index is fully populated when it
+    // goes live. Then refresh so the docs are searchable.
+    profile.flush();
+    context.esClient().indices().refresh(r -> r.index(context.pointsIndexTarget(), context.bboxIndexTarget()));
+
+    // Restore normal refresh/replica settings (disabled during the build to speed
+    // up bulk indexing) before the indexes go live.
+    restoreSearchSettings(context.esClient(), context.pointsIndexTarget());
+    restoreSearchSettings(context.esClient(), context.bboxIndexTarget());
+
+    ElasticsearchHelper.switchAlias(context.esClient(), context.pointsIndexAlias(), context.pointsIndexTarget());
+    ElasticsearchHelper.switchAlias(context.esClient(), context.bboxIndexAlias(), context.bboxIndexTarget());
   }
 }

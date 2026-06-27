@@ -802,6 +802,28 @@ public class PlanetSearchProfile implements Profile {
     }
   }
 
+  /**
+   * Flush every buffered document to Elasticsearch and wait for the in-flight
+   * bulk requests to complete. Must be called after planetiler.run() finishes
+   * emitting features and BEFORE the alias swap / refresh, so the new index is
+   * fully populated when it goes live.
+   *
+   * close() already flushes and waits internally, but we flush explicitly first
+   * (and log the remaining buffer) so the end-of-indexation flush is visible and
+   * intentional rather than an implicit side effect of close().
+   */
+  public void flush() {
+    LOGGER.info(() -> "Flushing final batch: " + bulkIngester.pendingOperations()
+        + " buffered operations, " + bulkIngester.pendingRequests() + " in-flight requests.");
+    bulkIngester.flush();
+    // close() blocks until the flushed buffer and all in-flight requests (and
+    // their listener callbacks, which update the counters) have completed.
+    bulkIngester.close();
+    LOGGER.info(() -> "Elasticsearch indexing finished: " + indexedCount.sum()
+        + " documents indexed, " + getFailedCount() + " failed ("
+        + failedPointsCount.sum() + " points, " + failedBboxCount.sum() + " bbox).");
+  }
+
   public long getEmittedCount() {
     return emittedCount.sum();
   }
