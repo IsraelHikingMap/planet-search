@@ -15,6 +15,8 @@ import co.elastic.clients.transport.rest_client.RestClientTransport;
 
 public class ElasticsearchHelper {
 
+  private static final Logger LOGGER = Logger.getLogger(ElasticsearchHelper.class.getName());
+
   // Doubled-only: folding a single vav/yod would merge real homographs. "\\u"
   // reaches ES as the literal Lucene escape.
   static final String HEBREW_VAV = "ו";
@@ -55,11 +57,6 @@ public class ElasticsearchHelper {
         .toArray(String[]::new);
     esClient.indices().create(c -> c.index(targetIndex)
         .settings(s -> s
-            // Build-time write tuning: the index being built lives under the
-            // "1"/"2" suffix and isn't served until the alias swaps, so nobody
-            // searches it during the build. Disabling periodic refresh and
-            // replicas removes the biggest per-document overhead in bulk
-            // indexing. They are restored right before the alias swap.
             .refreshInterval(t -> t.time("-1"))
             .numberOfReplicas("0")
             .analysis(a -> a
@@ -165,8 +162,6 @@ public class ElasticsearchHelper {
         .toArray(String[]::new);
     esClient.indices().create(c -> c.index(targetIndex)
         .settings(s -> s
-            // Build-time write tuning (see createPointsIndex) — restored before
-            // the alias swap.
             .refreshInterval(t -> t.time("-1"))
             .numberOfReplicas("0")
             .analysis(a -> a
@@ -237,12 +232,6 @@ public class ElasticsearchHelper {
         supportedLanguages);
   }
 
-  /**
-   * Restore normal search-time settings on a freshly-built index before it goes
-   * live: re-enable periodic refresh (createPointsIndex/createBBoxIndex disable
-   * it for faster bulk writes) and add one replica for redundancy. Call this
-   * after the final flush and a one-off refresh, just before switchAlias.
-   */
   public static void restoreSearchSettings(ElasticsearchClient esClient, String targetIndex)
       throws Exception {
     esClient.indices().putSettings(p -> p
@@ -253,18 +242,22 @@ public class ElasticsearchHelper {
   }
 
   public static void finalizeRun(ElasticRunContext context, PlanetSearchProfile profile) throws Exception {
-    // Drain every buffered document and wait for the in-flight bulk requests to
-    // finish BEFORE the alias swap, so the new index is fully populated when it
-    // goes live. Then refresh so the docs are searchable.
     profile.flush();
     context.esClient().indices().refresh(r -> r.index(context.pointsIndexTarget(), context.bboxIndexTarget()));
 
-    // Restore normal refresh/replica settings (disabled during the build to speed
-    // up bulk indexing) before the indexes go live.
     restoreSearchSettings(context.esClient(), context.pointsIndexTarget());
     restoreSearchSettings(context.esClient(), context.bboxIndexTarget());
 
-    ElasticsearchHelper.switchAlias(context.esClient(), context.pointsIndexAlias(), context.pointsIndexTarget());
     ElasticsearchHelper.switchAlias(context.esClient(), context.bboxIndexAlias(), context.bboxIndexTarget());
+
+    // A partial points index must never go live; leave the alias on the previous complete index.
+    if (profile.hasIndexingFailures()) {
+      LOGGER.warning(() -> "Leaving points alias '" + context.pointsIndexAlias()
+          + "' on the previous index: this build dropped " + profile.getFailedPointsCount()
+          + " points document(s), so '" + context.pointsIndexTarget()
+          + "' is incomplete and must not go live.");
+      return;
+    }
+    ElasticsearchHelper.switchAlias(context.esClient(), context.pointsIndexAlias(), context.pointsIndexTarget());
   }
 }

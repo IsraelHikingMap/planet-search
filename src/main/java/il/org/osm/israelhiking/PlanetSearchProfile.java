@@ -41,20 +41,8 @@ public class PlanetSearchProfile implements Profile {
   private PlanetilerConfig config;
   private ElasticRunContext context;
 
-  // Bulk indexer: thread-safe, buffers operations and flushes them in batches.
-  // Planetiler emits features from multiple worker threads, so BulkIngester
-  // (which handles concurrent add() internally) is the right tool rather than
-  // manually batching BulkRequests with our own locking.
   private final BulkIngester<Void> bulkIngester;
-  // Emitted/attempted docs: incremented once per bulkIngester.add(...). Lets us
-  // assert the lossless invariant emitted == indexed + failed after flush() so a
-  // doc that was emitted but never made it into any bulk batch is detectable.
   private final LongAdder emittedCount = new LongAdder();
-  // Counters so indexing is observable instead of failing silently. Failures are
-  // split by destination index so we can fail the build on the ones that cause
-  // missing SEARCH results (points) while only warning on bbox geo_shape rejects
-  // (a few degenerate OSM relation geometries ES can't parse; they don't affect
-  // name search).
   private final LongAdder indexedCount = new LongAdder();
   private final LongAdder failedPointsCount = new LongAdder();
   private final LongAdder failedBboxCount = new LongAdder();
@@ -70,51 +58,39 @@ public class PlanetSearchProfile implements Profile {
     this.context = context;
     this.bulkIngester = BulkIngester.of(b -> b
         .client(context.esClient())
-        // Flush whenever any of these thresholds is hit.
         .maxOperations(5_000)
         .maxSize(5 * 1024 * 1024)
         .maxConcurrentRequests(4)
-        // Listener gives us per-batch visibility instead of swallowing errors.
-        // Extracted into a named class (AccountingBulkListener) so the counting
-        // logic is directly unit-testable.
         .listener(new AccountingBulkListener(
-            indexedCount, failedPointsCount, failedBboxCount, context.pointsIndexTarget())));
+            indexedCount, failedPointsCount, failedBboxCount, context.bboxIndexTarget())));
   }
 
-  /**
-   * BulkListener that surfaces and counts every bulk outcome instead of
-   * swallowing errors. Extracted into a static class so the per-item
-   * classification (indexed vs failed) and the whole-batch failure path are
-   * unit-testable by driving {@code afterBulk} directly.
-   */
   static final class AccountingBulkListener implements BulkListener<Void> {
     private final LongAdder indexedCount;
     private final LongAdder failedPointsCount;
     private final LongAdder failedBboxCount;
-    private final String pointsIndexName;
+    private final String bboxIndexName;
 
     AccountingBulkListener(LongAdder indexedCount, LongAdder failedPointsCount, LongAdder failedBboxCount,
-        String pointsIndexName) {
+        String bboxIndexName) {
       this.indexedCount = indexedCount;
       this.failedPointsCount = failedPointsCount;
       this.failedBboxCount = failedBboxCount;
-      this.pointsIndexName = pointsIndexName;
+      this.bboxIndexName = bboxIndexName;
     }
 
-    // A failed item destined for the points index means a missing SEARCH result
-    // (build-breaking); a failed bbox item is a geometry reject (warn-only).
+    // Fail-closed: an undeterminable destination is bucketed as points so a points loss can't be downgraded to a tolerated bbox warning.
     private void recordFailure(String index) {
-      if (pointsIndexName != null && pointsIndexName.equals(index)) {
-        failedPointsCount.increment();
-      } else {
+      if (bboxIndexName != null && bboxIndexName.equals(index)) {
         failedBboxCount.increment();
+      } else {
+        failedPointsCount.increment();
       }
     }
 
     @Override
     public void beforeBulk(long executionId, co.elastic.clients.elasticsearch.core.BulkRequest request,
         List<Void> contexts) {
-      // no-op
     }
 
     @Override
@@ -138,16 +114,10 @@ public class PlanetSearchProfile implements Profile {
     @Override
     public void afterBulk(long executionId, co.elastic.clients.elasticsearch.core.BulkRequest request,
         List<Void> contexts, Throwable failure) {
-      // A whole-batch failure has no per-item index breakdown; classify each
-      // operation by the index it targeted so points failures still break the build.
       request.operations().forEach(op -> recordFailure(bulkOperationIndex(op)));
       LOGGER.severe(() -> "Bulk request " + executionId + " failed entirely: " + failure.getMessage());
     }
 
-    // Best-effort extraction of the destination index from a bulk operation
-    // (index/create/update/delete variants). Null when it can't be determined,
-    // which recordFailure treats as non-points (bbox) — the conservative choice
-    // for the warn-only bucket.
     private static String bulkOperationIndex(co.elastic.clients.elasticsearch.core.bulk.BulkOperation op) {
       if (op.isIndex()) {
         return op.index().index();
@@ -760,12 +730,17 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
-    emittedCount.increment();
-    bulkIngester.add(BulkOperation.of(op -> op
-        .index(idx -> idx
-            .index(this.context.pointsIndexTarget())
-            .id(docId)
-            .document(pointDocument))));
+    try {
+      bulkIngester.add(BulkOperation.of(op -> op
+          .index(idx -> idx
+              .index(this.context.pointsIndexTarget())
+              .id(docId)
+              .document(pointDocument))));
+      emittedCount.increment();
+    } catch (RuntimeException e) {
+      failedPointsCount.increment();
+      LOGGER.warning(() -> "Failed to enqueue points doc " + docId + ": " + e.getMessage());
+    }
   }
 
   private void insertBboxToElasticsearch(SourceFeature feature, String[] supportedLanguages) {
@@ -788,36 +763,32 @@ public class PlanetSearchProfile implements Profile {
         CoalesceIntoMap(bbox.name, "default", feature.getString("name"));
       }
       String bboxDocId = sourceFeatureToDocumentId(feature);
-      emittedCount.increment();
-      bulkIngester.add(BulkOperation.of(op -> op
-          .index(idx -> idx
-              .index(this.context.bboxIndexTarget())
-              .id(bboxDocId)
-              .document(bbox))));
+      addBboxToBulk(bbox, bboxDocId);
     } catch (Exception e) {
-      // Only geometry/serialization building can throw here now; the actual
-      // indexing is handled (and its errors counted) by the bulk listener.
+      failedBboxCount.increment();
       LOGGER.warning(() -> "Failed to build bbox document for "
           + sourceFeatureToDocumentId(feature) + ": " + e.getMessage());
     }
   }
 
-  /**
-   * Flush every buffered document to Elasticsearch and wait for the in-flight
-   * bulk requests to complete. Must be called after planetiler.run() finishes
-   * emitting features and BEFORE the alias swap / refresh, so the new index is
-   * fully populated when it goes live.
-   *
-   * close() already flushes and waits internally, but we flush explicitly first
-   * (and log the remaining buffer) so the end-of-indexation flush is visible and
-   * intentional rather than an implicit side effect of close().
-   */
+  private void addBboxToBulk(BBoxDocument bbox, String bboxDocId) {
+    try {
+      bulkIngester.add(BulkOperation.of(op -> op
+          .index(idx -> idx
+              .index(this.context.bboxIndexTarget())
+              .id(bboxDocId)
+              .document(bbox))));
+      emittedCount.increment();
+    } catch (RuntimeException e) {
+      failedBboxCount.increment();
+      LOGGER.warning(() -> "Failed to enqueue bbox doc " + bboxDocId + ": " + e.getMessage());
+    }
+  }
+
   public void flush() {
     LOGGER.info(() -> "Flushing final batch: " + bulkIngester.pendingOperations()
         + " buffered operations, " + bulkIngester.pendingRequests() + " in-flight requests.");
     bulkIngester.flush();
-    // close() blocks until the flushed buffer and all in-flight requests (and
-    // their listener callbacks, which update the counters) have completed.
     bulkIngester.close();
     LOGGER.info(() -> "Elasticsearch indexing finished: " + indexedCount.sum()
         + " documents indexed, " + getFailedCount() + " failed ("
@@ -832,31 +803,18 @@ public class PlanetSearchProfile implements Profile {
     return indexedCount.sum();
   }
 
-  /** Total failed documents across all indices (points + bbox). Keeps the
-   *  lossless invariant emitted == indexed + failed. */
   public long getFailedCount() {
     return failedPointsCount.sum() + failedBboxCount.sum();
   }
 
-  /** Failed documents destined for the points index — these are missing SEARCH
-   *  results and must break the build. */
   public long getFailedPointsCount() {
     return failedPointsCount.sum();
   }
 
-  /** Failed bbox documents (geo_shape rejects on degenerate OSM geometries) —
-   *  warn-only; they don't affect name search. */
   public long getFailedBboxCount() {
     return failedBboxCount.sum();
   }
 
-  /**
-   * True when this run dropped at least one POINTS document: a partial points
-   * index causes missing search results, which CI must treat as a failure rather
-   * than mistake for success. bbox geo_shape rejects are warned-but-tolerated and
-   * deliberately do NOT trip this. Kept as a small pure predicate so the
-   * fail-the-build decision is unit-testable without calling {@code System.exit}.
-   */
   public boolean hasIndexingFailures() {
     return failedPointsCount.sum() > 0;
   }

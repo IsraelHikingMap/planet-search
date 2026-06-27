@@ -27,24 +27,6 @@ import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
 import co.elastic.clients.elasticsearch.core.bulk.OperationType;
 
-/**
- * Regression guard for the lossless BulkIngester indexing invariant.
- *
- * <p>The production listener is {@link PlanetSearchProfile.AccountingBulkListener}. Driving its
- * {@code afterBulk} overloads directly lets us assert, deterministically and without a live
- * Elasticsearch, that:
- * <ol>
- *   <li>a bulk item failure is <em>surfaced</em> (counted and logged at WARNING), never swallowed;
- *       the success path increments indexedCount.</li>
- *   <li>lossless accounting: every item the listener sees is classified as exactly one of
- *       indexed / failed, so indexed + failed == items submitted.</li>
- *   <li>a whole-batch failure (the {@code Throwable} overload) adds the entire batch to the failed
- *       buckets (classified by destination index) and is logged at SEVERE, and the fail-the-build
- *       decision is taken.</li>
- *   <li>points failures trip {@code hasIndexingFailures()} while bbox geo_shape rejects do not
- *       (warn-only).</li>
- * </ol>
- */
 @Tag("unit")
 @ExtendWith(MockitoExtension.class)
 class BulkIngesterAccountingTest {
@@ -67,10 +49,8 @@ class BulkIngesterAccountingTest {
         failedPointsCount = new LongAdder();
         failedBboxCount = new LongAdder();
         listener = new PlanetSearchProfile.AccountingBulkListener(
-                indexedCount, failedPointsCount, failedBboxCount, POINTS_INDEX);
+                indexedCount, failedPointsCount, failedBboxCount, BBOX_INDEX);
 
-        // Capture log records so "surfaced" can be asserted (logged AND counted),
-        // proving the old catch(Exception){/*swallow*/} pattern is gone.
         profileLogger = Logger.getLogger(PlanetSearchProfile.class.getName());
         previousLevel = profileLogger.getLevel();
         profileLogger.setLevel(Level.ALL);
@@ -84,11 +64,9 @@ class BulkIngesterAccountingTest {
         profileLogger.setLevel(previousLevel);
     }
 
-    // ---- a bulk item failure is surfaced via the counter, not swallowed ----
-
     @Test
     void afterBulk_withItemError_incrementsFailedCountAndLogsWarning() {
-        BulkResponseItem failedItem = item("bad-1", /* withError */ true);
+        BulkResponseItem failedItem = item("bad-1", true);
         BulkResponse response = responseWithErrors(List.of(failedItem));
 
         listener.afterBulk(1L, emptyRequest(), Collections.emptyList(), response);
@@ -101,7 +79,6 @@ class BulkIngesterAccountingTest {
 
     @Test
     void afterBulk_successPath_incrementsIndexedCount() {
-        // errors()==false: the listener fast-paths the whole batch as indexed.
         BulkResponse response = BulkResponse.of(b -> b
                 .took(5)
                 .errors(false)
@@ -115,7 +92,6 @@ class BulkIngesterAccountingTest {
 
     @Test
     void afterBulk_mixedBatch_classifiesEachItemExactlyOnce() {
-        // errors()==true with a mix: per-item branch counts failures and successes.
         List<BulkResponseItem> items = List.of(
                 item("ok-1", false),
                 item("bad-1", true),
@@ -129,15 +105,12 @@ class BulkIngesterAccountingTest {
         assertEquals(2, totalFailed());
     }
 
-    // ---- lossless accounting — emitted == indexed + failed ----
-
     @Test
     void losslessAccounting_indexedPlusFailedEqualsItemsSubmitted() {
-        // A controlled "emitted" batch of 10, two of which fail at the item level.
         int emitted = 10;
         List<BulkResponseItem> items = new ArrayList<>();
         for (int i = 0; i < emitted; i++) {
-            items.add(item("doc-" + i, /* fail items 3 and 7 */ i == 3 || i == 7));
+            items.add(item("doc-" + i, i == 3 || i == 7));
         }
         BulkResponse response = responseWithErrors(items);
 
@@ -147,12 +120,8 @@ class BulkIngesterAccountingTest {
         long failed = totalFailed();
         assertEquals(8, indexed);
         assertEquals(2, failed);
-        // The lossless invariant: every emitted/attempted doc is accounted for as
-        // exactly one of indexed or failed — nothing silently disappears.
         assertEquals(emitted, indexed + failed, "emitted must equal indexed + failed");
     }
-
-    // ---- an unrecoverable error is not mistaken for success ----
 
     @Test
     void afterBulk_wholeBatchThrowable_addsBatchSizeToFailedAndLogsSevere() {
@@ -164,7 +133,6 @@ class BulkIngesterAccountingTest {
 
         assertEquals(batchSize, totalFailed(),
                 "whole-batch failure must add the entire request size to failedCount");
-        // The request targets the points index, so the whole batch is classified as points failures.
         assertEquals(batchSize, failedPointsCount.sum(),
                 "a points-targeted whole-batch failure must land in failedPointsCount");
         assertEquals(0, indexedCount.sum());
@@ -174,27 +142,17 @@ class BulkIngesterAccountingTest {
 
     @Test
     void failBuildDecision_isTakenWhenPointsDocFailed_andNotOnCleanRun() {
-        // MainClass.run gates its non-zero exit on PlanetSearchProfile.hasIndexingFailures(),
-        // a pure predicate == (failedPointsCount > 0). Modelling it directly over the listener's
-        // counters keeps the exit decision unit-testable without calling System.exit.
         assertFalse(failsBuild(), "a clean run (no failures) must NOT fail the build");
 
-        // A whole-batch unrecoverable failure on the points index records points failures...
         listener.afterBulk(6L, requestWithOperations(3, POINTS_INDEX), Collections.emptyList(),
                 new RuntimeException("boom"));
 
-        // ...so the fail-the-build decision must now be taken (CI cannot green a partial points index).
         assertTrue(failsBuild(),
                 "once any POINTS document fails, the build must fail (no partial index mistaken for success)");
     }
 
-    // ---- points-vs-bbox classification: bbox geo_shape rejects are warn-only ----
-
     @Test
     void bboxItemFailures_areCountedSeparately_andDoNotFailTheBuild() {
-        // The real-world case: a few degenerate OSM relation geometries ES rejects with
-        // "failed to parse field [bbox] of type [geo_shape]". They must be surfaced and
-        // counted (lossless), but must NOT trip the build — they don't affect name search.
         List<BulkResponseItem> items = List.of(
                 item(BBOX_INDEX, "rel-1", true),
                 item(BBOX_INDEX, "rel-2", true),
@@ -220,10 +178,6 @@ class BulkIngesterAccountingTest {
         return failedPointsCount.sum() + failedBboxCount.sum();
     }
 
-    // ---------------------------------------------------------------------------
-    // Helpers
-    // ---------------------------------------------------------------------------
-
     private static BulkResponse responseWithErrors(List<BulkResponseItem> items) {
         return BulkResponse.of(b -> b.took(5).errors(true).items(items));
     }
@@ -243,8 +197,7 @@ class BulkIngesterAccountingTest {
     }
 
     private static BulkRequest emptyRequest() {
-        // The BulkResponse overload of afterBulk never reads the request; the 8.x
-        // BulkRequest builder still requires a non-empty operations list, so supply one.
+        // The 8.x BulkRequest builder rejects an empty operations list, so supply one even though this overload never reads it.
         return requestWithOperations(1, POINTS_INDEX);
     }
 
@@ -267,8 +220,6 @@ class BulkIngesterAccountingTest {
     }
 
     private static String formatted(LogRecord r) {
-        // The production code logs via Supplier<String>; LogRecord.getMessage()
-        // already resolves it for these java.util.logging calls.
         return r.getMessage() == null ? "" : r.getMessage();
     }
 
