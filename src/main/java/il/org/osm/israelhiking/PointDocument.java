@@ -1,9 +1,12 @@
 package il.org.osm.israelhiking;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@JsonInclude(JsonInclude.Include.NON_NULL)
 class PointDocument {
   public Map<String, String> name = new HashMap<String, String>();
   public Map<String, List<String>> alt_names;
@@ -21,6 +24,12 @@ class PointDocument {
   public String website;
   public double[] location;
   public Float poiProminence;
+  // Raw prominence components, stored index:false so the weights can be re-tuned without a reindex.
+  public Float poiPromBase;
+  public Float poiPromQrankNorm;
+  public Float poiPromMeta;
+  public Float poiEleNorm;
+  public Long poiQrankRaw;
   public Float poiAreaNormalized;
   public Boolean intermittent;
   public Integer population;

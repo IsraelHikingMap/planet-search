@@ -186,6 +186,71 @@ public class PlanetSearchProfile implements Profile {
     if (feature.hasTag("intermittent", "yes")) {
       pointDocument.intermittent = true;
     }
+    setProminence(pointDocument, feature);
+  }
+
+  /**
+   * Compute the composite prominence score from OSM tags + QRank and store it (plus raw components,
+   * for re-tuning without a reindex) on the document. Reads tags directly from the feature rather
+   * than poiCategory, because poiCategory is assigned later in some emit paths.
+   */
+  private void setProminence(PointDocument pointDocument, WithTags feature) {
+    long qrankRaw = this.context.qrankIndex().getByWikidata(pointDocument.wikidata);
+    double ele = parseFirstNumber(feature.getString("ele"));
+    boolean hasImage = pointDocument.image != null || pointDocument.wikimedia_commons != null;
+    boolean hasWebsite = pointDocument.website != null;
+    boolean hasWikidata = pointDocument.wikidata != null;
+
+    ProminenceCalculator.Result r = ProminenceCalculator.compute(
+        feature.getString("natural"),
+        feature.getString("place"),
+        feature.getString("boundary"),
+        feature.getString("tourism"),
+        feature.getString("historic"),
+        feature.getString("waterway"),
+        ele, hasImage, hasWebsite, hasWikidata, qrankRaw);
+
+    pointDocument.poiProminence = r.prominence;
+    pointDocument.poiPromBase = r.base;
+    pointDocument.poiPromQrankNorm = r.qrankNorm;
+    pointDocument.poiPromMeta = r.meta;
+    pointDocument.poiEleNorm = r.eleNorm;
+    pointDocument.poiQrankRaw = r.qrankRaw > 0 ? r.qrankRaw : null;
+  }
+
+  /**
+   * Parse the first number out of a free-text OSM value like "4302", "14,115 ft", "1 000", "yes".
+   * Returns Double.NaN when there is no usable number. Never throws.
+   */
+  static double parseFirstNumber(String raw) {
+    if (raw == null) {
+      return Double.NaN;
+    }
+    StringBuilder sb = new StringBuilder();
+    boolean seenDigit = false;
+    boolean seenDot = false;
+    for (int i = 0; i < raw.length(); i++) {
+      char c = raw.charAt(i);
+      if (c >= '0' && c <= '9') {
+        sb.append(c);
+        seenDigit = true;
+      } else if (c == '.' && seenDigit && !seenDot) {
+        sb.append(c);
+        seenDot = true;
+      } else if ((c == ',' || c == ' ' || c == '\'') && seenDigit) {
+        // thousands separator within a number — skip it
+      } else if (seenDigit) {
+        break; // number ended (e.g. " ft", "-")
+      }
+    }
+    if (!seenDigit) {
+      return Double.NaN;
+    }
+    try {
+      return Double.parseDouble(sb.toString());
+    } catch (NumberFormatException e) {
+      return Double.NaN;
+    }
   }
 
   private void setDifficulty(PointDocument pointDocument, WithTags feature) {
@@ -729,7 +794,20 @@ public class PlanetSearchProfile implements Profile {
     insertPointToElasticsearch(pointDocument, docId);
   }
 
+  /**
+   * Safety floor for the insert path: every emitted document must carry a prominence so the
+   * query-time multiply is consistent. Some emit paths (ski-lift ways, relation-completion) don't
+   * run convertTagsToDocument, which would leave poiProminence null -> field_value_factor
+   * missing:1.0 -> they'd unfairly beat a real, scored feature (whose prominence is &lt;1). Floor a
+   * null to the minimum prominence; leave any real value UNCHANGED. Package-private static so it is
+   * unit-testable without the real BulkIngester.
+   */
+  static float flooredProminence(Float prominence) {
+    return prominence == null ? (float) ProminenceCalculator.FLOOR : prominence;
+  }
+
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
+    pointDocument.poiProminence = flooredProminence(pointDocument.poiProminence);
     try {
       bulkIngester.add(BulkOperation.of(op -> op
           .index(idx -> idx
