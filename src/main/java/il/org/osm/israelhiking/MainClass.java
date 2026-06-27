@@ -51,8 +51,11 @@ public class MainClass {
                     "bbox");
             var supportedLanguages = args.getString("languages", "Languages to support", "en,he,ru,ar,es").split(",");
             var externalFilePath = args.getString("external-file-path", "External file path", "");
+            var qrankPath = args.getString("qrank-path",
+                    "Path to qrank.csv.gz for the prominence signal (empty = run without it)", "");
+            var qrankIndex = QRankIndex.load(qrankPath.isEmpty() ? null : Path.of(qrankPath));
             var context = ElasticsearchHelper.initRun(esClient, pointsIndexAlias, bboxIndexAlias,
-                    supportedLanguages);
+                    supportedLanguages, qrankIndex);
             var profile = new PlanetSearchProfile(planetiler.config(), context);
 
             String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");

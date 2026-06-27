@@ -83,7 +83,7 @@ class EmittedCountInvariantTest {
         ElasticsearchClient esClient = mock(ElasticsearchClient.class);
         when(esClient._transport()).thenReturn(transport);
         ElasticRunContext context = new ElasticRunContext(
-                esClient, "points", "bbox", POINTS_TARGET, BBOX_TARGET, new String[] { "en" });
+                esClient, "points", "bbox", POINTS_TARGET, BBOX_TARGET, new String[] { "en" }, QRankIndex.empty());
 
         Constructor<PlanetSearchProfile> ctor = PlanetSearchProfile.class.getDeclaredConstructor(
                 com.onthegomap.planetiler.config.PlanetilerConfig.class, ElasticRunContext.class);

@@ -31,7 +31,8 @@ public class ElasticsearchHelper {
       String bboxIndexAlias,
       String pointsIndexTarget,
       String bboxIndexTarget,
-      String[] supportedLanguages) {
+      String[] supportedLanguages,
+      QRankIndex qrankIndex) {
   }
 
   /**
@@ -224,12 +225,13 @@ public class ElasticsearchHelper {
   public static ElasticRunContext initRun(ElasticsearchClient esClient,
       String pointsIndexAlias,
       String bboxIndexAlias,
-      String[] supportedLanguages) throws Exception {
+      String[] supportedLanguages,
+      QRankIndex qrankIndex) throws Exception {
     var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias,
         supportedLanguages);
     var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
     return new ElasticRunContext(esClient, pointsIndexAlias, bboxIndexAlias, targetPointsIndex, targetBBoxIndex,
-        supportedLanguages);
+        supportedLanguages, qrankIndex);
   }
 
   public static void restoreSearchSettings(ElasticsearchClient esClient, String targetIndex)
