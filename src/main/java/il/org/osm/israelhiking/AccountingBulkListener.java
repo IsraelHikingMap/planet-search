@@ -21,6 +21,7 @@ import org.apache.http.conn.ConnectTimeoutException;
 import org.elasticsearch.client.ResponseException;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch._helpers.bulk.BulkIngester;
 import co.elastic.clients.elasticsearch._helpers.bulk.BulkListener;
 import co.elastic.clients.elasticsearch._types.ElasticsearchException;
 import co.elastic.clients.elasticsearch.core.BulkRequest;
@@ -28,7 +29,7 @@ import co.elastic.clients.elasticsearch.core.BulkResponse;
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
 
-final class AccountingBulkListener implements BulkListener<Void> {
+final class AccountingBulkListener implements BulkListener<Void>, AutoCloseable {
   private static final Logger LOGGER = Logger.getLogger(AccountingBulkListener.class.getName());
 
   static final int MAX_RETRY_ATTEMPTS = 5;
@@ -47,6 +48,7 @@ final class AccountingBulkListener implements BulkListener<Void> {
   private final long drainTimeoutMillis;
   private final AtomicBoolean drained = new AtomicBoolean(false);
   private final AtomicBoolean ingesterClosed = new AtomicBoolean(false);
+  private volatile BulkIngester<Void> bulkIngester;
 
   AccountingBulkListener(ElasticsearchClient esClient, IndexingStats stats) {
     this(esClient, stats, DEFAULT_BASE_BACKOFF_MILLIS, DEFAULT_MAX_BACKOFF_MILLIS,
@@ -120,7 +122,6 @@ final class AccountingBulkListener implements BulkListener<Void> {
     }
   }
 
-  // Retries run off the ingester scheduler thread so backoff can't head-of-line-block ingest.
   private void offloadRetry(long executionId, List<BulkOperation> operations) {
     List<BulkOperation> batch = new ArrayList<>(operations);
     try {
@@ -132,7 +133,27 @@ final class AccountingBulkListener implements BulkListener<Void> {
     }
   }
 
-  // Must drain before the alias swap, else in-flight retry docs race the swap.
+  void attachIngester(BulkIngester<Void> ingester) {
+    this.bulkIngester = ingester;
+  }
+
+  // Idempotent: finalizeRun and the try-with-resources abort can both call it.
+  @Override
+  public void close() {
+    if (bulkIngester != null && ingesterClosed.compareAndSet(false, true)) {
+      try {
+        bulkIngester.close();
+      } catch (Exception e) {
+        LOGGER.warning("Bulk ingester close failed: " + e.getMessage());
+      }
+    }
+    awaitRetries();
+  }
+
+  boolean isDrained() {
+    return drained.get();
+  }
+
   void awaitRetries() {
     if (!drained.compareAndSet(false, true)) {
       return;
@@ -148,10 +169,6 @@ final class AccountingBulkListener implements BulkListener<Void> {
       Thread.currentThread().interrupt();
       chargeDropped(retryExecutor.shutdownNow());
     }
-  }
-
-  boolean tryClaimIngesterClose() {
-    return ingesterClosed.compareAndSet(false, true);
   }
 
   private void chargeDropped(List<Runnable> dropped) {
@@ -207,7 +224,6 @@ final class AccountingBulkListener implements BulkListener<Void> {
     List<BulkOperation> retryable = new ArrayList<>();
     for (int i = 0; i < operations.size(); i++) {
       BulkResponseItem item = i < items.size() ? items.get(i) : null;
-      // null: op missing from a short response, retry so it can't vanish from accounting.
       if (item == null || (item.error() != null && isRetryableStatus(item.status()))) {
         retryable.add(operations.get(i));
       } else if (item.error() == null) {
@@ -228,7 +244,6 @@ final class AccountingBulkListener implements BulkListener<Void> {
     return half + ThreadLocalRandom.current().nextLong(half + 1);
   }
 
-  // Per-item 4xx are non-retryable: resubmitting would loop forever.
   static boolean isRetryable(Throwable t) {
     Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
     for (Throwable c = t; c != null && seen.add(c); c = c.getCause()) {

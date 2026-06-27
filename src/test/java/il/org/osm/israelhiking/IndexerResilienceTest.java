@@ -55,7 +55,6 @@ class IndexerResilienceTest {
         return stats.failedCount.sum();
     }
 
-    // Replays scripted responses/throwables in order, repeating the last once exhausted.
     private static ElasticsearchClient mockClient(Object... script) {
         ElasticsearchClient client = mock(ElasticsearchClient.class);
         Deque<Object> queue = new ArrayDeque<>(List.of(script));
@@ -110,8 +109,6 @@ class IndexerResilienceTest {
 
     @Test
     void classification_connectTimeoutException_isRetryable() {
-        // org.apache.http.conn.ConnectTimeoutException is a distinct cause-chain arm from
-        // SocketTimeoutException/ConnectException; cover it directly (nested too).
         assertTrue(AccountingBulkListener.isRetryable(new ConnectTimeoutException("connect timed out")));
         assertTrue(AccountingBulkListener.isRetryable(
                 new RuntimeException("wrapped", new ConnectTimeoutException("connect timed out"))));
@@ -119,8 +116,6 @@ class IndexerResilienceTest {
 
     @Test
     void classification_responseException_retryableVsNonRetryableStatus() {
-        // ResponseException is final and reads its Response in the ctor, so mock the chain
-        // it walks: getResponse().getStatusLine().getStatusCode().
         assertTrue(AccountingBulkListener.isRetryable(responseException(503)),
                 "a 503 ResponseException is retryable");
         assertFalse(AccountingBulkListener.isRetryable(responseException(400)),
@@ -137,9 +132,6 @@ class IndexerResilienceTest {
 
     @Test
     void classification_selfReferentialCause_doesNotLoopAndIsNotRetryable() {
-        // A throwable whose cause is itself must terminate the walk via the guard and
-        // fall through to non-retryable rather than spin forever. The JDK forbids
-        // initCause(this), so override getCause() to return the instance.
         RuntimeException loop = new RuntimeException("self") {
             @Override
             public synchronized Throwable getCause() {
@@ -280,8 +272,6 @@ class IndexerResilienceTest {
 
     @Test
     void initialResponse_shortButErrorFree_doesNotTakeFastPath_andRetriesSurplus() {
-        // !errors() but items.size() < operations.size(): the fast path must be skipped so
-        // the missing op is classified (retried), not silently counted.
         BulkResponse shortOk = BulkResponse.of(b -> b.took(1).errors(false).items(List.of(
                 item("op-0", 200, false),
                 item("op-1", 200, false))));
@@ -297,8 +287,6 @@ class IndexerResilienceTest {
 
     @Test
     void initialResponse_retryablePerItem_offloadsRetry_thenRecovers() {
-        // A retryable (503) per-item on the FIRST response must drive offloadRetry from the
-        // success-overload afterBulk, not just from the throwable overload.
         BulkResponse first = BulkResponse.of(b -> b.took(1).errors(true).items(List.of(
                 item("op-0", 200, false),
                 item("op-1", 503, true))));
@@ -330,8 +318,6 @@ class IndexerResilienceTest {
         });
     }
 
-    // ResponseException is final and its real ctor reads the Response body; mock only the
-    // accessor chain isRetryable walks.
     private static ResponseException responseException(int status) {
         StatusLine statusLine = mock(StatusLine.class);
         when(statusLine.getStatusCode()).thenReturn(status);

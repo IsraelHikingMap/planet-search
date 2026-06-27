@@ -150,8 +150,6 @@ class BulkIngesterAccountingTest {
 
     @Test
     void afterBulk_nonRetryableThrowableWithNullMessage_stillCountsFailedAndDescribes() {
-        // A throwable with a null message exercises the null-message arm of describe(...)
-        // without an NPE; ops must still all be charged failed.
         listener.afterBulk(9L, requestWithOperations(2), Collections.emptyList(),
                 new RuntimeException());
 
@@ -180,7 +178,6 @@ class BulkIngesterAccountingTest {
     }
 
     private static BulkRequest emptyRequest() {
-        // The BulkRequest builder requires a non-empty operations list.
         return requestWithOperations(1);
     }
 

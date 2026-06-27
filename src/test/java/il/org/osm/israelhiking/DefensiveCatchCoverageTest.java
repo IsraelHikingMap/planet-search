@@ -2,14 +2,12 @@ package il.org.osm.israelhiking;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -79,40 +77,33 @@ class DefensiveCatchCoverageTest {
     }
 
     @Test
-    void contextClose_whenIngesterCloseThrows_swallows_andStillAwaitsRetries() {
+    void listenerClose_whenIngesterCloseThrows_swallows_andStillDrainsRetries() {
         @SuppressWarnings("unchecked")
         BulkIngester<Void> ingester = mock(BulkIngester.class);
         doThrow(new IllegalStateException("close failed")).when(ingester).close();
 
-        AccountingBulkListener listener = mock(AccountingBulkListener.class);
-        when(listener.tryClaimIngesterClose()).thenReturn(true);
+        AccountingBulkListener listener = new AccountingBulkListener(null, stats);
+        listener.attachIngester(ingester);
 
-        ElasticRunContext context = new ElasticRunContext(
-                null, "points", "bbox", "points1", "bbox1",
-                new String[] { "he" }, ingester, listener, stats);
-
-        assertDoesNotThrow(context::close,
+        assertDoesNotThrow(listener::close,
                 "abort must not let a close() failure mask the original build error");
 
         verify(ingester).close();
-        verify(listener).awaitRetries();
+        assertTrue(listener.isDrained(), "retries must still drain even when ingester close throws");
     }
 
     @Test
-    void finalizeThenAutoClose_doesNotCloseIngesterTwice() {
+    void listenerClose_calledTwice_closesIngesterOnce_andDrains() {
         @SuppressWarnings("unchecked")
         BulkIngester<Void> ingester = mock(BulkIngester.class);
         AccountingBulkListener listener = new AccountingBulkListener(null, stats);
+        listener.attachIngester(ingester);
 
-        ElasticRunContext context = new ElasticRunContext(
-                null, "points", "bbox", "points1", "bbox1",
-                new String[] { "he" }, ingester, listener, stats);
+        listener.close();
+        listener.close();
 
-        assertTrue(listener.tryClaimIngesterClose(), "finalizeRun claims the close first");
-        context.close();
-
-        assertFalse(listener.tryClaimIngesterClose(), "the claim is one-shot across finalizeRun + close()");
-        verify(ingester, times(0)).close();
+        verify(ingester, times(1)).close();
+        assertTrue(listener.isDrained(), "close() must drain retries");
     }
 
     private boolean loggedAtLeast(Level level, String substring) {

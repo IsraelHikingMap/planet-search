@@ -50,8 +50,9 @@ public class MainClass {
                     "bbox");
             var supportedLanguages = args.getString("languages", "Languages to support", "en,he,ru,ar,es").split(",");
             var externalFilePath = args.getString("external-file-path", "External file path", "");
-            try (var context = ElasticsearchHelper.initRun(esClient, pointsIndexAlias, bboxIndexAlias,
-                    supportedLanguages)) {
+            var context = ElasticsearchHelper.initRun(esClient, pointsIndexAlias, bboxIndexAlias,
+                    supportedLanguages);
+            try (var bulkListener = context.bulkListener()) {
                 var profile = new PlanetSearchProfile(planetiler.config(), context);
 
                 String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");

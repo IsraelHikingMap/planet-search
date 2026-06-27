@@ -28,19 +28,7 @@ public class ElasticsearchHelper {
       String[] supportedLanguages,
       BulkIngester<Void> bulkIngester,
       AccountingBulkListener bulkListener,
-      IndexingStats stats) implements AutoCloseable {
-
-    @Override
-    public void close() {
-      if (bulkListener.tryClaimIngesterClose()) {
-        try {
-          bulkIngester.close();
-        } catch (Exception e) {
-          LOGGER.warning("Bulk ingester close failed during abort: " + e.getMessage());
-        }
-      }
-      bulkListener.awaitRetries();
-    }
+      IndexingStats stats) {
   }
 
   /**
@@ -178,19 +166,16 @@ public class ElasticsearchHelper {
         .maxOperations(5_000)
         .maxSize(5 * 1024 * 1024)
         .maxConcurrentRequests(4)
-        // noBackoff pinned: the listener owns retry, so the ingester must not double-retry.
         .backoffPolicy(BackoffPolicy.noBackoff())
         .listener(bulkListener));
+    bulkListener.attachIngester(bulkIngester);
     return new ElasticRunContext(esClient, pointsIndexAlias, bboxIndexAlias, targetPointsIndex, targetBBoxIndex,
         supportedLanguages, bulkIngester, bulkListener, stats);
   }
 
   public static void finalizeRun(ElasticRunContext context) throws Exception {
     context.bulkIngester().flush();
-    if (context.bulkListener().tryClaimIngesterClose()) {
-      context.bulkIngester().close();
-    }
-    context.bulkListener().awaitRetries();
+    context.bulkListener().close();
 
     var stats = context.stats();
     LOGGER.info(() -> "Indexing finished: emitted=" + stats.getEmittedCount()
