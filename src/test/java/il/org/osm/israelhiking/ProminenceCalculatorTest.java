@@ -13,9 +13,8 @@ public class ProminenceCalculatorTest {
 
     @Test
     public void famousPeakWithQRankRanksHigh() {
-        // Pikes Peak: a ~4300m peak with a strong QRank signal and an image.
         var r = ProminenceCalculator.compute("peak", null, null, null, null, null,
-                4302, /*image*/ true, /*website*/ false, /*wikidata*/ true, /*qrank*/ 359_540L);
+                4302, true, false, true, 359_540L);
         assertTrue(r.prominence > 0.7, "famous high peak should score high, was " + r.prominence);
         assertTrue(r.eleNorm > 0.9, "4302m should normalize near the top, was " + r.eleNorm);
         assertTrue(r.qrankNorm > 0.8, "359k QRank should log-normalize high, was " + r.qrankNorm);
@@ -23,14 +22,10 @@ public class ProminenceCalculatorTest {
 
     @Test
     public void duplicateNodeWithNoSignalScoresLow() {
-        // The duplicate Pikes Peak node: same name, but no class, no ele, no wikidata/qrank.
-        // It gets only the floor + the generic-node baseline (0.05 + 0.45*0.25 = 0.1625) — low,
-        // and far below a real classified/popular feature, which is what breaks the duplicate tie.
         var r = ProminenceCalculator.compute(null, null, null, null, null, null,
                 NO_ELE, false, false, false, 0L);
         assertEquals(0.1625f, r.prominence, 1e-4, "a node with no signal should score at the baseline");
         assertEquals(0f, r.qrankNorm, 1e-6);
-        // Crucially, much lower than a famous peak (validated separately) so the multiply reorders it down.
         var famous = ProminenceCalculator.compute("peak", null, null, null, null, null,
                 4302, true, false, true, 359_540L);
         assertTrue(famous.prominence > r.prominence * 3, "famous peak must dominate an unsignalled node");
@@ -38,7 +33,6 @@ public class ProminenceCalculatorTest {
 
     @Test
     public void prominenceIsNeverZero() {
-        // Floor guarantees a query-time multiply never annihilates a hit.
         var r = ProminenceCalculator.compute(null, null, null, null, null, null,
                 NO_ELE, false, false, false, 0L);
         assertTrue(r.prominence >= ProminenceCalculator.FLOOR);
@@ -76,7 +70,6 @@ public class ProminenceCalculatorTest {
 
     @Test
     public void qrankOnlyCountsWithWikidataPresence() {
-        // qrankRaw>1 contributes regardless, but a 0/1 raw value must not.
         var withQ = ProminenceCalculator.compute("spring", null, null, null, null, null,
                 NO_ELE, false, false, true, 50_000L);
         var noQ = ProminenceCalculator.compute("spring", null, null, null, null, null,
@@ -86,8 +79,26 @@ public class ProminenceCalculatorTest {
     }
 
     @Test
+    public void qrankIgnoredWhenWikidataAbsent() {
+        var r = ProminenceCalculator.compute("spring", null, null, null, null, null,
+                NO_ELE, false, false, false, 1_000_000L);
+        assertEquals(0f, r.qrankNorm, 1e-6, "qnorm must be 0 when wikidata is absent");
+    }
+
+    @Test
+    public void belowSeaLevelPeakIsFlooredToZeroElevation() {
+        var below = ProminenceCalculator.compute("peak", null, null, null, null, null,
+                -430, false, false, false, 0L);
+        assertEquals(0f, below.eleNorm, 1e-6, "a below-sea-level feature must floor to eleNorm 0");
+        assertEquals(0.30f, below.base, 1e-4, "a -430m peak must not get an elevation boost");
+        var atSeaLevel = ProminenceCalculator.compute("peak", null, null, null, null, null,
+                0, false, false, false, 0L);
+        assertEquals(atSeaLevel.base, below.base, 1e-6,
+                "a -430m peak must score the same base as a 0m peak, not a +430m one");
+    }
+
+    @Test
     public void outputAlwaysInUnitRange() {
-        // Even maxed-out inputs stay clamped to [0,1].
         var r = ProminenceCalculator.compute("peak", "city", "national_park", "viewpoint", "ruins",
                 "stream", 8849, true, true, true, Long.MAX_VALUE);
         assertTrue(r.prominence >= 0f && r.prominence <= 1f, "prominence out of range: " + r.prominence);

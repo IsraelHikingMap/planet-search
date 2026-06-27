@@ -143,7 +143,6 @@ public class ElasticsearchHelper {
           }
           m.properties("location", g -> g.geoPoint(p -> p));
           m.properties("poiProminence", n -> n.float_(f -> f));
-          // Raw prominence components: kept for re-tuning, not searched.
           m.properties("poiPromBase", n -> n.float_(f -> f.index(false)));
           m.properties("poiPromQrankNorm", n -> n.float_(f -> f.index(false)));
           m.properties("poiPromMeta", n -> n.float_(f -> f.index(false)));

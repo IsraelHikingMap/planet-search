@@ -190,7 +190,6 @@ public class PlanetSearchProfile implements Profile {
     setPopulation(pointDocument, feature);
   }
 
-  /** Population is a place/admin-layer signal only — set it for settlements, leave POIs null. */
   private void setPopulation(PointDocument pointDocument, WithTags feature) {
     String place = feature.getString("place");
     if (place == null) {
@@ -201,8 +200,6 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.population = (int) Math.min(parsed, Integer.MAX_VALUE);
       return;
     }
-    // Ladder fallback when the population tag is missing (covers the ~80% of villages/hamlets
-    // that have no number). A real value always overrides this.
     switch (place) {
       case "city":    pointDocument.population = 1_000_000; break;
       case "town":    pointDocument.population = 50_000; break;
@@ -212,11 +209,6 @@ public class PlanetSearchProfile implements Profile {
     }
   }
 
-  /**
-   * Compute the composite prominence score from OSM tags + QRank and store it (plus raw components,
-   * for re-tuning without a reindex) on the document. Reads tags directly from the feature rather
-   * than poiCategory, because poiCategory is assigned later in some emit paths.
-   */
   private void setProminence(PointDocument pointDocument, WithTags feature) {
     long qrankRaw = this.context.qrankIndex().getByWikidata(pointDocument.wikidata);
     double ele = parseFirstNumber(feature.getString("ele"));
@@ -241,10 +233,6 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.poiQrankRaw = r.qrankRaw > 0 ? r.qrankRaw : null;
   }
 
-  /**
-   * Parse the first number out of a free-text OSM value like "4302", "14,115 ft", "1 000", "yes".
-   * Returns Double.NaN when there is no usable number. Never throws.
-   */
   static double parseFirstNumber(String raw) {
     if (raw == null) {
       return Double.NaN;
@@ -252,25 +240,31 @@ public class PlanetSearchProfile implements Profile {
     StringBuilder sb = new StringBuilder();
     boolean seenDigit = false;
     boolean seenDot = false;
+    boolean negative = false;
     for (int i = 0; i < raw.length(); i++) {
       char c = raw.charAt(i);
       if (c >= '0' && c <= '9') {
         sb.append(c);
         seenDigit = true;
+      } else if (c == '-' && !seenDigit && i + 1 < raw.length()
+          && raw.charAt(i + 1) >= '0' && raw.charAt(i + 1) <= '9') {
+        negative = true;
       } else if (c == '.' && seenDigit && !seenDot) {
         sb.append(c);
         seenDot = true;
       } else if ((c == ',' || c == ' ' || c == '\'') && seenDigit) {
-        // thousands separator within a number — skip it
       } else if (seenDigit) {
-        break; // number ended (e.g. " ft", "-")
+        break;
+      } else {
+        negative = false;
       }
     }
     if (!seenDigit) {
       return Double.NaN;
     }
     try {
-      return Double.parseDouble(sb.toString());
+      double value = Double.parseDouble(sb.toString());
+      return negative ? -value : value;
     } catch (NumberFormatException e) {
       return Double.NaN;
     }
@@ -817,14 +811,8 @@ public class PlanetSearchProfile implements Profile {
     insertPointToElasticsearch(pointDocument, docId);
   }
 
-  /**
-   * Safety floor for the insert path: every emitted document must carry a prominence so the
-   * query-time multiply is consistent. Some emit paths (ski-lift ways, relation-completion) don't
-   * run convertTagsToDocument, which would leave poiProminence null -> field_value_factor
-   * missing:1.0 -> they'd unfairly beat a real, scored feature (whose prominence is &lt;1). Floor a
-   * null to the minimum prominence; leave any real value UNCHANGED. Package-private static so it is
-   * unit-testable without the real BulkIngester.
-   */
+  // A null poiProminence is omitted by @JsonInclude(NON_NULL), which makes field_value_factor fall
+  // back to missing:1.0 and unfairly outrank real scored features; floor nulls so that can't happen.
   static float flooredProminence(Float prominence) {
     return prominence == null ? (float) ProminenceCalculator.FLOOR : prominence;
   }

@@ -24,7 +24,6 @@ class PointDocument {
   public String website;
   public double[] location;
   public Float poiProminence;
-  // Raw prominence components, stored index:false so the weights can be re-tuned without a reindex.
   public Float poiPromBase;
   public Float poiPromQrankNorm;
   public Float poiPromMeta;
