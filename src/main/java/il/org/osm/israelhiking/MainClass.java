@@ -3,8 +3,6 @@ package il.org.osm.israelhiking;
 import com.onthegomap.planetiler.Planetiler;
 import com.onthegomap.planetiler.config.Arguments;
 
-import co.elastic.clients.elasticsearch.inference.ElserServiceSettings;
-
 import java.nio.file.Path;
 import java.util.logging.Logger;
 
@@ -21,7 +19,7 @@ public class MainClass {
 
     /**
      * Main entry point for the application.
-     * 
+     *
      * @throws Exception
      */
     public static void main(String[] args) throws Exception {
@@ -43,8 +41,7 @@ public class MainClass {
         Planetiler planetiler = Planetiler.create(args);
 
         var esAddress = args.getString("es-address", "Elasticsearch address", "http://localhost:9200");
-        var esClient = ElasticsearchHelper.createElasticsearchClient(esAddress);
-        try {
+        try (var esClient = ElasticsearchHelper.createElasticsearchClient(esAddress)) {
             var pointsIndexAlias = args.getString("es-points-index-alias", "Elasticsearch index to populate points",
                     "points");
             var bboxIndexAlias = args.getString("es-bbox-index-alias", "Elasticsearch index to populate bounding boxes",
@@ -53,37 +50,37 @@ public class MainClass {
             var externalFilePath = args.getString("external-file-path", "External file path", "");
             var context = ElasticsearchHelper.initRun(esClient, pointsIndexAlias, bboxIndexAlias,
                     supportedLanguages);
-            var profile = new PlanetSearchProfile(planetiler.config(), context);
+            try (var bulkListener = context.bulkListener()) {
+                var profile = new PlanetSearchProfile(planetiler.config(), context);
 
-            String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
-            planetiler.setProfile(profile);
-            // override this default with osm_path="path/to/data.osm.pbf"
-            // Geofabrik has no whole-planet file, so area=planet uses the aws:latest
-            // s3://osm-pds mirror.
-            String osmSourceUrl = "planet".equals(area) ? "aws:latest" : "geofabrik:" + area;
-            planetiler.addOsmSource("osm", Path.of("data", "sources", area + ".osm.pbf"), osmSourceUrl);
-            if ("" != externalFilePath) {
-                planetiler.addGeoJsonSource("external", Path.of(externalFilePath));
+                String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
+                planetiler.setProfile(profile);
+                // override this default with osm_path="path/to/data.osm.pbf"
+                // Geofabrik has no whole-planet file, so area=planet uses the aws:latest
+                // s3://osm-pds mirror.
+                String osmSourceUrl = "planet".equals(area) ? "aws:latest" : "geofabrik:" + area;
+                planetiler.addOsmSource("osm", Path.of("data", "sources", area + ".osm.pbf"), osmSourceUrl);
+                if ("" != externalFilePath) {
+                    planetiler.addGeoJsonSource("external", Path.of(externalFilePath));
+                }
+                planetiler.overwriteOutput(Path.of("data", "target", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"));
+                planetiler.run();
+
+                ElasticsearchHelper.finalizeRun(context);
+
+                var stats = context.stats();
+                if (stats.getFailedBboxCount() > 0) {
+                    LOGGER.warning("Indexing dropped " + stats.getFailedBboxCount()
+                            + " bbox document(s) (geo_shape rejects); tolerated — name search unaffected.");
+                }
+                if (stats.hasIndexingFailures()) {
+                    throw new IllegalStateException("Indexing finished with " + stats.getFailedPointsCount()
+                            + " failed POINTS document(s) out of " + stats.getEmittedCount()
+                            + " emitted (" + stats.getIndexedCount() + " indexed, "
+                            + stats.getFailedBboxCount() + " bbox dropped). "
+                            + "Refusing to treat a partial points index as success.");
+                }
             }
-            planetiler.overwriteOutput(Path.of("data", "target", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"));
-            planetiler.run();
-
-            ElasticsearchHelper.finalizeRun(context, profile);
-
-            if (profile.getFailedBboxCount() > 0) {
-                LOGGER.warning("Indexing dropped " + profile.getFailedBboxCount()
-                        + " bbox document(s) (geo_shape rejects); tolerated — name search unaffected.");
-            }
-
-            if (profile.hasIndexingFailures()) {
-                throw new IllegalStateException("Indexing finished with " + profile.getFailedPointsCount()
-                        + " failed POINTS document(s) out of " + profile.getEmittedCount()
-                        + " emitted (" + profile.getIndexedCount() + " indexed, "
-                        + profile.getFailedBboxCount() + " bbox dropped). "
-                        + "Refusing to treat a partial points index as success.");
-            }
-        } finally {
-            esClient.close();
         }
     }
 }

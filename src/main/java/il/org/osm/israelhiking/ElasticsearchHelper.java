@@ -9,7 +9,9 @@ import org.apache.http.HttpHost;
 import org.elasticsearch.client.RestClient;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch._helpers.bulk.BulkIngester;
 import co.elastic.clients.json.jackson.JacksonJsonpMapper;
+import co.elastic.clients.transport.BackoffPolicy;
 import co.elastic.clients.transport.ElasticsearchTransport;
 import co.elastic.clients.transport.rest_client.RestClientTransport;
 
@@ -31,7 +33,10 @@ public class ElasticsearchHelper {
       String bboxIndexAlias,
       String pointsIndexTarget,
       String bboxIndexTarget,
-      String[] supportedLanguages) {
+      String[] supportedLanguages,
+      BulkIngester<Void> bulkIngester,
+      AccountingBulkListener bulkListener,
+      IndexingStats stats) {
   }
 
   /**
@@ -228,8 +233,18 @@ public class ElasticsearchHelper {
     var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias,
         supportedLanguages);
     var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
+    var stats = new IndexingStats();
+    var bulkListener = new AccountingBulkListener(esClient, stats, targetBBoxIndex);
+    BulkIngester<Void> bulkIngester = BulkIngester.of(b -> b
+        .client(esClient)
+        .maxOperations(5_000)
+        .maxSize(5 * 1024 * 1024)
+        .maxConcurrentRequests(4)
+        .backoffPolicy(BackoffPolicy.noBackoff())
+        .listener(bulkListener));
+    bulkListener.attachIngester(bulkIngester);
     return new ElasticRunContext(esClient, pointsIndexAlias, bboxIndexAlias, targetPointsIndex, targetBBoxIndex,
-        supportedLanguages);
+        supportedLanguages, bulkIngester, bulkListener, stats);
   }
 
   public static void restoreSearchSettings(ElasticsearchClient esClient, String targetIndex)
@@ -241,8 +256,15 @@ public class ElasticsearchHelper {
             .numberOfReplicas("1")));
   }
 
-  public static void finalizeRun(ElasticRunContext context, PlanetSearchProfile profile) throws Exception {
-    profile.flush();
+  public static void finalizeRun(ElasticRunContext context) throws Exception {
+    context.bulkIngester().flush();
+    context.bulkListener().close();
+
+    var stats = context.stats();
+    LOGGER.info(() -> "Indexing finished: emitted=" + stats.getEmittedCount()
+        + " indexed=" + stats.getIndexedCount() + " failed=" + stats.getFailedCount()
+        + " (points=" + stats.getFailedPointsCount() + ", bbox=" + stats.getFailedBboxCount() + ").");
+
     context.esClient().indices().refresh(r -> r.index(context.pointsIndexTarget(), context.bboxIndexTarget()));
 
     restoreSearchSettings(context.esClient(), context.pointsIndexTarget());
@@ -250,9 +272,9 @@ public class ElasticsearchHelper {
 
     ElasticsearchHelper.switchAlias(context.esClient(), context.bboxIndexAlias(), context.bboxIndexTarget());
 
-    if (profile.hasIndexingFailures()) {
+    if (stats.hasIndexingFailures()) {
       LOGGER.warning(() -> "Leaving points alias '" + context.pointsIndexAlias()
-          + "' on the previous index: this build dropped " + profile.getFailedPointsCount()
+          + "' on the previous index: this build dropped " + stats.getFailedPointsCount()
           + " points document(s), so '" + context.pointsIndexTarget()
           + "' is incomplete and must not go live.");
       return;

@@ -1,14 +1,12 @@
 package il.org.osm.israelhiking;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.LongAdder;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
@@ -18,8 +16,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.junit.jupiter.MockitoExtension;
 
 import co.elastic.clients.elasticsearch.core.BulkRequest;
 import co.elastic.clients.elasticsearch.core.BulkResponse;
@@ -28,51 +24,44 @@ import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
 import co.elastic.clients.elasticsearch.core.bulk.OperationType;
 
 @Tag("unit")
-@ExtendWith(MockitoExtension.class)
 class BulkIngesterAccountingTest {
 
     private static final String POINTS_INDEX = "points";
     private static final String BBOX_INDEX = "bbox";
 
-    private LongAdder indexedCount;
-    private LongAdder failedPointsCount;
-    private LongAdder failedBboxCount;
-    private PlanetSearchProfile.AccountingBulkListener listener;
+    private IndexingStats stats;
+    private AccountingBulkListener listener;
 
-    private Logger profileLogger;
+    private Logger listenerLogger;
     private RecordingHandler handler;
     private Level previousLevel;
 
     @BeforeEach
     void setUp() {
-        indexedCount = new LongAdder();
-        failedPointsCount = new LongAdder();
-        failedBboxCount = new LongAdder();
-        listener = new PlanetSearchProfile.AccountingBulkListener(
-                indexedCount, failedPointsCount, failedBboxCount, BBOX_INDEX);
+        stats = new IndexingStats();
+        listener = new AccountingBulkListener(null, stats, BBOX_INDEX);
 
-        profileLogger = Logger.getLogger(PlanetSearchProfile.class.getName());
-        previousLevel = profileLogger.getLevel();
-        profileLogger.setLevel(Level.ALL);
+        listenerLogger = Logger.getLogger(AccountingBulkListener.class.getName());
+        previousLevel = listenerLogger.getLevel();
+        listenerLogger.setLevel(Level.ALL);
         handler = new RecordingHandler();
-        profileLogger.addHandler(handler);
+        listenerLogger.addHandler(handler);
     }
 
     @AfterEach
     void tearDown() {
-        profileLogger.removeHandler(handler);
-        profileLogger.setLevel(previousLevel);
+        listenerLogger.removeHandler(handler);
+        listenerLogger.setLevel(previousLevel);
     }
 
     @Test
-    void afterBulk_withItemError_incrementsFailedCountAndLogsWarning() {
-        BulkResponseItem failedItem = item("bad-1", true);
-        BulkResponse response = responseWithErrors(List.of(failedItem));
+    void afterBulk_withItemError_incrementsFailedPointsAndLogsWarning() {
+        BulkResponse response = responseWithErrors(List.of(item(POINTS_INDEX, "bad-1", true)));
 
-        listener.afterBulk(1L, emptyRequest(), Collections.emptyList(), response);
+        listener.afterBulk(1L, requestWithOperations(1, POINTS_INDEX), Collections.emptyList(), response);
 
-        assertEquals(1, totalFailed(), "item with non-null error() must be counted as failed");
-        assertEquals(0, indexedCount.sum(), "a failed item must not be counted as indexed");
+        assertEquals(1, stats.getFailedPointsCount(), "a points item with non-null error() lands in the points bucket");
+        assertEquals(0, stats.getIndexedCount(), "a failed item must not be counted as indexed");
         assertTrue(loggedAtLeast(Level.WARNING, "Failed to index id=bad-1"),
                 "the failure must be logged (surfaced), not swallowed");
     }
@@ -82,27 +71,28 @@ class BulkIngesterAccountingTest {
         BulkResponse response = BulkResponse.of(b -> b
                 .took(5)
                 .errors(false)
-                .items(List.of(item("ok-1", false), item("ok-2", false), item("ok-3", false))));
+                .items(List.of(item(POINTS_INDEX, "ok-1", false), item(POINTS_INDEX, "ok-2", false),
+                        item(POINTS_INDEX, "ok-3", false))));
 
-        listener.afterBulk(2L, emptyRequest(), Collections.emptyList(), response);
+        listener.afterBulk(2L, requestWithOperations(3, POINTS_INDEX), Collections.emptyList(), response);
 
-        assertEquals(3, indexedCount.sum());
-        assertEquals(0, totalFailed());
+        assertEquals(3, stats.getIndexedCount());
+        assertEquals(0, stats.getFailedCount());
     }
 
     @Test
     void afterBulk_mixedBatch_classifiesEachItemExactlyOnce() {
         List<BulkResponseItem> items = List.of(
-                item("ok-1", false),
-                item("bad-1", true),
-                item("ok-2", false),
-                item("bad-2", true));
+                item(POINTS_INDEX, "ok-1", false),
+                item(POINTS_INDEX, "bad-1", true),
+                item(POINTS_INDEX, "ok-2", false),
+                item(POINTS_INDEX, "bad-2", true));
         BulkResponse response = responseWithErrors(items);
 
-        listener.afterBulk(3L, emptyRequest(), Collections.emptyList(), response);
+        listener.afterBulk(3L, requestWithOperations(items.size(), POINTS_INDEX), Collections.emptyList(), response);
 
-        assertEquals(2, indexedCount.sum());
-        assertEquals(2, totalFailed());
+        assertEquals(2, stats.getIndexedCount());
+        assertEquals(2, stats.getFailedCount());
     }
 
     @Test
@@ -110,95 +100,107 @@ class BulkIngesterAccountingTest {
         int emitted = 10;
         List<BulkResponseItem> items = new ArrayList<>();
         for (int i = 0; i < emitted; i++) {
-            items.add(item("doc-" + i, i == 3 || i == 7));
+            items.add(item(POINTS_INDEX, "doc-" + i, i == 3 || i == 7));
         }
         BulkResponse response = responseWithErrors(items);
 
-        listener.afterBulk(4L, emptyRequest(), Collections.emptyList(), response);
+        listener.afterBulk(4L, requestWithOperations(emitted, POINTS_INDEX), Collections.emptyList(), response);
 
-        long indexed = indexedCount.sum();
-        long failed = totalFailed();
+        long indexed = stats.getIndexedCount();
+        long failed = stats.getFailedCount();
         assertEquals(8, indexed);
         assertEquals(2, failed);
         assertEquals(emitted, indexed + failed, "emitted must equal indexed + failed");
     }
 
     @Test
-    void afterBulk_wholeBatchThrowable_addsBatchSizeToFailedAndLogsSevere() {
-        int batchSize = 7;
-        BulkRequest request = requestWithOperations(batchSize);
-
-        listener.afterBulk(5L, request, Collections.emptyList(),
-                new RuntimeException("connection reset"));
-
-        assertEquals(batchSize, totalFailed(),
-                "whole-batch failure must add the entire request size to failedCount");
-        assertEquals(batchSize, failedPointsCount.sum(),
-                "a points-targeted whole-batch failure must land in failedPointsCount");
-        assertEquals(0, indexedCount.sum());
-        assertTrue(loggedAtLeast(Level.SEVERE, "failed entirely"),
-                "an unrecoverable whole-batch error must be logged at SEVERE");
-    }
-
-    @Test
-    void failBuildDecision_isTakenWhenPointsDocFailed_andNotOnCleanRun() {
-        assertFalse(failsBuild(), "a clean run (no failures) must NOT fail the build");
-
-        listener.afterBulk(6L, requestWithOperations(3, POINTS_INDEX), Collections.emptyList(),
-                new RuntimeException("boom"));
-
-        assertTrue(failsBuild(),
-                "once any POINTS document fails, the build must fail (no partial index mistaken for success)");
-    }
-
-    @Test
-    void bboxItemFailures_areCountedSeparately_andDoNotFailTheBuild() {
+    void bboxItemFailures_areCountedSeparately_andDoNotTripTheBuildGate() {
         List<BulkResponseItem> items = List.of(
                 item(BBOX_INDEX, "rel-1", true),
                 item(BBOX_INDEX, "rel-2", true),
                 item(POINTS_INDEX, "ok-1", false));
         BulkResponse response = responseWithErrors(items);
 
-        listener.afterBulk(7L, emptyRequest(), Collections.emptyList(), response);
+        listener.afterBulk(7L, requestWithOperations(items.size(), POINTS_INDEX), Collections.emptyList(), response);
 
-        assertEquals(2, failedBboxCount.sum(), "bbox rejects must be counted in the bbox bucket");
-        assertEquals(0, failedPointsCount.sum(), "no points doc failed");
-        assertEquals(1, indexedCount.sum());
-        assertEquals(2, totalFailed(), "lossless: bbox failures are still counted in the total");
-        assertFalse(failsBuild(), "bbox-only failures must NOT fail the build (warn-only)");
+        assertEquals(2, stats.getFailedBboxCount(), "bbox rejects must be counted in the bbox bucket");
+        assertEquals(0, stats.getFailedPointsCount(), "no points doc failed");
+        assertEquals(1, stats.getIndexedCount());
+        assertEquals(2, stats.getFailedCount(), "lossless: bbox failures are still counted in the total");
+        assertTrue(!stats.hasIndexingFailures(), "bbox-only failures must NOT trip the build-fail gate");
     }
 
     @Test
-    void wholeBatchThrowable_classifiesCreateUpdateDeleteOpsByDestinationIndex() {
+    void unknownDestination_isFailClosedAsPoints() {
+        BulkResponse response = responseWithErrors(List.of(item("mystery", "x-1", true)));
+
+        listener.afterBulk(8L, requestWithOperations(1, POINTS_INDEX), Collections.emptyList(), response);
+
+        assertEquals(1, stats.getFailedPointsCount(), "an unknown destination must fail closed as points");
+        assertEquals(0, stats.getFailedBboxCount());
+        assertTrue(stats.hasIndexingFailures());
+    }
+
+    @Test
+    void wholeBatchNonRetryableThrowable_countsPointsFailed_andLogsSevere() {
+        int batchSize = 7;
+        BulkRequest request = requestWithOperations(batchSize, POINTS_INDEX);
+
+        listener.afterBulk(5L, request, Collections.emptyList(), new RuntimeException("malformed request"));
+
+        assertEquals(batchSize, stats.getFailedPointsCount(),
+                "a non-retryable points whole-batch failure lands wholly in the points bucket");
+        assertEquals(0, stats.getIndexedCount());
+        assertTrue(loggedAtLeast(Level.SEVERE, "failed non-retryably"),
+                "a non-retryable whole-batch error must be logged at SEVERE");
+    }
+
+    @Test
+    void wholeBatchNonRetryableThrowable_classifiesByOperationDestination() {
         List<BulkOperation> ops = List.of(
-                BulkOperation.of(op -> op.create(c -> c.index(BBOX_INDEX).id("c1").document(Map.of("k", 1)))),
-                BulkOperation.of(op -> op.update(u -> u.index(POINTS_INDEX).id("u1")
-                        .action(a -> a.doc(Map.of("k", 1))))),
-                BulkOperation.of(op -> op.delete(d -> d.index(POINTS_INDEX).id("d1"))));
+                BulkOperation.of(op -> op.index(ix -> ix.index(BBOX_INDEX).id("b-1").document(Map.of("k", 1)))),
+                BulkOperation.of(op -> op.index(ix -> ix.index(POINTS_INDEX).id("p-1").document(Map.of("k", 2)))),
+                BulkOperation.of(op -> op.index(ix -> ix.index(POINTS_INDEX).id("p-2").document(Map.of("k", 3)))));
         BulkRequest request = BulkRequest.of(b -> b.operations(ops));
 
-        listener.afterBulk(8L, request, Collections.emptyList(), new RuntimeException("net down"));
+        listener.afterBulk(6L, request, Collections.emptyList(), new RuntimeException("connection refused permanently"));
 
-        assertEquals(1, failedBboxCount.sum(), "the create op targeting bbox lands in the bbox bucket");
-        assertEquals(2, failedPointsCount.sum(),
-                "the update and delete ops targeting points land in the points bucket");
-        assertEquals(0, indexedCount.sum());
+        assertEquals(1, stats.getFailedBboxCount());
+        assertEquals(2, stats.getFailedPointsCount());
     }
 
-    private boolean failsBuild() {
-        return failedPointsCount.sum() > 0;
+    @Test
+    void indexingStats_gettersSumTheUnderlyingAdders() {
+        IndexingStats s = new IndexingStats();
+        assertEquals(0, s.getIndexedCount());
+        assertEquals(0, s.getFailedCount());
+        assertEquals(0, s.getEmittedCount());
+
+        s.indexedCount.add(7);
+        s.failedPointsCount.add(2);
+        s.failedBboxCount.add(1);
+        s.emittedCount.add(10);
+
+        assertEquals(7, s.getIndexedCount());
+        assertEquals(3, s.getFailedCount(), "failed total is points + bbox");
+        assertEquals(2, s.getFailedPointsCount());
+        assertEquals(1, s.getFailedBboxCount());
+        assertEquals(10, s.getEmittedCount(), "emitted is tracked independently of indexed/failed");
+        assertTrue(s.hasIndexingFailures(), "a points failure trips the build-fail gate");
     }
 
-    private long totalFailed() {
-        return failedPointsCount.sum() + failedBboxCount.sum();
+    @Test
+    void afterBulk_nonRetryableThrowableWithNullMessage_stillCountsFailedAndDescribes() {
+        listener.afterBulk(9L, requestWithOperations(2, POINTS_INDEX), Collections.emptyList(), new RuntimeException());
+
+        assertEquals(2, stats.getFailedPointsCount());
+        assertEquals(0, stats.getIndexedCount());
+        assertTrue(loggedAtLeast(Level.SEVERE, "RuntimeException"),
+                "describe(...) must name the throwable class even when its message is null");
     }
 
     private static BulkResponse responseWithErrors(List<BulkResponseItem> items) {
         return BulkResponse.of(b -> b.took(5).errors(true).items(items));
-    }
-
-    private static BulkResponseItem item(String id, boolean withError) {
-        return item(POINTS_INDEX, id, withError);
     }
 
     private static BulkResponseItem item(String index, String id, boolean withError) {
@@ -209,14 +211,6 @@ class BulkIngesterAccountingTest {
             }
             return b;
         });
-    }
-
-    private static BulkRequest emptyRequest() {
-        return requestWithOperations(1, POINTS_INDEX);
-    }
-
-    private static BulkRequest requestWithOperations(int n) {
-        return requestWithOperations(n, POINTS_INDEX);
     }
 
     private static BulkRequest requestWithOperations(int n, String index) {

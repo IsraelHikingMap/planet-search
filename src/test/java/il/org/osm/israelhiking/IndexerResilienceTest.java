@@ -1,144 +1,384 @@
 package il.org.osm.israelhiking;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.util.concurrent.atomic.LongAdder;
-import java.util.function.Function;
+import java.io.IOException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 
+import org.apache.http.StatusLine;
+import org.apache.http.conn.ConnectTimeoutException;
+import org.elasticsearch.client.Response;
+import org.elasticsearch.client.ResponseException;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentMatchers;
+import org.mockito.stubbing.Answer;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
-import co.elastic.clients.elasticsearch.indices.ElasticsearchIndicesClient;
-import co.elastic.clients.elasticsearch.indices.ExistsAliasRequest;
-import co.elastic.clients.elasticsearch.indices.PutIndicesSettingsRequest;
-import co.elastic.clients.elasticsearch.indices.RefreshRequest;
-import co.elastic.clients.elasticsearch.indices.UpdateAliasesRequest;
-import co.elastic.clients.json.jackson.JacksonJsonpMapper;
-import co.elastic.clients.transport.ElasticsearchTransport;
-import co.elastic.clients.transport.TransportOptions;
-import co.elastic.clients.transport.endpoints.BooleanResponse;
-import co.elastic.clients.util.ObjectBuilder;
-
-import il.org.osm.israelhiking.ElasticsearchHelper.ElasticRunContext;
+import co.elastic.clients.elasticsearch._types.ElasticsearchException;
+import co.elastic.clients.elasticsearch.core.BulkRequest;
+import co.elastic.clients.elasticsearch.core.BulkResponse;
+import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
+import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
+import co.elastic.clients.elasticsearch.core.bulk.OperationType;
 
 @Tag("unit")
 class IndexerResilienceTest {
 
-    private static final String POINTS_ALIAS = "points";
-    private static final String BBOX_ALIAS = "bbox";
-    private static final String POINTS_TARGET = "points1";
-    private static final String BBOX_TARGET = "bbox1";
+    private static final String POINTS_INDEX = "points";
+    private static final String BBOX_INDEX = "bbox";
 
-    @Test
-    void finalizeRun_cleanRun_swapsBothAliasesAndRestoresSearchSettings() throws Exception {
-        ElasticsearchIndicesClient indices = mock(ElasticsearchIndicesClient.class);
-        when(indices.existsAlias(anyExistsAlias())).thenReturn(new BooleanResponse(true));
-        ElasticRunContext context = contextOver(indices);
-        PlanetSearchProfile profile = newProfile(context);
+    private IndexingStats stats;
 
-        ElasticsearchHelper.finalizeRun(context, profile);
+    @BeforeEach
+    void setUp() {
+        stats = new IndexingStats();
+    }
 
-        verify(indices).refresh(anyRefresh());
-        verify(indices, times(2)).putSettings(anyPutSettings());
-        verify(indices, times(2)).updateAliases(anyUpdateAliases());
-        assertEquals(0, profile.getFailedPointsCount());
+    private long indexed() {
+        return stats.getIndexedCount();
+    }
+
+    private long failed() {
+        return stats.getFailedCount();
+    }
+
+    private static ElasticsearchClient mockClient(Object... script) {
+        ElasticsearchClient client = mock(ElasticsearchClient.class);
+        Deque<Object> queue = new ArrayDeque<>(List.of(script));
+        Answer<BulkResponse> answer = invocation -> {
+            Object next = queue.size() > 1 ? queue.poll() : queue.peek();
+            if (next instanceof Throwable t) {
+                if (t instanceof RuntimeException re) {
+                    throw re;
+                }
+                if (t instanceof Exception e) {
+                    throw e;
+                }
+                throw new RuntimeException(t);
+            }
+            return (BulkResponse) next;
+        };
+        try {
+            when(client.bulk(any(BulkRequest.class))).thenAnswer(answer);
+        } catch (IOException impossible) {
+            throw new AssertionError(impossible);
+        }
+        return client;
+    }
+
+    private AccountingBulkListener driveRetryViaAfterBulk(ElasticsearchClient client, int opCount,
+            Throwable wholeBatchFailure) {
+        AccountingBulkListener listener = new AccountingBulkListener(client, stats, BBOX_INDEX, 0L, 0L);
+        listener.afterBulk(1L, requestOf(operations(opCount)), List.of(), wholeBatchFailure);
+        listener.awaitRetries();
+        return listener;
     }
 
     @Test
-    void finalizeRun_droppedPointsDoc_leavesPointsAliasOnPreviousIndex() throws Exception {
-        ElasticsearchIndicesClient indices = mock(ElasticsearchIndicesClient.class);
-        when(indices.existsAlias(anyExistsAlias())).thenReturn(new BooleanResponse(true));
-        ElasticRunContext context = contextOver(indices);
-        PlanetSearchProfile profile = newProfile(context);
-        adder(profile, "failedPointsCount").increment();
-
-        ElasticsearchHelper.finalizeRun(context, profile);
-
-        verify(indices, times(2)).putSettings(anyPutSettings());
-        verify(indices, times(1)).updateAliases(anyUpdateAliases());
-        assertTrue(profile.hasIndexingFailures());
+    void classification_transientTransportErrorsAreRetryable() {
+        assertTrue(AccountingBulkListener.isRetryable(
+                new SocketTimeoutException("30,000 milliseconds timeout on connection")));
+        assertTrue(AccountingBulkListener.isRetryable(new ConnectException("refused")));
+        assertTrue(AccountingBulkListener.isRetryable(new IOException("connection reset")));
+        assertTrue(AccountingBulkListener.isRetryable(
+                new RuntimeException("wrapped", new SocketTimeoutException("timeout"))));
     }
 
     @Test
-    void enqueueAfterClose_isCountedAsFailed_neverSwallowed() throws Exception {
-        ElasticRunContext context = contextOver(mock(ElasticsearchIndicesClient.class));
-        PlanetSearchProfile profile = newProfile(context);
-        profile.flush();
-
-        invokeInsertPoint(profile, "OSM_node_after_close");
-        invokeAddBbox(profile, "bbox_after_close");
-
-        assertEquals(0, profile.getEmittedCount(), "a failed enqueue must not be counted as emitted");
-        assertEquals(1, profile.getFailedPointsCount(), "a points enqueue failure lands in the points bucket");
-        assertEquals(1, profile.getFailedBboxCount(), "a bbox enqueue failure lands in the bbox bucket");
-        assertTrue(profile.hasIndexingFailures(), "a dropped points doc must trip the fail-the-build gate");
+    void classification_4xxAndPlainRuntimeAreNotRetryable() {
+        assertFalse(AccountingBulkListener.isRetryable(new RuntimeException("bad request")));
+        assertTrue(AccountingBulkListener.isRetryableStatus(429));
+        assertTrue(AccountingBulkListener.isRetryableStatus(502));
+        assertTrue(AccountingBulkListener.isRetryableStatus(503));
+        assertTrue(AccountingBulkListener.isRetryableStatus(504));
+        assertFalse(AccountingBulkListener.isRetryableStatus(400));
+        assertFalse(AccountingBulkListener.isRetryableStatus(404));
     }
 
-    private static ElasticRunContext contextOver(ElasticsearchIndicesClient indices) {
-        ElasticsearchTransport transport = mock(ElasticsearchTransport.class);
-        when(transport.options()).thenReturn(mock(TransportOptions.class));
-        when(transport.jsonpMapper()).thenReturn(new JacksonJsonpMapper());
-        ElasticsearchClient esClient = mock(ElasticsearchClient.class);
-        when(esClient._transport()).thenReturn(transport);
-        when(esClient.indices()).thenReturn(indices);
-        return new ElasticRunContext(esClient, POINTS_ALIAS, BBOX_ALIAS, POINTS_TARGET, BBOX_TARGET,
-                new String[] { "en" });
+    @Test
+    void classification_connectTimeoutException_isRetryable() {
+        assertTrue(AccountingBulkListener.isRetryable(new ConnectTimeoutException("connect timed out")));
+        assertTrue(AccountingBulkListener.isRetryable(
+                new RuntimeException("wrapped", new ConnectTimeoutException("connect timed out"))));
     }
 
-    private static PlanetSearchProfile newProfile(ElasticRunContext context) throws Exception {
-        Constructor<PlanetSearchProfile> ctor = PlanetSearchProfile.class.getDeclaredConstructor(
-                com.onthegomap.planetiler.config.PlanetilerConfig.class, ElasticRunContext.class);
-        ctor.setAccessible(true);
-        return ctor.newInstance(null, context);
+    @Test
+    void classification_responseException_retryableVsNonRetryableStatus() {
+        assertTrue(AccountingBulkListener.isRetryable(responseException(503)),
+                "a 503 ResponseException is retryable");
+        assertFalse(AccountingBulkListener.isRetryable(responseException(400)),
+                "a 400 ResponseException is not retryable");
     }
 
-    private static void invokeInsertPoint(PlanetSearchProfile profile, String docId) throws Exception {
-        PointDocument doc = new PointDocument();
-        doc.location = new double[] { 35.0, 31.0 };
-        Method m = PlanetSearchProfile.class.getDeclaredMethod(
-                "insertPointToElasticsearch", PointDocument.class, String.class);
-        m.setAccessible(true);
-        m.invoke(profile, doc, docId);
+    @Test
+    void classification_elasticsearchExceptionStatus_isHonored() {
+        assertTrue(AccountingBulkListener.isRetryable(
+                new ElasticsearchException("bulk", errorResponse(429))));
+        assertFalse(AccountingBulkListener.isRetryable(
+                new ElasticsearchException("bulk", errorResponse(404))));
     }
 
-    private static void invokeAddBbox(PlanetSearchProfile profile, String docId) throws Exception {
-        BBoxDocument bbox = new BBoxDocument();
-        bbox.center = new double[] { 35.0, 31.0 };
-        Method m = PlanetSearchProfile.class.getDeclaredMethod(
-                "addBboxToBulk", BBoxDocument.class, String.class);
-        m.setAccessible(true);
-        m.invoke(profile, bbox, docId);
+    @Test
+    void classification_selfReferentialCause_doesNotLoopAndIsNotRetryable() {
+        RuntimeException loop = new RuntimeException("self") {
+            @Override
+            public synchronized Throwable getCause() {
+                return this;
+            }
+        };
+        assertFalse(AccountingBulkListener.isRetryable(loop));
     }
 
-    private static LongAdder adder(PlanetSearchProfile profile, String name) throws Exception {
-        Field f = PlanetSearchProfile.class.getDeclaredField(name);
-        f.setAccessible(true);
-        return (LongAdder) f.get(profile);
+    @Test
+    void backoff_isExponentialBoundedAndCapped() {
+        assertWithinJitter(1, 1_000);
+        assertWithinJitter(2, 2_000);
+        assertWithinJitter(3, 4_000);
+        assertWithinJitter(4, 8_000);
+        assertWithinJitter(5, 16_000);
+        assertWithinJitter(6, 16_000);
+        assertWithinJitter(10, 16_000);
     }
 
-    private static Function<ExistsAliasRequest.Builder, ObjectBuilder<ExistsAliasRequest>> anyExistsAlias() {
-        return ArgumentMatchers.any();
+    private static void assertWithinJitter(int attempt, long cap) {
+        for (int i = 0; i < 200; i++) {
+            long b = AccountingBulkListener.backoffMillis(attempt, 1_000L, 16_000L);
+            assertTrue(b >= cap / 2 && b <= cap,
+                    "attempt " + attempt + " backoff " + b + " out of [" + (cap / 2) + "," + cap + "]");
+        }
     }
 
-    private static Function<RefreshRequest.Builder, ObjectBuilder<RefreshRequest>> anyRefresh() {
-        return ArgumentMatchers.any();
+    @Test
+    void retry_recoversOnSecondAttempt_countsIndexed_noFailures() {
+        ElasticsearchClient client = mockClient(new SocketTimeoutException("timeout"), successResponse(3));
+
+        driveRetryViaAfterBulk(client, 3, new SocketTimeoutException("timeout"));
+
+        assertEquals(3, indexed(), "recovered ops are counted as indexed");
+        assertEquals(0, failed());
     }
 
-    private static Function<PutIndicesSettingsRequest.Builder, ObjectBuilder<PutIndicesSettingsRequest>> anyPutSettings() {
-        return ArgumentMatchers.any();
+    @Test
+    void retry_perItem4xxIsCountedFailed_andNotRetried() {
+        BulkResponse mixed = BulkResponse.of(b -> b.took(1).errors(true).items(List.of(
+                item("op-0", 200, false),
+                item("op-1", 400, true),
+                item("op-2", 200, false))));
+        ElasticsearchClient client = mockClient(mixed);
+
+        driveRetryViaAfterBulk(client, 3, new SocketTimeoutException("timeout"));
+
+        assertEquals(2, indexed());
+        assertEquals(1, failed(), "a 400 per-item error is counted as failed");
     }
 
-    private static Function<UpdateAliasesRequest.Builder, ObjectBuilder<UpdateAliasesRequest>> anyUpdateAliases() {
-        return ArgumentMatchers.any();
+    @Test
+    void retry_exhausted_countsFailed() {
+        ElasticsearchClient client = mockClient(new SocketTimeoutException("timeout"));
+
+        driveRetryViaAfterBulk(client, 4, new SocketTimeoutException("timeout"));
+
+        assertEquals(0, indexed());
+        assertEquals(4, failed(), "exhausted ops are counted as failed");
+    }
+
+    @Test
+    void retry_partialRetryableItems_areRetriedThenCountedFailed() {
+        BulkResponse firstAttempt = BulkResponse.of(b -> b.took(1).errors(true).items(List.of(
+                item("op-0", 200, false),
+                item("op-1", 503, true))));
+        BulkResponse stillFailing = BulkResponse.of(b -> b.took(1).errors(true).items(List.of(
+                item("op-1", 503, true))));
+        ElasticsearchClient client = mockClient(firstAttempt, stillFailing);
+
+        driveRetryViaAfterBulk(client, 2, new SocketTimeoutException("timeout"));
+
+        assertEquals(1, indexed(), "the op that succeeded on attempt 1 is counted once");
+        assertEquals(1, failed(), "the persistently-503 op is counted failed after retries");
+    }
+
+    @Test
+    void retry_shortResponse_doesNotSilentlyDropSurplusOps() {
+        BulkResponse shortOk = BulkResponse.of(b -> b.took(1).errors(false).items(List.of(
+                item("op-0", 200, false),
+                item("op-1", 200, false))));
+        ElasticsearchClient client = mockClient(shortOk, successResponse(1));
+
+        driveRetryViaAfterBulk(client, 3, new SocketTimeoutException("timeout"));
+
+        assertEquals(3, indexed(), "the surplus op is retried and indexed, not dropped");
+        assertEquals(0, failed());
+    }
+
+    @Test
+    void retry_nonRetryableExceptionDuringResubmit_countsFailed_andStops() {
+        ElasticsearchClient client = mockClient(new RuntimeException("400 illegal_argument_exception"));
+
+        driveRetryViaAfterBulk(client, 3, new SocketTimeoutException("timeout"));
+
+        assertEquals(3, failed(), "a non-retryable resubmit error counts ops as failed");
+        assertEquals(0, indexed());
+    }
+
+    @Test
+    void retryablePerItemStatus_isRetried_thenRecovers_notCountedFailed() {
+        BulkResponse first503 = BulkResponse.of(b -> b.took(1).errors(true).items(List.of(
+                item("op-0", 503, true))));
+        ElasticsearchClient client = mockClient(first503, successResponse(1));
+
+        driveRetryViaAfterBulk(client, 1, new SocketTimeoutException("timeout"));
+
+        assertEquals(1, indexed(), "the 503 op recovers on resubmit");
+        assertEquals(0, failed(), "a 503 is retryable, never charged failed when it recovers");
+    }
+
+    @Test
+    void wholeBatchNonRetryableThrowable_isNotRetried_countsFailed() {
+        AccountingBulkListener listener = new AccountingBulkListener(mock(ElasticsearchClient.class), stats, BBOX_INDEX);
+
+        listener.afterBulk(6L, requestOf(operations(2)), List.of(),
+                new ElasticsearchException("bulk", errorResponse(400)));
+        listener.awaitRetries();
+
+        assertEquals(2, failed());
+        assertEquals(0, indexed());
+    }
+
+    @Test
+    void initialResponse_perItem4xxIsCountedFailed() {
+        AccountingBulkListener listener = new AccountingBulkListener(null, stats, BBOX_INDEX);
+        BulkResponse mixed = BulkResponse.of(b -> b.took(1).errors(true).items(List.of(
+                item("op-0", 200, false),
+                item("op-1", 400, true),
+                item("op-2", 200, false))));
+
+        listener.afterBulk(1L, requestOf(operations(3)), List.of(), mixed);
+
+        assertEquals(2, indexed());
+        assertEquals(1, failed(), "a 400 per-item error is counted as failed");
+    }
+
+    @Test
+    void initialResponse_shortButErrorFree_doesNotTakeFastPath_andRetriesSurplus() {
+        BulkResponse shortOk = BulkResponse.of(b -> b.took(1).errors(false).items(List.of(
+                item("op-0", 200, false),
+                item("op-1", 200, false))));
+        ElasticsearchClient client = mockClient(shortOk, successResponse(1));
+        AccountingBulkListener listener = new AccountingBulkListener(client, stats, BBOX_INDEX, 0L, 0L);
+
+        listener.afterBulk(1L, requestOf(operations(3)), List.of(), shortOk);
+        listener.awaitRetries();
+
+        assertEquals(3, indexed(), "the op missing from the short response is retried and indexed");
+        assertEquals(0, failed());
+    }
+
+    @Test
+    void initialResponse_retryablePerItem_offloadsRetry_thenRecovers() {
+        BulkResponse first = BulkResponse.of(b -> b.took(1).errors(true).items(List.of(
+                item("op-0", 200, false),
+                item("op-1", 503, true))));
+        ElasticsearchClient client = mockClient(successResponse(1));
+        AccountingBulkListener listener = new AccountingBulkListener(client, stats, BBOX_INDEX, 0L, 0L);
+
+        listener.afterBulk(1L, requestOf(operations(2)), List.of(), first);
+        listener.awaitRetries();
+
+        assertEquals(2, indexed(), "op-0 indexed immediately, op-1 recovers on retry");
+        assertEquals(0, failed());
+    }
+
+    @Test
+    void drainTimeout_forcedShutdown_chargesEveryRetryOpAsFailed() throws InterruptedException {
+        CountDownLatch release = new CountDownLatch(1);
+        ElasticsearchClient blocking = mock(ElasticsearchClient.class);
+        try {
+            when(blocking.bulk(any(BulkRequest.class))).thenAnswer(inv -> {
+                release.await();
+                return successResponse(1);
+            });
+        } catch (IOException impossible) {
+            throw new AssertionError(impossible);
+        }
+
+        AccountingBulkListener listener = new AccountingBulkListener(blocking, stats, BBOX_INDEX, 0L, 0L, 0L);
+        int queuedBatches = 2;
+        int batches = AccountingBulkListener.RETRY_POOL_SIZE + queuedBatches;
+        for (int i = 0; i < batches; i++) {
+            listener.afterBulk(i, requestOf(operations(2)), List.of(), new SocketTimeoutException("timeout"));
+        }
+
+        listener.awaitRetries();
+        assertTrue(failed() >= 2L * queuedBatches,
+                "chargeDropped must charge the queued-never-started batches synchronously on forced shutdown");
+        release.countDown();
+
+        long total = 2L * batches;
+        for (int i = 0; i < 500 && failed() < total; i++) {
+            Thread.sleep(5);
+        }
+        assertEquals(total, failed(),
+                "every retry op — dropped-queued and interrupted-running — is charged failed; none vanish");
+        assertEquals(0, indexed());
+    }
+
+    private static BulkResponse successResponse(int n) {
+        List<BulkResponseItem> items = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            items.add(item("op-" + i, 200, false));
+        }
+        return BulkResponse.of(b -> b.took(1).errors(false).items(items));
+    }
+
+    private static BulkResponseItem item(String id, int status, boolean withError) {
+        return BulkResponseItem.of(b -> {
+            b.operationType(OperationType.Index).index(POINTS_INDEX).id(id).status(status);
+            if (withError) {
+                b.error(e -> e.type("mapper_parsing_exception").reason("err " + id));
+            }
+            return b;
+        });
+    }
+
+    private static ResponseException responseException(int status) {
+        StatusLine statusLine = mock(StatusLine.class);
+        when(statusLine.getStatusCode()).thenReturn(status);
+        Response response = mock(Response.class);
+        when(response.getStatusLine()).thenReturn(statusLine);
+        ResponseException re = mock(ResponseException.class);
+        when(re.getResponse()).thenReturn(response);
+        return re;
+    }
+
+    private static co.elastic.clients.elasticsearch._types.ErrorResponse errorResponse(int status) {
+        return co.elastic.clients.elasticsearch._types.ErrorResponse.of(b -> b
+                .status(status)
+                .error(e -> e.type("illegal_argument_exception").reason("bad request")));
+    }
+
+    private static List<BulkOperation> operations(int n) {
+        List<BulkOperation> ops = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            final int idx = i;
+            ops.add(BulkOperation.of(op -> op.index(ix -> ix.index(POINTS_INDEX).id("op-" + idx).document(Map.of("k", idx)))));
+        }
+        return ops;
+    }
+
+    private static BulkRequest requestOf(List<BulkOperation> ops) {
+        return BulkRequest.of(b -> b.operations(ops));
     }
 }

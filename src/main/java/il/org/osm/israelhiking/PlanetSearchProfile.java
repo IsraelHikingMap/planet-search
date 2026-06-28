@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.LongAdder;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -29,8 +28,6 @@ import com.onthegomap.planetiler.reader.WithTags;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
-import co.elastic.clients.elasticsearch._helpers.bulk.BulkIngester;
-import co.elastic.clients.elasticsearch._helpers.bulk.BulkListener;
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 
 import il.org.osm.israelhiking.ElasticsearchHelper.ElasticRunContext;
@@ -41,12 +38,6 @@ public class PlanetSearchProfile implements Profile {
   private PlanetilerConfig config;
   private ElasticRunContext context;
 
-  private final BulkIngester<Void> bulkIngester;
-  private final LongAdder emittedCount = new LongAdder();
-  private final LongAdder indexedCount = new LongAdder();
-  private final LongAdder failedPointsCount = new LongAdder();
-  private final LongAdder failedBboxCount = new LongAdder();
-
   public static final String POINTS_LAYER_NAME = "global_points";
 
   private static final Map<String, MinWayIdFinder> Singles = new ConcurrentHashMap<>();
@@ -56,79 +47,6 @@ public class PlanetSearchProfile implements Profile {
   public PlanetSearchProfile(PlanetilerConfig config, ElasticRunContext context) {
     this.config = config;
     this.context = context;
-    this.bulkIngester = BulkIngester.of(b -> b
-        .client(context.esClient())
-        .maxOperations(5_000)
-        .maxSize(5 * 1024 * 1024)
-        .maxConcurrentRequests(4)
-        .listener(new AccountingBulkListener(
-            indexedCount, failedPointsCount, failedBboxCount, context.bboxIndexTarget())));
-  }
-
-  static final class AccountingBulkListener implements BulkListener<Void> {
-    private final LongAdder indexedCount;
-    private final LongAdder failedPointsCount;
-    private final LongAdder failedBboxCount;
-    private final String bboxIndexName;
-
-    AccountingBulkListener(LongAdder indexedCount, LongAdder failedPointsCount, LongAdder failedBboxCount,
-        String bboxIndexName) {
-      this.indexedCount = indexedCount;
-      this.failedPointsCount = failedPointsCount;
-      this.failedBboxCount = failedBboxCount;
-      this.bboxIndexName = bboxIndexName;
-    }
-
-    private void recordFailure(String index) {
-      if (bboxIndexName != null && bboxIndexName.equals(index)) {
-        failedBboxCount.increment();
-      } else {
-        failedPointsCount.increment();
-      }
-    }
-
-    @Override
-    public void beforeBulk(long executionId, co.elastic.clients.elasticsearch.core.BulkRequest request,
-        List<Void> contexts) {
-    }
-
-    @Override
-    public void afterBulk(long executionId, co.elastic.clients.elasticsearch.core.BulkRequest request,
-        List<Void> contexts, co.elastic.clients.elasticsearch.core.BulkResponse response) {
-      if (response.errors()) {
-        response.items().forEach(item -> {
-          if (item.error() != null) {
-            recordFailure(item.index());
-            LOGGER.warning(() -> "Failed to index id=" + item.id() + " into " + item.index()
-                + ": " + item.error().reason());
-          } else {
-            indexedCount.increment();
-          }
-        });
-      } else {
-        indexedCount.add(response.items().size());
-      }
-    }
-
-    @Override
-    public void afterBulk(long executionId, co.elastic.clients.elasticsearch.core.BulkRequest request,
-        List<Void> contexts, Throwable failure) {
-      request.operations().forEach(op -> recordFailure(bulkOperationIndex(op)));
-      LOGGER.severe(() -> "Bulk request " + executionId + " failed entirely: " + failure.getMessage());
-    }
-
-    private static String bulkOperationIndex(co.elastic.clients.elasticsearch.core.bulk.BulkOperation op) {
-      if (op.isIndex()) {
-        return op.index().index();
-      } else if (op.isCreate()) {
-        return op.create().index();
-      } else if (op.isUpdate()) {
-        return op.update().index();
-      } else if (op.isDelete()) {
-        return op.delete().index();
-      }
-      return null;
-    }
   }
 
   /*
@@ -729,28 +647,39 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
+    addToIngester(BulkOperation.of(op -> op
+        .index(idx -> idx
+            .index(this.context.pointsIndexTarget())
+            .id(docId)
+            .document(pointDocument))), docId);
+  }
+
+  void addToIngester(BulkOperation operation, String docId) {
+    this.context.stats().emittedCount.increment();
     try {
-      bulkIngester.add(BulkOperation.of(op -> op
-          .index(idx -> idx
-              .index(this.context.pointsIndexTarget())
-              .id(docId)
-              .document(pointDocument))));
-      emittedCount.increment();
+      this.context.bulkIngester().add(operation);
     } catch (RuntimeException e) {
-      failedPointsCount.increment();
-      LOGGER.warning(() -> "Failed to enqueue points doc " + docId + ": " + e.getMessage());
+      recordEnqueueFailure(operation);
+      LOGGER.warning(() -> "Failed to enqueue document " + docId + " for indexing: " + e.getMessage());
+    }
+  }
+
+  private void recordEnqueueFailure(BulkOperation operation) {
+    String index = AccountingBulkListener.bulkOperationIndex(operation);
+    if (this.context.bboxIndexTarget().equals(index)) {
+      this.context.stats().failedBboxCount.increment();
+    } else {
+      this.context.stats().failedPointsCount.increment();
     }
   }
 
   private void insertBboxToElasticsearch(SourceFeature feature, String[] supportedLanguages) {
-    Geometry polygon;
+    String bboxDocId = "<unknown>";
     try {
-      polygon = GeoUtils.worldToLatLonCoords(feature.polygon());
-    } catch (GeometryException e) {
-      return;
-    }
-    try {
-      var bbox = new BBoxDocument();
+      bboxDocId = sourceFeatureToDocumentId(feature);
+      final String docId = bboxDocId;
+      Geometry polygon = GeoUtils.worldToLatLonCoords(feature.polygon());
+      BBoxDocument bbox = new BBoxDocument();
       bbox.area = feature.areaMeters();
       var lngLatCenterPoint = GeoUtils.worldToLatLonCoords(feature.centroid()).getCoordinate();
       bbox.center = new double[] { lngLatCenterPoint.getX(), lngLatCenterPoint.getY() };
@@ -761,61 +690,16 @@ public class PlanetSearchProfile implements Profile {
       if (feature.hasTag("name")) {
         CoalesceIntoMap(bbox.name, "default", feature.getString("name"));
       }
-      String bboxDocId = sourceFeatureToDocumentId(feature);
-      addBboxToBulk(bbox, bboxDocId);
-    } catch (Exception e) {
-      failedBboxCount.increment();
-      LOGGER.warning(() -> "Failed to build bbox document for "
-          + sourceFeatureToDocumentId(feature) + ": " + e.getMessage());
-    }
-  }
-
-  private void addBboxToBulk(BBoxDocument bbox, String bboxDocId) {
-    try {
-      bulkIngester.add(BulkOperation.of(op -> op
+      addToIngester(BulkOperation.of(op -> op
           .index(idx -> idx
               .index(this.context.bboxIndexTarget())
-              .id(bboxDocId)
-              .document(bbox))));
-      emittedCount.increment();
-    } catch (RuntimeException e) {
-      failedBboxCount.increment();
-      LOGGER.warning(() -> "Failed to enqueue bbox doc " + bboxDocId + ": " + e.getMessage());
+              .id(docId)
+              .document(bbox))), docId);
+    } catch (Exception e) {
+      this.context.stats().failedBboxCount.increment();
+      final String failedId = bboxDocId;
+      LOGGER.warning(() -> "Failed to build bbox document " + failedId + ": " + e.getMessage());
     }
-  }
-
-  public void flush() {
-    LOGGER.info(() -> "Flushing final batch: " + bulkIngester.pendingOperations()
-        + " buffered operations, " + bulkIngester.pendingRequests() + " in-flight requests.");
-    bulkIngester.flush();
-    bulkIngester.close();
-    LOGGER.info(() -> "Elasticsearch indexing finished: " + indexedCount.sum()
-        + " documents indexed, " + getFailedCount() + " failed ("
-        + failedPointsCount.sum() + " points, " + failedBboxCount.sum() + " bbox).");
-  }
-
-  public long getEmittedCount() {
-    return emittedCount.sum();
-  }
-
-  public long getIndexedCount() {
-    return indexedCount.sum();
-  }
-
-  public long getFailedCount() {
-    return failedPointsCount.sum() + failedBboxCount.sum();
-  }
-
-  public long getFailedPointsCount() {
-    return failedPointsCount.sum();
-  }
-
-  public long getFailedBboxCount() {
-    return failedBboxCount.sum();
-  }
-
-  public boolean hasIndexingFailures() {
-    return failedPointsCount.sum() > 0;
   }
 
   /**
