@@ -726,12 +726,12 @@ public class PlanetSearchProfile implements Profile {
     insertPointToElasticsearch(pointDocument, docId);
   }
 
+  static float flooredProminence(Float prominence) {
+    return prominence == null ? (float) ProminenceCalculator.FLOOR : prominence;
+  }
+
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
-    // Floor emit paths that skip convertTagsToDocument: a null prominence becomes missing:1.0 at
-    // query time, letting an unscored doc beat a real scored feature (whose prominence is <1).
-    if (pointDocument.prominence == null) {
-      pointDocument.prominence = (float) ProminenceCalculator.FLOOR;
-    }
+    pointDocument.prominence = flooredProminence(pointDocument.prominence);
     try {
       this.context.esClient().index(i -> i
           .index(this.context.pointsIndexTarget())
