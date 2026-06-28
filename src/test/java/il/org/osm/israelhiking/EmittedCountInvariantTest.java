@@ -75,10 +75,8 @@ class EmittedCountInvariantTest {
     }
 
     private static PlanetSearchProfile newProfile() throws Exception {
-        // ElasticRunContext is a final record, so it can't be Mockito-mocked; wrap a mock client in a real one.
         ElasticsearchTransport transport = mock(ElasticsearchTransport.class);
         when(transport.options()).thenReturn(mock(TransportOptions.class));
-        // add() serializes the document eagerly, so it needs a real mapper.
         when(transport.jsonpMapper()).thenReturn(new JacksonJsonpMapper());
         ElasticsearchClient esClient = mock(ElasticsearchClient.class);
         when(esClient._transport()).thenReturn(transport);

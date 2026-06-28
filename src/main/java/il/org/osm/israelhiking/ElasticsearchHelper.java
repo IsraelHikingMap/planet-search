@@ -250,7 +250,6 @@ public class ElasticsearchHelper {
 
     ElasticsearchHelper.switchAlias(context.esClient(), context.bboxIndexAlias(), context.bboxIndexTarget());
 
-    // A partial points index must never go live; leave the alias on the previous complete index.
     if (profile.hasIndexingFailures()) {
       LOGGER.warning(() -> "Leaving points alias '" + context.pointsIndexAlias()
           + "' on the previous index: this build dropped " + profile.getFailedPointsCount()

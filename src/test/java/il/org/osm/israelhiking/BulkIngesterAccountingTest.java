@@ -168,12 +168,27 @@ class BulkIngesterAccountingTest {
         assertFalse(failsBuild(), "bbox-only failures must NOT fail the build (warn-only)");
     }
 
-    /** Mirrors PlanetSearchProfile.hasIndexingFailures(): failedPointsCount.sum() > 0. */
+    @Test
+    void wholeBatchThrowable_classifiesCreateUpdateDeleteOpsByDestinationIndex() {
+        List<BulkOperation> ops = List.of(
+                BulkOperation.of(op -> op.create(c -> c.index(BBOX_INDEX).id("c1").document(Map.of("k", 1)))),
+                BulkOperation.of(op -> op.update(u -> u.index(POINTS_INDEX).id("u1")
+                        .action(a -> a.doc(Map.of("k", 1))))),
+                BulkOperation.of(op -> op.delete(d -> d.index(POINTS_INDEX).id("d1"))));
+        BulkRequest request = BulkRequest.of(b -> b.operations(ops));
+
+        listener.afterBulk(8L, request, Collections.emptyList(), new RuntimeException("net down"));
+
+        assertEquals(1, failedBboxCount.sum(), "the create op targeting bbox lands in the bbox bucket");
+        assertEquals(2, failedPointsCount.sum(),
+                "the update and delete ops targeting points land in the points bucket");
+        assertEquals(0, indexedCount.sum());
+    }
+
     private boolean failsBuild() {
         return failedPointsCount.sum() > 0;
     }
 
-    /** Mirrors PlanetSearchProfile.getFailedCount(): points + bbox (the lossless total). */
     private long totalFailed() {
         return failedPointsCount.sum() + failedBboxCount.sum();
     }
@@ -197,7 +212,6 @@ class BulkIngesterAccountingTest {
     }
 
     private static BulkRequest emptyRequest() {
-        // The 8.x BulkRequest builder rejects an empty operations list, so supply one even though this overload never reads it.
         return requestWithOperations(1, POINTS_INDEX);
     }
 

@@ -79,7 +79,6 @@ public class PlanetSearchProfile implements Profile {
       this.bboxIndexName = bboxIndexName;
     }
 
-    // Fail-closed: an undeterminable destination is bucketed as points so a points loss can't be downgraded to a tolerated bbox warning.
     private void recordFailure(String index) {
       if (bboxIndexName != null && bboxIndexName.equals(index)) {
         failedBboxCount.increment();
