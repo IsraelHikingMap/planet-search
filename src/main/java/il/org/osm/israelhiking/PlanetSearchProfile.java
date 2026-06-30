@@ -98,6 +98,38 @@ public class PlanetSearchProfile implements Profile {
     if (feature.hasTag("intermittent", "yes")) {
       pointDocument.intermittent = true;
     }
+    setProminence(pointDocument, feature);
+    setPopulation(pointDocument, feature);
+  }
+
+  private void setPopulation(PointDocument pointDocument, WithTags feature) {
+    String place = feature.getString("place");
+    if (place == null || place.isBlank()) {
+      return;
+    }
+    var parsed = OsmNumberParser.parsePopulation(feature.getString("population"));
+    if (parsed.isPresent()) {
+      pointDocument.population = parsed.getAsInt();
+      return;
+    }
+    switch (place) {
+      case "city":    pointDocument.population = 1_000_000; break;
+      case "town":    pointDocument.population = 50_000; break;
+      case "village": pointDocument.population = 2_000; break;
+      case "hamlet":  pointDocument.population = 200; break;
+      default:        pointDocument.population = 20; break;
+    }
+  }
+
+  private void setProminence(PointDocument pointDocument, WithTags feature) {
+    long qrankRaw = this.context.qrankLookup().qrankFor(pointDocument.wikidata);
+    double ele = OsmNumberParser.parseElevation(feature.getString("ele")).orElse(Double.NaN);
+    boolean hasImage = pointDocument.image != null || pointDocument.wikimedia_commons != null;
+    boolean hasWebsite = pointDocument.website != null;
+    boolean hasWikidata = pointDocument.wikidata != null;
+
+    pointDocument.poiProminence = ProminenceCalculator.compute(
+        OsmFeatureClassifier.classify(feature), ele, hasImage, hasWebsite, hasWikidata, qrankRaw);
   }
 
   private void setDifficulty(PointDocument pointDocument, WithTags feature) {
@@ -575,63 +607,15 @@ public class PlanetSearchProfile implements Profile {
     if (!feature.hasTag("name")) {
       return;
     }
-    var pointDocument = new PointDocument();
-    if (feature.hasTag("amenity", "place_of_worship") ||
-        feature.hasTag("natural", "valley")) {
-      pointDocument.poiIcon = "icon-search";
-      pointDocument.poiIconColor = "black";
-      pointDocument.poiCategory = "Other";
-    }
-    if (feature.hasTag("building") && !feature.hasTag("building", "no", "none", "No")) {
-      pointDocument.poiIcon = "icon-search";
-      pointDocument.poiIconColor = "black";
-      pointDocument.poiCategory = "Other";
-    }
-    if (feature.hasTag("railway", "station") ||
-        feature.hasTag("aerialway", "station")) {
-      pointDocument.poiIcon = "icon-bus-stop";
-      pointDocument.poiIconColor = "black";
-      pointDocument.poiCategory = "Other";
-    }
-    if (feature.hasTag("natural", "ridge")) {
-      pointDocument.poiIcon = "icon-peak";
-      pointDocument.poiIconColor = "black";
-      pointDocument.poiCategory = "Other";
-    }
-    if ((feature.hasTag("landuse", "recreation_ground") && feature.hasTag("sport", "mtb"))) {
-      pointDocument.poiIcon = "icon-bike";
-      pointDocument.poiIconColor = "green";
-      pointDocument.poiCategory = "Bicycle";
-    }
-    if (feature.hasTag("landuse", "forest")) {
-      pointDocument.poiIcon = "icon-tree";
-      pointDocument.poiIconColor = "#008000";
-      pointDocument.poiCategory = "Other";
-    }
-
-    if (pointDocument.poiIcon == null) {
+    var category = OsmFeatureClassifier.classifyNonIcon(feature);
+    if (category == null) {
       return;
     }
-
-    if (pointDocument.poiIcon == "icon-search"
-        && ((feature.getString("wikidata") != null || feature.getString("wikipedia") != null))) {
-      pointDocument.poiIconColor = "black";
-      pointDocument.poiIcon = "icon-wikipedia-w";
-      pointDocument.poiCategory = "Wikipedia";
-    }
-    for (String language : this.context.supportedLanguages()) {
-      CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language));
-      CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language));
-    }
-    if (feature.hasTag("name")) {
-      CoalesceIntoMap(pointDocument.name, "default", feature.getString("name"));
-    }
-    if (feature.hasTag("description")) {
-      CoalesceIntoMap(pointDocument.description, "default", feature.getString("description"));
-    }
-    pointDocument.wikidata = feature.getString("wikidata");
-    pointDocument.image = feature.getString("image");
-    pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+    var pointDocument = new PointDocument();
+    pointDocument.poiIcon = category.icon;
+    pointDocument.poiIconColor = category.color;
+    pointDocument.poiCategory = category.poiCategory;
+    convertTagsToDocument(pointDocument, feature);
     pointDocument.poiSource = "OSM";
     var docId = sourceFeatureToDocumentId(feature);
     var point = feature.canBePolygon() ? (Point) feature.centroidIfConvex()
@@ -833,233 +817,10 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void setIconColorCategory(PointDocument pointDocument, WithTags feature) {
-    if ("protected_area".equals(feature.getString("boundary")) ||
-        "national_park".equals(feature.getString("boundary")) ||
-        "nature_reserve".equals(feature.getString("leisure"))) {
-      pointDocument.poiIconColor = "#008000";
-      pointDocument.poiIcon = "icon-leaf";
-      pointDocument.poiCategory = "Other";
-      return;
-    }
-    if (feature.getString("route") != null) {
-      switch (feature.getString("route")) {
-        case "hiking":
-        case "foot":
-          pointDocument.poiIconColor = "black";
-          pointDocument.poiIcon = "icon-hike";
-          pointDocument.poiCategory = "Hiking";
-          return;
-        case "bicycle":
-        case "mtb":
-          pointDocument.poiIconColor = "black";
-          pointDocument.poiIcon = "icon-bike";
-          pointDocument.poiCategory = "Bicycle";
-          return;
-        case "road":
-          if ("yes".equals(feature.getString("scenic"))) {
-            pointDocument.poiIconColor = "black";
-            pointDocument.poiCategory = "4x4";
-            pointDocument.poiIcon = "icon-four-by-four";
-            return;
-          }
-      }
-    }
-    if (feature.getString("historic") != null) {
-      pointDocument.poiIconColor = "#666666";
-      pointDocument.poiCategory = "Historic";
-      switch (feature.getString("historic")) {
-        case "ruins":
-          pointDocument.poiIcon = "icon-ruins";
-          return;
-        case "archaeological_site":
-          pointDocument.poiIcon = "icon-archaeological";
-          return;
-        case "memorial":
-        case "monument":
-          pointDocument.poiIcon = "icon-memorial";
-          return;
-        case "tomb":
-          pointDocument.poiIconColor = "black";
-          pointDocument.poiIcon = "icon-cave";
-          pointDocument.poiCategory = "Natural";
-          return;
-      }
-    }
-    if ("picnic_table".equals(feature.getString("leisure")) ||
-        "picnic_site".equals(feature.getString("tourism")) ||
-        "picnic".equals(feature.getString("amenity"))) {
-      pointDocument.poiIconColor = "#734a08";
-      pointDocument.poiIcon = "icon-picnic";
-      pointDocument.poiCategory = "Camping";
-      return;
-    }
-
-    if (feature.getString("natural") != null) {
-      switch (feature.getString("natural")) {
-        case "cave_entrance":
-          pointDocument.poiIconColor = "black";
-          pointDocument.poiIcon = "icon-cave";
-          pointDocument.poiCategory = "Natural";
-          return;
-        case "spring":
-          pointDocument.poiIconColor = "#1e80e3";
-          pointDocument.poiIcon = "icon-tint";
-          pointDocument.poiCategory = "Water";
-          return;
-        case "tree":
-          pointDocument.poiIconColor = "#008000";
-          pointDocument.poiIcon = "icon-tree";
-          pointDocument.poiCategory = "Natural";
-          return;
-        case "flowers":
-          pointDocument.poiIconColor = "#008000";
-          pointDocument.poiIcon = "icon-flowers";
-          pointDocument.poiCategory = "Natural";
-          return;
-        case "waterhole":
-          pointDocument.poiIconColor = "#1e80e3";
-          pointDocument.poiIcon = "icon-waterhole";
-          pointDocument.poiCategory = "Water";
-          return;
-        case "peak":
-        case "volcano":
-        case "ridge":
-          pointDocument.poiIconColor = "black";
-          pointDocument.poiIcon = "icon-peak";
-          pointDocument.poiCategory = "Natural";
-          return;
-      }
-    }
-
-    if ("reservoir".equals(feature.getString("water")) ||
-        "pond".equals(feature.getString("water")) ||
-        "lake".equals(feature.getString("water")) ||
-        "stream_pool".equals(feature.getString("water"))) {
-      pointDocument.poiIconColor = "#1e80e3";
-      pointDocument.poiIcon = "icon-tint";
-      pointDocument.poiCategory = "Water";
-      return;
-    }
-
-    if (feature.getString("man_made") != null) {
-      pointDocument.poiIconColor = "#1e80e3";
-      pointDocument.poiCategory = "Water";
-      switch (feature.getString("man_made")) {
-        case "water_well":
-          pointDocument.poiIcon = "icon-water-well";
-          return;
-        case "cistern":
-          pointDocument.poiIcon = "icon-cistern";
-          return;
-      }
-    }
-
-    if ("waterfall".equals(feature.getString("waterway"))) {
-      pointDocument.poiIconColor = "#1e80e3";
-      pointDocument.poiIcon = "icon-waterfall";
-      pointDocument.poiCategory = "Water";
-      return;
-    }
-
-    if ("waterway".equals(feature.getString("type"))) {
-      pointDocument.poiIconColor = "#1e80e3";
-      pointDocument.poiIcon = "icon-river";
-      pointDocument.poiCategory = "Water";
-      return;
-    }
-
-    if (feature.getString("place") != null) {
-      pointDocument.poiIconColor = "black";
-      pointDocument.poiIcon = "icon-home";
-      pointDocument.poiCategory = "Wikipedia";
-      return;
-    }
-
-    if (feature.getString("tourism") != null) {
-      switch (feature.getString("tourism")) {
-        case "viewpoint":
-          pointDocument.poiIconColor = "#008000";
-          pointDocument.poiIcon = "icon-viewpoint";
-          pointDocument.poiCategory = "Viewpoint";
-          return;
-        case "camp_site":
-          pointDocument.poiIconColor = "#734a08";
-          pointDocument.poiIcon = "icon-campsite";
-          pointDocument.poiCategory = "Camping";
-          return;
-        case "attraction":
-          pointDocument.poiIconColor = "#ffb800";
-          pointDocument.poiIcon = "icon-star";
-          pointDocument.poiCategory = "Other";
-          return;
-        case "artwork":
-          pointDocument.poiIconColor = "#ffb800";
-          pointDocument.poiIcon = "icon-artwork";
-          pointDocument.poiCategory = "Other";
-          return;
-        case "alpine_hut":
-          pointDocument.poiIconColor = "#734a08";
-          pointDocument.poiIcon = "icon-alpinehut";
-          pointDocument.poiCategory = "Camping";
-          return;
-      }
-    }
-
-    if (feature.getString("highway") != null) {
-      switch (feature.getString("highway")) {
-        case "cycleway":
-          pointDocument.poiIconColor = "black";
-          pointDocument.poiCategory = "Bicycle";
-          pointDocument.poiIcon = "icon-bike";
-          return;
-        case "footway":
-          pointDocument.poiIconColor = "black";
-          pointDocument.poiCategory = "Hiking";
-          pointDocument.poiIcon = "icon-hike";
-          return;
-        case "path":
-          pointDocument.poiIconColor = "black";
-          pointDocument.poiCategory = "Hiking";
-          pointDocument.poiIcon = "icon-hike";
-          return;
-        case "track":
-          pointDocument.poiIconColor = "black";
-          pointDocument.poiCategory = "4x4";
-          pointDocument.poiIcon = "icon-four-by-four";
-          return;
-      }
-    }
-
-    if ("place_of_worship".equals(feature.getString("amenity")) || "monastery".equals(feature.getString("amenity"))) {
-      var religion = feature.getString("religion") != null ? feature.getString("religion") : "";
-      pointDocument.poiCategory = "Other";
-      pointDocument.poiIconColor = "black";
-      switch (religion) {
-        case "jewish":
-          pointDocument.poiIcon = "icon-synagogue";
-          return;
-        case "christian":
-          pointDocument.poiIcon = "icon-church";
-          return;
-        case "muslim":
-          pointDocument.poiIcon = "icon-mosque";
-          return;
-        default:
-          pointDocument.poiIcon = "icon-holy-place";
-          return;
-      }
-    }
-
-    if (feature.getString("ref:IL:inature") != null) {
-      pointDocument.poiIconColor = "#116C00";
-      pointDocument.poiIcon = "icon-inature";
-      pointDocument.poiCategory = "iNature";
-      return;
-    }
-
-    pointDocument.poiIconColor = "black";
-    pointDocument.poiIcon = "icon-search";
-    pointDocument.poiCategory = "Other";
+    var category = OsmFeatureClassifier.classify(feature);
+    pointDocument.poiIcon = category.icon;
+    pointDocument.poiIconColor = category.color;
+    pointDocument.poiCategory = category.poiCategory;
   }
 
   /*
