@@ -17,6 +17,9 @@ Additional arguments to this wrapper besides the Planetiler's arguments:
 | `es-bbox-index-alias` | The alias of the index to insert bounding boxes into, it will create "1" and "2" suffix for the relevant index before switching | `bbox` |
 | `external-file-path` | External geojson file path to allow adding non OSM features to the search and POIs. these features should have a specific format | "empty" |
 | `skip-tiles` | Collapse the tile pyramid to z0 so the `.pmtiles` archive is a near-instant stub, to speed up an Elasticsearch-only reindex. The search index is built identically; only the map tiles degrade, so do not use it for a build whose map tiles are consumed. | `false` |
+| `qrank-path` | Path to a gzipped `qrank.csv.gz` used to compute the `poiProminence` ranking signal. Optional — leave empty to build without it (every point still gets a base+metadata prominence; only the QRank signal is omitted). | "empty" |
+
+The QRank data file comes from [https://qrank.toolforge.org](https://qrank.toolforge.org) (CC0): a gzipped CSV (`Entity,QRank`) ranking Wikidata entities by aggregated Wikimedia pageviews. `qrank-path` is optional and fully omittable — omit it and the build runs unchanged without the ~363 MB file.
 
 To run using docker (While having a local elasticsearch running at 9200):
 
