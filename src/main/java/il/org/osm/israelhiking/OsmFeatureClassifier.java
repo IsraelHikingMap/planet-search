@@ -57,7 +57,8 @@ final class OsmFeatureClassifier {
     NONICON_RIDGE("icon-peak", "black", "Other", DEFAULT_BASE_SCORE, 0.0),
     NONICON_MTB("icon-bike", "green", "Bicycle", DEFAULT_BASE_SCORE, 0.0),
     NONICON_FOREST("icon-tree", "#008000", "Other", DEFAULT_BASE_SCORE, 0.0),
-    NONICON_WIKIPEDIA("icon-wikipedia-w", "black", "Wikipedia", DEFAULT_BASE_SCORE, 0.0);
+    NONICON_WIKIPEDIA("icon-wikipedia-w", "black", "Wikipedia", DEFAULT_BASE_SCORE, 0.0),
+    NONICON_BED("icon-bed", "#734a08", "Other", DEFAULT_BASE_SCORE, 0.0);
 
     final String icon;
     final String color;
@@ -74,7 +75,8 @@ final class OsmFeatureClassifier {
     }
   }
 
-  private OsmFeatureClassifier() {}
+  private OsmFeatureClassifier() {
+  }
 
   static Category classify(WithTags f) {
     String boundary = f.getString("boundary");
@@ -246,8 +248,11 @@ final class OsmFeatureClassifier {
 
   static Category classifyNonIcon(WithTags f) {
     Category c = null;
-    if (f.hasTag("amenity", "place_of_worship") || f.hasTag("natural", "valley")) {
+    if (f.hasTag("amenity", "place_of_worship")) {
       c = Category.NONICON_GENERIC;
+    }
+    if (f.hasTag("tourism", "hotel")) {
+      c = Category.NONICON_BED;
     }
     if (f.hasTag("building") && !f.hasTag("building", "no", "none", "No")) {
       c = Category.NONICON_GENERIC;
@@ -255,7 +260,7 @@ final class OsmFeatureClassifier {
     if (f.hasTag("railway", "station") || f.hasTag("aerialway", "station")) {
       c = Category.NONICON_STATION;
     }
-    if (f.hasTag("natural", "ridge")) {
+    if (f.hasTag("natural", "ridge") || f.hasTag("natural", "valley")) {
       c = Category.NONICON_RIDGE;
     }
     if (f.hasTag("landuse", "recreation_ground") && f.hasTag("sport", "mtb")) {
