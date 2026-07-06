@@ -251,7 +251,7 @@ final class OsmFeatureClassifier {
     if (f.hasTag("amenity", "place_of_worship")) {
       c = Category.NONICON_GENERIC;
     }
-    if (f.hasTag("tourism", "hotel")) {
+    if (f.hasTag("tourism", "hotel", "hostel", "motel", "chalet", "guest_house", "bed_and_breakfast", "dormitory")) {
       c = Category.NONICON_BED;
     }
     if (f.hasTag("building") && !f.hasTag("building", "no", "none", "No")) {
