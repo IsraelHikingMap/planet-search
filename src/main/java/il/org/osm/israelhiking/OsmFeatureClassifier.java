@@ -142,6 +142,8 @@ final class OsmFeatureClassifier {
         case "ridge":
         case "valley":
           return Category.NONICON_PEAK;
+        case "water":
+          return Category.WATER_BODY;
       }
     }
 

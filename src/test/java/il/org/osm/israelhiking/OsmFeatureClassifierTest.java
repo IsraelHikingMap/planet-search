@@ -65,6 +65,7 @@ public class OsmFeatureClassifierTest {
                 row("icon-tint", "#1e80e3", "Water", "water", "pond"),
                 row("icon-tint", "#1e80e3", "Water", "water", "lake"),
                 row("icon-tint", "#1e80e3", "Water", "water", "stream_pool"),
+                row("icon-tint", "#1e80e3", "Water", "natural", "water"),
                 row("icon-water-well", "#1e80e3", "Water", "man_made", "water_well"),
                 row("icon-cistern", "#1e80e3", "Water", "man_made", "cistern"),
                 row("icon-search", "black", "Other", "man_made", "tower"),
