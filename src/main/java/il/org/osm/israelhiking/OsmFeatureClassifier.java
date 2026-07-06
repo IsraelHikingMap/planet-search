@@ -23,7 +23,6 @@ final class OsmFeatureClassifier {
     NATURAL_FLOWERS("icon-flowers", "#008000", "Natural", DEFAULT_BASE_SCORE, 0.0),
     NATURAL_WATERHOLE("icon-waterhole", "#1e80e3", "Water", DEFAULT_BASE_SCORE, 0.0),
     PEAK("icon-peak", "black", "Natural", 0.30, 0.55),
-    RIDGE("icon-peak", "black", "Natural", DEFAULT_BASE_SCORE, 0.0),
     WATER_BODY("icon-tint", "#1e80e3", "Water", DEFAULT_BASE_SCORE, 0.0),
     MAN_MADE_WATER_WELL("icon-water-well", "#1e80e3", "Water", DEFAULT_BASE_SCORE, 0.0),
     MAN_MADE_CISTERN("icon-cistern", "#1e80e3", "Water", DEFAULT_BASE_SCORE, 0.0),
@@ -54,7 +53,7 @@ final class OsmFeatureClassifier {
 
     NONICON_GENERIC("icon-search", "black", "Other", DEFAULT_BASE_SCORE, 0.0),
     NONICON_STATION("icon-bus-stop", "black", "Other", DEFAULT_BASE_SCORE, 0.0),
-    NONICON_RIDGE("icon-peak", "black", "Other", DEFAULT_BASE_SCORE, 0.0),
+    NONICON_PEAK("icon-peak", "black", "Natural", DEFAULT_BASE_SCORE, 0.0),
     NONICON_MTB("icon-bike", "green", "Bicycle", DEFAULT_BASE_SCORE, 0.0),
     NONICON_FOREST("icon-tree", "#008000", "Other", DEFAULT_BASE_SCORE, 0.0),
     NONICON_WIKIPEDIA("icon-wikipedia-w", "black", "Wikipedia", DEFAULT_BASE_SCORE, 0.0),
@@ -141,7 +140,8 @@ final class OsmFeatureClassifier {
         case "volcano":
           return Category.PEAK;
         case "ridge":
-          return Category.RIDGE;
+        case "valley":
+          return Category.NONICON_PEAK;
       }
     }
 
@@ -261,7 +261,7 @@ final class OsmFeatureClassifier {
       c = Category.NONICON_STATION;
     }
     if (f.hasTag("natural", "ridge") || f.hasTag("natural", "valley")) {
-      c = Category.NONICON_RIDGE;
+      c = Category.NONICON_PEAK;
     }
     if (f.hasTag("landuse", "recreation_ground") && f.hasTag("sport", "mtb")) {
       c = Category.NONICON_MTB;
