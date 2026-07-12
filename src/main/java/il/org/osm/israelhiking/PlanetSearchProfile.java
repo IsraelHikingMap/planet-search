@@ -36,6 +36,9 @@ public class PlanetSearchProfile implements Profile {
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
+  private static final List<String> ALTERNATIVE_NAME_TAGS = List.of(
+      "alt_name", "loc_name", "short_name", "old_name", "official_name");
+
   private static final Map<String, MinWayIdFinder> Singles = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> NamedHighways = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> Waterways = new ConcurrentHashMap<>();
@@ -80,20 +83,35 @@ public class PlanetSearchProfile implements Profile {
     }
   }
 
+  /**
+   * Collects all the alternative names of a feature for a single language and
+   * stores them under that language in the alt_names map.
+   * The "default" language reads the unsuffixed tags, i.e. alt_name, loc_name etc.
+   */
+  private static void AddAlternativeNames(PointDocument pointDocument, WithTags feature, String language) {
+    var suffix = "default".equals(language) ? "" : ":" + language;
+    var alternativeNames = ALTERNATIVE_NAME_TAGS.stream()
+        .map(tag -> feature.getString(tag + suffix))
+        .filter(Objects::nonNull)
+        .flatMap(value -> Arrays.stream(value.split(";")))
+        .map(s -> s.trim())
+        .filter(s -> !s.isEmpty())
+        .distinct()
+        .collect(Collectors.toList());
+    if (alternativeNames.isEmpty()) {
+      return;
+    }
+    if (pointDocument.alt_names == null) {
+      pointDocument.alt_names = new HashMap<String, List<String>>();
+    }
+    pointDocument.alt_names.put(language, alternativeNames);
+  }
+
   private void convertTagsToDocument(PointDocument pointDocument, WithTags feature) {
     for (String language : this.context.supportedLanguages()) {
       CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language));
       CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language));
-      if (feature.hasTag("alt_name:" + language)) {
-        if (pointDocument.alt_names == null) {
-          pointDocument.alt_names = new HashMap<String, List<String>>();
-        }
-        pointDocument.alt_names.put(language,
-            Arrays.stream(feature.getString("alt_name:" + language).split(";"))
-                .map(s -> s.trim())
-                .filter(s -> !s.isEmpty())
-                .collect(Collectors.toList()));
-      }
+      AddAlternativeNames(pointDocument, feature, language);
     }
     if (feature.hasTag("name")) {
       CoalesceIntoMap(pointDocument.name, "default", feature.getString("name"));
@@ -101,18 +119,7 @@ public class PlanetSearchProfile implements Profile {
     if (feature.hasTag("description")) {
       CoalesceIntoMap(pointDocument.description, "default", feature.getString("description"));
     }
-    if (feature.hasTag("alt_name")) {
-      if (feature.hasTag("alt_name")) {
-        if (pointDocument.alt_names == null) {
-          pointDocument.alt_names = new HashMap<String, List<String>>();
-        }
-        pointDocument.alt_names.put("default",
-            Arrays.stream(feature.getString("alt_name").split(";"))
-                .map(s -> s.trim())
-                .filter(s -> !s.isEmpty())
-                .collect(Collectors.toList()));
-      }
-    }
+    AddAlternativeNames(pointDocument, feature, "default");
     setDifficulty(pointDocument, feature);
     pointDocument.wikidata = feature.getString("wikidata");
     pointDocument.image = feature.getString("image");
