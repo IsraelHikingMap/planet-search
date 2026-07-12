@@ -1,6 +1,7 @@
 package il.org.osm.israelhiking;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Stream;
@@ -9,6 +10,7 @@ import org.apache.http.HttpHost;
 import org.elasticsearch.client.RestClient;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch.indices.IndexSettingsAnalysis;
 import co.elastic.clients.json.jackson.JacksonJsonpMapper;
 import co.elastic.clients.transport.ElasticsearchTransport;
 import co.elastic.clients.transport.rest_client.RestClientTransport;
@@ -22,6 +24,7 @@ public class ElasticsearchHelper {
   static final String HEBREW_DOUBLED_VAV_PATTERN = "\\u05D5\\u05D5";
   static final String HEBREW_DOUBLED_YOD_PATTERN = "\\u05D9\\u05D9";
   static final String NIQQUD_PATTERN = "[\\u05B0-\\u05C7]";
+  static final List<String> HEBREW_CHAR_FILTERS = List.of("hebrew_niqqud", "hebrew_matres_vav", "hebrew_matres_yod");
 
   public static record ElasticRunContext(
       ElasticsearchClient esClient,
@@ -46,6 +49,42 @@ public class ElasticsearchHelper {
     return new ElasticsearchClient(transport);
   }
 
+  /**
+   * Registers the char filters, normalizer and analyzer that are shared by all
+   * the indices.
+   * The Hebrew char filters are applied to every language and not only to
+   * Hebrew fields: they only touch Hebrew characters, so they are a no-op for
+   * Latin, Cyrillic and Arabic text, while making sure a Hebrew name is
+   * normalized the same way no matter which language field it ended up in.
+   */
+  private static IndexSettingsAnalysis.Builder addCommonAnalysis(IndexSettingsAnalysis.Builder analysis) {
+    return analysis
+        .charFilter("hebrew_niqqud", cf -> cf
+            .definition(d -> d
+                .patternReplace(pr -> pr
+                    .pattern(NIQQUD_PATTERN)
+                    .replacement(""))))
+        .charFilter("hebrew_matres_vav", cf -> cf
+            .definition(d -> d
+                .patternReplace(pr -> pr
+                    .pattern(HEBREW_DOUBLED_VAV_PATTERN)
+                    .replacement(HEBREW_VAV))))
+        .charFilter("hebrew_matres_yod", cf -> cf
+            .definition(d -> d
+                .patternReplace(pr -> pr
+                    .pattern(HEBREW_DOUBLED_YOD_PATTERN)
+                    .replacement(HEBREW_YOD))))
+        .normalizer("universal_normalizer", n -> n
+            .custom(cn -> cn
+                .charFilter(HEBREW_CHAR_FILTERS)
+                .filter("asciifolding", "lowercase")))
+        .analyzer("universal_analyzer", an -> an
+            .custom(ca -> ca
+                .charFilter(HEBREW_CHAR_FILTERS)
+                .tokenizer("standard")
+                .filter("asciifolding", "lowercase")));
+  }
+
   public static String createPointsIndex(ElasticsearchClient esClient, String indexAlias,
       String[] supportedLanguages) throws Exception {
     var targetIndex = getTargetIndexName(indexAlias, esClient);
@@ -56,86 +95,42 @@ public class ElasticsearchHelper {
         .toArray(String[]::new);
     esClient.indices().create(c -> c.index(targetIndex)
         .settings(s -> s
-            .analysis(a -> a
-                .charFilter("hebrew_niqqud", cf -> cf
-                    .definition(d -> d
-                        .patternReplace(pr -> pr
-                            .pattern(NIQQUD_PATTERN)
-                            .replacement(""))))
-                .charFilter("hebrew_matres_vav", cf -> cf
-                    .definition(d -> d
-                        .patternReplace(pr -> pr
-                            .pattern(HEBREW_DOUBLED_VAV_PATTERN)
-                            .replacement(HEBREW_VAV))))
-                .charFilter("hebrew_matres_yod", cf -> cf
-                    .definition(d -> d
-                        .patternReplace(pr -> pr
-                            .pattern(HEBREW_DOUBLED_YOD_PATTERN)
-                            .replacement(HEBREW_YOD))))
+            .analysis(a -> addCommonAnalysis(a)
                 .filter("edge_ngram_2_15", tf -> tf
                     .definition(d -> d
                         .edgeNgram(en -> en.minGram(2).maxGram(15))))
-                .normalizer("universal_normalizer", n -> n
-                    .custom(cn -> cn
-                        .charFilter("hebrew_niqqud")
-                        .filter("asciifolding", "lowercase")))
-                .normalizer("hebrew_normalizer", n -> n
-                    .custom(cn -> cn
-                        .charFilter("hebrew_niqqud", "hebrew_matres_vav", "hebrew_matres_yod")
-                        .filter("asciifolding", "lowercase")))
-                .analyzer("universal_analyzer", an -> an
-                    .custom(ca -> ca
-                        .charFilter("hebrew_niqqud")
-                        .tokenizer("standard")
-                        .filter("asciifolding", "lowercase")))
-                .analyzer("hebrew_analyzer", an -> an
-                    .custom(ca -> ca
-                        .charFilter("hebrew_niqqud", "hebrew_matres_vav", "hebrew_matres_yod")
-                        .tokenizer("standard")
-                        .filter("asciifolding", "lowercase")))
                 .analyzer("prefix_index_analyzer", an -> an
                     .custom(ca -> ca
-                        .charFilter("hebrew_niqqud")
+                        .charFilter(HEBREW_CHAR_FILTERS)
                         .tokenizer("standard")
                         .filter("asciifolding", "lowercase", "edge_ngram_2_15")))
                 .analyzer("prefix_search_analyzer", an -> an
                     .custom(ca -> ca
-                        .charFilter("hebrew_niqqud")
-                        .tokenizer("standard")
-                        .filter("asciifolding", "lowercase")))
-                .analyzer("hebrew_prefix_index_analyzer", an -> an
-                    .custom(ca -> ca
-                        .charFilter("hebrew_niqqud", "hebrew_matres_vav", "hebrew_matres_yod")
-                        .tokenizer("standard")
-                        .filter("asciifolding", "lowercase", "edge_ngram_2_15")))
-                .analyzer("hebrew_prefix_search_analyzer", an -> an
-                    .custom(ca -> ca
-                        .charFilter("hebrew_niqqud", "hebrew_matres_vav", "hebrew_matres_yod")
+                        .charFilter(HEBREW_CHAR_FILTERS)
                         .tokenizer("standard")
                         .filter("asciifolding", "lowercase")))))
         .mappings(m -> {
           for (var lang : allLanguages) {
-            var isHebrew = "he".equals(lang);
             m.properties("name." + lang, k -> k
                 .text(p -> p
-                    .analyzer(isHebrew ? "hebrew_analyzer" : "universal_analyzer")
+                    .analyzer("universal_analyzer")
                     .fields("keyword", f -> f
                         .keyword(kw -> kw
-                            .normalizer(isHebrew ? "hebrew_normalizer" : "universal_normalizer")))
+                            .normalizer("universal_normalizer")))
                     .fields("prefix", f -> f
                         .text(pt -> pt
-                            .analyzer(isHebrew ? "hebrew_prefix_index_analyzer" : "prefix_index_analyzer")
-                            .searchAnalyzer(isHebrew ? "hebrew_prefix_search_analyzer" : "prefix_search_analyzer")))));
+                            .analyzer("prefix_index_analyzer")
+                            .searchAnalyzer("prefix_search_analyzer")))));
             m.properties("alt_names." + lang, k -> k
                 .text(p -> p
-                    .analyzer(isHebrew ? "hebrew_analyzer" : "universal_analyzer")
+                    .analyzer("universal_analyzer")
                     .fields("keyword", f -> f
                         .keyword(kw -> kw
-                            .normalizer(isHebrew ? "hebrew_normalizer" : "universal_normalizer")))
+                            .normalizer("universal_normalizer")))
                     .fields("prefix", f -> f
                         .text(pt -> pt
-                            .analyzer(isHebrew ? "hebrew_prefix_index_analyzer" : "prefix_index_analyzer")
-                            .searchAnalyzer(isHebrew ? "hebrew_prefix_search_analyzer" : "prefix_search_analyzer")))));
+                            .analyzer("prefix_index_analyzer")
+                            .searchAnalyzer("prefix_search_analyzer")))));
           }
           m.properties("location", g -> g.geoPoint(p -> p));
           m.properties("poiProminence", n -> n.float_(f -> f));
@@ -159,22 +154,7 @@ public class ElasticsearchHelper {
         .toArray(String[]::new);
     esClient.indices().create(c -> c.index(targetIndex)
         .settings(s -> s
-            .analysis(a -> a
-                .charFilter("hebrew_niqqud", cf -> cf
-                    .definition(d -> d
-                        .patternReplace(pr -> pr
-                            .pattern(NIQQUD_PATTERN)
-                            .replacement(""))))
-                .normalizer("universal_normalizer", n -> n
-                    .custom(cn -> cn
-                        .charFilter("hebrew_niqqud")
-                        .filter("asciifolding",
-                            "lowercase")))
-                .analyzer("universal_analyzer", an -> an
-                    .custom(ca -> ca
-                        .charFilter("hebrew_niqqud")
-                        .tokenizer("standard")
-                        .filter("asciifolding", "lowercase")))))
+            .analysis(a -> addCommonAnalysis(a)))
         .mappings(m -> {
           for (var lang : allLanguages) {
             m.properties("name." + lang, k -> k
