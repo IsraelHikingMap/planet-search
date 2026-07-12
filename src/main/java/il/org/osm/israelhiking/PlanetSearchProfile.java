@@ -5,6 +5,7 @@ import static com.onthegomap.planetiler.reader.osm.OsmElement.Type.WAY;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -83,12 +84,34 @@ public class PlanetSearchProfile implements Profile {
     for (String language : this.context.supportedLanguages()) {
       CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language));
       CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language));
+      if (feature.hasTag("alt_name:" + language)) {
+        if (pointDocument.alt_names == null) {
+          pointDocument.alt_names = new HashMap<String, List<String>>();
+        }
+        pointDocument.alt_names.put(language,
+            Arrays.stream(feature.getString("alt_name:" + language).split(";"))
+                .map(s -> s.trim())
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList()));
+      }
     }
     if (feature.hasTag("name")) {
       CoalesceIntoMap(pointDocument.name, "default", feature.getString("name"));
     }
     if (feature.hasTag("description")) {
       CoalesceIntoMap(pointDocument.description, "default", feature.getString("description"));
+    }
+    if (feature.hasTag("alt_name")) {
+      if (feature.hasTag("alt_name")) {
+        if (pointDocument.alt_names == null) {
+          pointDocument.alt_names = new HashMap<String, List<String>>();
+        }
+        pointDocument.alt_names.put("default",
+            Arrays.stream(feature.getString("alt_name").split(";"))
+                .map(s -> s.trim())
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList()));
+      }
     }
     setDifficulty(pointDocument, feature);
     pointDocument.wikidata = feature.getString("wikidata");
@@ -113,11 +136,21 @@ public class PlanetSearchProfile implements Profile {
       return;
     }
     switch (place) {
-      case "city":    pointDocument.population = 1_000_000; break;
-      case "town":    pointDocument.population = 50_000; break;
-      case "village": pointDocument.population = 2_000; break;
-      case "hamlet":  pointDocument.population = 200; break;
-      default:        pointDocument.population = 20; break;
+      case "city":
+        pointDocument.population = 1_000_000;
+        break;
+      case "town":
+        pointDocument.population = 50_000;
+        break;
+      case "village":
+        pointDocument.population = 2_000;
+        break;
+      case "hamlet":
+        pointDocument.population = 200;
+        break;
+      default:
+        pointDocument.population = 20;
+        break;
     }
   }
 
