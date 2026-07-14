@@ -110,12 +110,12 @@
                 "script_score": {
                   "script": {
                     "source": "params.w_text * (_score / (_score + params.k_text))",
-                    "params": { "w_text": 4.0, "k_text": 8.0 }
+                    "params": { "w_text": 5.0, "k_text": 30.0 }
                   }
                 }
               },
               {
-                "field_value_factor": { "field": "poiProminence", "factor": 0.3 }
+                "field_value_factor": { "field": "poiProminence", "factor": 1.0 }
               },
               {
                 "filter": {
