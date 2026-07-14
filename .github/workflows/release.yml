@@ -1,6 +1,7 @@
 name: Release
 
 permissions:
+  contents: write
   packages: write
 
 on:
@@ -8,20 +9,48 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  IMAGE: ghcr.io/israelhikingmap/planet-search
+
 jobs:
   push-docker:
     name: deploy/docker
     runs-on: ubuntu-latest
 
-    if: ${{ github.event_name == 'push' }}
-
     steps:
+    - uses: actions/checkout@v6
+
+    - name: Get version
+      id: version
+      run: |
+        major_minor=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | cut -d. -f1,2)
+        version=$major_minor.$GITHUB_RUN_NUMBER
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "Version: $version" >> "$GITHUB_STEP_SUMMARY"
+
     - name: Login to GitHub Container Registry
       uses: docker/login-action@v4
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-    - uses: actions/checkout@v6
-    - run: docker build -t ghcr.io/israelhikingmap/planet-search:latest .
-    - run: docker push ghcr.io/israelhikingmap/planet-search:latest
+
+    - name: Build
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        docker build --build-arg VERSION="$VERSION" -t "$IMAGE:$VERSION" -t "$IMAGE:latest" .
+
+    - name: Push
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        docker push "$IMAGE:$VERSION"
+        docker push "$IMAGE:latest"
+
+    - name: Create a GitHub release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        gh release create "v$VERSION" --title "v$VERSION" --target "$GITHUB_SHA" --generate-notes

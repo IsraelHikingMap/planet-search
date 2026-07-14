@@ -5,7 +5,9 @@ import com.onthegomap.planetiler.config.Arguments;
 
 import co.elastic.clients.elasticsearch.inference.ElserServiceSettings;
 
+import java.io.InputStream;
 import java.nio.file.Path;
+import java.util.Properties;
 import java.util.logging.Logger;
 
 /**
@@ -29,6 +31,11 @@ public class MainClass {
     }
 
     static void run(Arguments args) throws Exception {
+        var version = new Properties();
+        try (InputStream stream = MainClass.class.getResourceAsStream("/planet-search-version.properties")) {
+            version.load(stream);
+        }
+        LOGGER.info("Starting planet-search " + version.getProperty("version"));
         boolean skipTiles = args.getBoolean("skip-tiles",
                 "Collapse tile output to z0 (near-instant archive) to speed up an ES-only reindex; "
                         + "map tiles become a stub. Default false — leave off when tiles are needed.",
