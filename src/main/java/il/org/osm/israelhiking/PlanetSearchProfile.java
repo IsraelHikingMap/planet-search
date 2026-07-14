@@ -10,12 +10,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.math.NumberUtils;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.Point;
+import org.locationtech.jts.geom.Polygonal;
+import org.locationtech.jts.geom.util.GeometryFixer;
 
 import com.onthegomap.planetiler.FeatureCollector;
 import com.onthegomap.planetiler.FeatureCollector.Feature;
@@ -31,6 +34,8 @@ import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 import il.org.osm.israelhiking.ElasticsearchHelper.ElasticRunContext;
 
 public class PlanetSearchProfile implements Profile {
+  private static final Logger LOGGER = Logger.getLogger(PlanetSearchProfile.class.getName());
+
   private PlanetilerConfig config;
   private ElasticRunContext context;
 
@@ -86,7 +91,8 @@ public class PlanetSearchProfile implements Profile {
   /**
    * Collects all the alternative names of a feature for a single language and
    * stores them under that language in the alt_names map.
-   * The "default" language reads the unsuffixed tags, i.e. alt_name, loc_name etc.
+   * The "default" language reads the unsuffixed tags, i.e. alt_name, loc_name
+   * etc.
    */
   private static void AddAlternativeNames(PointDocument pointDocument, WithTags feature, String language) {
     var suffix = "default".equals(language) ? "" : ":" + language;
@@ -677,10 +683,14 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void insertBboxToElasticsearch(SourceFeature feature, String[] supportedLanguages) {
+    var documentId = sourceFeatureToDocumentId(feature);
     Geometry polygon;
     try {
-      polygon = GeoUtils.worldToLatLonCoords(feature.polygon());
+      polygon = repairPolygonIfNeeded(GeoUtils.worldToLatLonCoords(feature.polygon()));
     } catch (GeometryException e) {
+      return;
+    }
+    if (polygon == null) {
       return;
     }
     try {
@@ -697,11 +707,29 @@ public class PlanetSearchProfile implements Profile {
       }
       this.context.esClient().index(i -> i
           .index(this.context.bboxIndexTarget())
-          .id(sourceFeatureToDocumentId(feature))
+          .id(documentId)
           .document(bbox));
     } catch (Exception e) {
-      // swallow
+      LOGGER.warning("Failed to index the bounding box of " + documentId + ": " + e.getMessage());
     }
+  }
+
+  /**
+   * Repairs the polygon before indexing it. OSM boundaries are sometimes self
+   * intersecting,
+   * and Elasticsearch rejects such a polygon
+   * 
+   * @return a polygon Elasticsearch can index, or null when even that failed.
+   */
+  private static Geometry repairPolygonIfNeeded(Geometry polygon) {
+    if (polygon.isValid()) {
+      return polygon;
+    }
+    var fixed = GeometryFixer.fix(polygon);
+    if (fixed.isEmpty() || !fixed.isValid() || !(fixed instanceof Polygonal)) {
+      return null;
+    }
+    return fixed;
   }
 
   /**
