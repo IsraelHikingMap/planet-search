@@ -21,6 +21,77 @@ Additional arguments to this wrapper besides the Planetiler's arguments:
 
 The QRank data file comes from [https://qrank.toolforge.org](https://qrank.toolforge.org) (CC0): a gzipped CSV (`Entity,QRank`) ranking Wikidata entities by aggregated Wikimedia pageviews. `qrank-path` is optional and fully omittable — omit it and the build runs unchanged without the ~363 MB file.
 
+## External features file format
+
+The file pointed at by `external-file-path` is a GeoJSON `FeatureCollection`. Every feature is reduced to a single point (a `Point` is used as is, a `LineString` uses the first coordinate, a polygon uses its centroid) and is added both to the search index and to the POIs tiles.
+
+The document id in Elasticsearch is `poiSource` + `_` + `identifier`, so both must be present and the pair must be unique across the file. The `name`, `description` and `alt_name` properties follow the OSM tagging convention, i.e. a `:<language>` suffix per language plus an unsuffixed fallback, and `alt_name` accepts several values separated by `;`.
+
+| Property | Description |
+|-|-|
+| `identifier` | The id of the feature within its source, used to build the document id |
+| `poiSource` | The name of the source this feature came from, for example `Nakeb` |
+| `poiCategory` | The category of the point, for example `Hiking`, `Water`, `Bicycle`, `4x4` |
+| `poiIcon` | The icon to show for this point, for example `icon-hike` |
+| `poiIconColor` | The color of the above icon |
+| `poiDifficulty` | Optional, the difficulty of a route |
+| `poiLength` | Optional, the length of a route in meters |
+| `poiUserId` | Optional, added to the tiles feature |
+| `name`, `name:<language>` | The name of the point |
+| `description`, `description:<language>` | The description of the point |
+| `alt_name`, `alt_name:<language>` | Alternative names, `;` separated |
+| `image`, `website`, `wikidata`, `wikimedia_commons` | Optional metadata, same meaning as the OSM tags |
+
+An example of such a file:
+
+```json
+{
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [
+                    [35.729807, 33.250042],
+                    [35.730100, 33.251000]
+                ]
+            },
+            "properties": {
+                "identifier": "1",
+                "poiSource": "MySource",
+                "poiCategory": "Hiking",
+                "poiIcon": "icon-hike",
+                "poiIconColor": "black",
+                "poiDifficulty": "easy",
+                "poiLength": 4200,
+                "name": "Some name",
+                "name:en": "Some name",
+                "description:en": "Some description",
+                "alt_name:en": "Some alt name",
+                "image": "https://www.example.com/image.jpg",
+                "website": "https://www.example.com/hike/1"
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [35.729807, 33.250042]
+            },
+            "properties": {
+                "identifier": "2",
+                "poiSource": "AnotherSource",
+                "poiCategory": "Water",
+                "poiIcon": "icon-tint",
+                "poiIconColor": "blue",
+                "name:en": "Some Eye"
+            }
+        }
+    ]
+}
+```
+
 To run using docker (While having a local elasticsearch running at 9200):
 
 `docker run --rm --network=host -e JAVA_OPTS="-Xmx4g -Xms4g" -v "$(pwd)/data":/app/data ghcr.io/israelhikingmap/planet-search --download`
