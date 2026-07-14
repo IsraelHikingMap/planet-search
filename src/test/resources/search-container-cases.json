@@ -3,4 +3,5 @@
   {"id":"MONKS-CAVE","description":"another point whose only container is that same boundary","lat":31.6464,"lng":35.125,"expectedContainer":"שטח C"},
   {"id":"JERUSALEM","description":"a point inside a city, the container was never broken","lat":31.7683,"lng":35.2137,"expectedContainer":"ירושלים"},
   {"id":"MATE-YEHUDA","description":"a regional council whose polygon self intersects as well","lat":31.7130,"lng":35.0170,"expectedContainer":"מועצה אזורית מטה יהודה"}
+
 ]

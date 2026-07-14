@@ -12,5 +12,9 @@
   {"id":"NO-CENTER-HE","searchTerm":"ירושלים","uiLanguage":"he","expectedTarget":[31.7683,35.2137],"radiusMeters":15000,"topN":3},
   {"id":"PREFIX-HE","searchTerm":"ירושל","uiLanguage":"he","center":[31.77,35.21],"zoom":11,"prefix":true,"expectedTarget":[31.7683,35.2137],"radiusMeters":15000,"topN":3},
   {"id":"EXACT-HE","searchTerm":"חיפה","uiLanguage":"he","template":"points_search_exact","expectedTarget":[32.8191,34.9983],"radiusMeters":15000,"topN":3},
-  {"id":"EXTERNAL","searchTerm":"some name","uiLanguage":"en","expectedTarget":[33.250042,35.729807],"radiusMeters":1000,"topN":3}
+  {"id":"EXTERNAL","searchTerm":"some name","uiLanguage":"en","expectedTarget":[33.250042,35.729807],"radiusMeters":1000,"topN":3},
+  {"id":"FAR-FROM-CENTER","searchTerm":"טחנת הנזירים","uiLanguage":"he","center":[31.5292,35.0327],"zoom":13,"expectedTarget":[32.7648,35.1569],"radiusMeters":1000,"topN":5},
+  {"id":"FAR-FROM-CENTER-TYPO","searchTerm":"תחנת הנזירים","uiLanguage":"he","center":[31.5292,35.0327],"zoom":13,"expectedTarget":[32.7648,35.1569],"radiusMeters":1000,"topN":5},
+  {"id":"FAR-CITY","searchTerm":"חיפה","uiLanguage":"he","center":[29.55,34.95],"zoom":12,"expectedTarget":[32.8191,34.9983],"radiusMeters":15000,"topN":3},
+  {"id":"FAR-SITE","searchTerm":"מצדה","uiLanguage":"he","center":[32.08,34.78],"zoom":12,"expectedTarget":[31.3156,35.3536],"radiusMeters":5000,"topN":3}
 ]
