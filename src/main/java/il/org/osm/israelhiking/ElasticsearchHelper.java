@@ -42,6 +42,14 @@ public class ElasticsearchHelper {
   private ElasticsearchHelper() {
   }
 
+  /**
+   * @return the languages of the index, i.e. the supported languages and the
+   *         "default" one, which holds the unsuffixed name of a feature.
+   */
+  public static String[] allLanguages(String[] supportedLanguages) {
+    return Stream.concat(Stream.of("default"), Arrays.stream(supportedLanguages)).toArray(String[]::new);
+  }
+
   public static ElasticsearchClient createElasticsearchClient(String esAddress) {
     Logger.getLogger("org.elasticsearch.client.RestClient").setLevel(Level.OFF);
     RestClient restClient = RestClient.builder(HttpHost.create(esAddress)).build();
@@ -91,8 +99,7 @@ public class ElasticsearchHelper {
     if (esClient.indices().exists(c -> c.index(targetIndex)).value()) {
       esClient.indices().delete(c -> c.index(targetIndex));
     }
-    var allLanguages = Stream.concat(Stream.of("default"), Arrays.stream(supportedLanguages))
-        .toArray(String[]::new);
+    var allLanguages = allLanguages(supportedLanguages);
     esClient.indices().create(c -> c.index(targetIndex)
         .settings(s -> s
             .analysis(a -> addCommonAnalysis(a)
@@ -150,8 +157,7 @@ public class ElasticsearchHelper {
     if (esClient.indices().exists(c -> c.index(targetIndex)).value()) {
       esClient.indices().delete(c -> c.index(targetIndex));
     }
-    var allLanguages = Stream.concat(Stream.of("default"), Arrays.stream(supportedLanguages))
-        .toArray(String[]::new);
+    var allLanguages = allLanguages(supportedLanguages);
     esClient.indices().create(c -> c.index(targetIndex)
         .settings(s -> s
             .analysis(a -> addCommonAnalysis(a)))
@@ -208,7 +214,13 @@ public class ElasticsearchHelper {
         supportedLanguages, qrankLookup);
   }
 
+  /**
+   * Points the aliases at the indices of this run and stores the search
+   * templates that query them, so that the query side always runs the queries
+   * that were built for the live index.
+   */
   public static void finalizeRun(ElasticRunContext context) throws Exception {
+    SearchTemplates.register(context.esClient(), allLanguages(context.supportedLanguages()));
     ElasticsearchHelper.switchAlias(context.esClient, context.pointsIndexAlias(), context.pointsIndexTarget());
     ElasticsearchHelper.switchAlias(context.esClient, context.bboxIndexAlias(), context.bboxIndexTarget());
   }

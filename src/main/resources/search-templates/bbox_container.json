@@ -1,0 +1,59 @@
+{
+  "size": 1,
+  "track_scores": true,
+  "sort": [{ "_score": "desc" }, { "area": "desc" }],
+  "query": {
+    "bool": {
+      "minimum_should_match": 1,
+      "should": [
+        {
+          "constant_score": {
+            "boost": 12,
+            "filter": {
+              "multi_match": {
+                "type": "phrase",
+                "query": "{{place}}",
+                "fields": [[[#languages]]"name.[[lang]].keyword"[[/languages]]]
+              }
+            }
+          }
+        },
+        {
+          "constant_score": {
+            "boost": 6,
+            "filter": {
+              "multi_match": {
+                "type": "phrase",
+                "query": "{{place}}",
+                "fields": [[[#languages]]"name.[[lang]]"[[/languages]]]
+              }
+            }
+          }
+        },
+        {
+          "constant_score": {
+            "boost": 1,
+            "filter": {
+              {{#prefix}}
+              "multi_match": {
+                "type": "phrase_prefix",
+                "query": "{{place}}",
+                "max_expansions": 200,
+                "fields": [[[#languages]]"name.[[lang]]"[[/languages]]]
+              }
+              {{/prefix}}
+              {{^prefix}}
+              "multi_match": {
+                "type": "best_fields",
+                "query": "{{place}}",
+                "fuzziness": "AUTO",
+                "fields": [[[#languages]]"name.[[lang]]"[[/languages]]]
+              }
+              {{/prefix}}
+            }
+          }
+        }
+      ]
+    }
+  }
+}

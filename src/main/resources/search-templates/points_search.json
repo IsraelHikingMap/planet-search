@@ -1,0 +1,199 @@
+{
+  "size": 20,
+  "track_scores": true,
+  "sort": [{ "_score": "desc" }],
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "function_score": {
+            "score_mode": "sum",
+            "boost_mode": "replace",
+            "query": {
+              "bool": {
+                "minimum_should_match": 1,
+                "should": [
+                  {
+                    "constant_score": {
+                      "boost": 12,
+                      "filter": {
+                        "multi_match": {
+                          "type": "phrase",
+                          "query": "{{searchTerm}}",
+                          "fields": [[[#languages]]"name.[[lang]].keyword"[[/languages]]]
+                        }
+                      }
+                    }
+                  },
+                  {{#prefix}}
+                  {
+                    "dis_max": {
+                      "tie_breaker": 0.0,
+                      "queries": [
+                        {
+                          "dis_max": {
+                            "tie_breaker": 0.0,
+                            "boost": 12,
+                            "queries": [[[#languages]]
+                              { "match": { "name.[[lang]].prefix": { "query": "{{searchTerm}}", "operator": "and", "_name": "lang:[[lang]]:prefix" } } }[[/languages]]
+                            ]
+                          }
+                        },
+                        {
+                          "dis_max": {
+                            "tie_breaker": 0.0,
+                            "boost": 8,
+                            "queries": [[[#languages]]
+                              { "match_phrase_prefix": { "name.[[lang]]": { "query": "{{searchTerm}}", "max_expansions": 200, "_name": "lang:[[lang]]:phrase-prefix" } } }[[/languages]]
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {{/prefix}}
+                  {{^prefix}}
+                  {
+                    "dis_max": {
+                      "tie_breaker": 0.0,
+                      "boost": 8,
+                      "queries": [[[#languages]]
+                        { "match_phrase_prefix": { "name.[[lang]]": { "query": "{{searchTerm}}", "max_expansions": 200, "_name": "lang:[[lang]]:phrase-prefix" } } }[[/languages]]
+                      ]
+                    }
+                  },
+                  {{/prefix}}
+                  {
+                    "dis_max": {
+                      "tie_breaker": 0.0,
+                      "queries": [[[#languages]]
+                        { "match": { "name.[[lang]]": { "query": "{{searchTerm}}", "boost": 5, "_name": "lang:[[lang]]" } } }[[/languages]]
+                      ]
+                    }
+                  },
+                  {
+                    "constant_score": {
+                      "boost": 6,
+                      "filter": {
+                        "multi_match": {
+                          "type": "phrase",
+                          "query": "{{searchTerm}}",
+                          "fields": [[[#languages]]"alt_names.[[lang]].keyword"[[/languages]]]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "dis_max": {
+                      "tie_breaker": 0.0,
+                      "queries": [[[#languages]]
+                        { "match": { "alt_names.[[lang]]": { "query": "{{searchTerm}}", "boost": 3, "_name": "lang:[[lang]]:alt" } } }[[/languages]]
+                      ]
+                    }
+                  }
+                  {{^prefix}}
+                  ,{
+                    "dis_max": {
+                      "tie_breaker": 0.0,
+                      "boost": 2,
+                      "queries": [[[#languages]]
+                        { "match": { "name.[[lang]]": { "query": "{{searchTerm}}", "fuzziness": "AUTO", "_name": "lang:[[lang]]:fuzzy" } } }[[/languages]]
+                      ]
+                    }
+                  }
+                  {{/prefix}}
+                ]
+              }
+            },
+            "functions": [
+              {
+                "script_score": {
+                  "script": {
+                    "source": "params.w_text * (_score / (_score + params.k_text))",
+                    "params": { "w_text": 0.5, "k_text": 20.0 }
+                  }
+                }
+              },
+              {
+                "field_value_factor": { "field": "poiProminence", "factor": 0.3 }
+              }
+              {{#hasCenter}}
+              ,{
+                "script_score": {
+                  "script": {
+                    "source": "if (doc['location'].size() == 0) { return 0.0; } double z = params.zoom <= 0 ? params.default_zoom : Math.min(params.zoom, params.max_zoom); double beta = 1.0 / (1.0 + Math.exp(-params.beta_steepness * (z - params.beta_midpoint))); double offsetKm = Math.round(Math.pow(2.2, 18 - z) * 0.1 * 1000.0) / 1000.0; double d = doc['location'].arcDistance(params.lat, params.lon) / 1000.0; double x = Math.max(0.0, d - offsetKm); double g = Math.exp(-0.5 * (x * x) / (params.scale_km * params.scale_km)); return params.w_geo * beta * g;",
+                    "params": {
+                      "lat": {{lat}}, "lon": {{lng}}, "zoom": {{zoom}},
+                      "w_geo": 1.0, "scale_km": 8.0,
+                      "beta_steepness": 0.7, "beta_midpoint": 8.0,
+                      "default_zoom": 12, "max_zoom": 22
+                    }
+                  }
+                }
+              },
+              {
+                "filter": {
+                  "bool": {
+                    "minimum_should_match": 1,
+                    "should": [[[#languages]]
+                      { "term": { "name.[[lang]].keyword": "{{searchTerm}}" } }[[/languages]]
+                    ]
+                  }
+                },
+                "script_score": {
+                  "script": {
+                    "source": "if (doc['location'].size() == 0) { return 0.0; } double z = params.zoom <= 0 ? params.default_zoom : Math.min(params.zoom, params.max_zoom); double offsetKm = Math.round(Math.pow(2.2, 18 - z) * 0.1 * 1000.0) / 1000.0; double d = doc['location'].arcDistance(params.lat, params.lon) / 1000.0; double x = Math.max(0.0, d - offsetKm); double g = Math.exp(-0.5 * (x * x) / (params.scale_km * params.scale_km)); return params.exact_name_bonus * g;",
+                    "params": {
+                      "lat": {{lat}}, "lon": {{lng}}, "zoom": {{zoom}},
+                      "exact_name_bonus": 0.1, "scale_km": 8.0,
+                      "default_zoom": 12, "max_zoom": 22
+                    }
+                  }
+                }
+              },
+              {
+                "script_score": {
+                  "script": {
+                    "source": "if (doc['location'].size() == 0) { return 0.0; } double z = params.zoom <= 0 ? params.default_zoom : Math.min(params.zoom, params.max_zoom); double beta = 1.0 / (1.0 + Math.exp(-params.beta_steepness * (z - params.beta_midpoint))); double offsetKm = Math.round(Math.pow(2.2, 18 - z) * 0.1 * 1000.0) / 1000.0; double halfKm = Math.max(5.0, Math.min(400.0, offsetKm * 3.0)); double halfLat = halfKm / params.km_per_deg; double cos = Math.max(0.2, Math.cos(params.lat * Math.PI / 180.0)); double halfLng = halfKm / (params.km_per_deg * cos); double dLat = Math.abs(doc['location'].lat - params.lat); double dLng = Math.abs(((doc['location'].lon - params.lon + 540.0) % 360.0) - 180.0); if (dLat <= halfLat && dLng <= halfLng) { return params.viewport_boost * beta * beta; } return 0.0;",
+                    "params": {
+                      "lat": {{lat}}, "lon": {{lng}}, "zoom": {{zoom}},
+                      "viewport_boost": 0.15, "km_per_deg": 111.0,
+                      "beta_steepness": 0.7, "beta_midpoint": 8.0,
+                      "default_zoom": 12, "max_zoom": 22
+                    }
+                  }
+                }
+              }
+              {{/hasCenter}}
+              {{^hasCenter}}
+              ,{
+                "filter": {
+                  "bool": {
+                    "minimum_should_match": 1,
+                    "should": [[[#languages]]
+                      { "term": { "name.[[lang]].keyword": "{{searchTerm}}" } }[[/languages]]
+                    ]
+                  }
+                },
+                "weight": 0.1
+              }
+              {{/hasCenter}}
+            ]
+          }
+        }
+      ]
+      {{#hasPlaceShape}}
+      ,"filter": [
+        {
+          "geo_shape": {
+            "location": {
+              "shape": {{#toJson}}placeShape{{/toJson}},
+              "relation": "within"
+            }
+          }
+        }
+      ]
+      {{/hasPlaceShape}}
+    }
+  }
+}

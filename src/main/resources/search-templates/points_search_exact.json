@@ -1,0 +1,13 @@
+{
+  "size": 20,
+  "track_scores": true,
+  "sort": [{ "_score": "desc" }, { "poiProminence": "desc" }],
+  "query": {
+    "dis_max": {
+      "tie_breaker": 0.0,
+      "queries": [[[#languages]]
+        { "match_phrase": { "name.[[lang]].keyword": { "query": "{{searchTerm}}", "_name": "lang:[[lang]]" } } }[[/languages]]
+      ]
+    }
+  }
+}

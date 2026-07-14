@@ -3,8 +3,6 @@ package il.org.osm.israelhiking;
 import com.onthegomap.planetiler.Planetiler;
 import com.onthegomap.planetiler.config.Arguments;
 
-import co.elastic.clients.elasticsearch.inference.ElserServiceSettings;
-
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.Properties;
@@ -31,11 +29,32 @@ public class MainClass {
     }
 
     static void run(Arguments args) throws Exception {
-        var version = new Properties();
+        var properties = new Properties();
         try (InputStream stream = MainClass.class.getResourceAsStream("/planet-search-version.properties")) {
-            version.load(stream);
+            properties.load(stream);
         }
-        LOGGER.info("Starting planet-search " + version.getProperty("version"));
+        var version = properties.getProperty("version");
+        LOGGER.info("Starting planet-search " + version);
+        var pointsIndexAlias = args.getString("es-points-index-alias", "Elasticsearch index to populate points",
+                "points");
+        var bboxIndexAlias = args.getString("es-bbox-index-alias", "Elasticsearch index to populate bounding boxes",
+                "bbox");
+        var supportedLanguages = args.getString("languages", "Languages to support", "en,he,ru,ar,es").split(",");
+        var esAddress = args.getString("es-address", "Elasticsearch address", "http://localhost:9200");
+        boolean templatesOnly = args.getBoolean("update-templates-only",
+                "Store the search templates of this build in Elasticsearch and exit, without building anything. "
+                        + "Updates the queries of a live index without a reindex",
+                false);
+        if (templatesOnly) {
+            var esClient = ElasticsearchHelper.createElasticsearchClient(esAddress);
+            try {
+                SearchTemplates.register(esClient, ElasticsearchHelper.allLanguages(supportedLanguages));
+                LOGGER.info("Updated the search templates of " + esAddress + ", the indices were left as they are");
+            } finally {
+                esClient.close();
+            }
+            return;
+        }
         boolean skipTiles = args.getBoolean("skip-tiles",
                 "Collapse tile output to z0 (near-instant archive) to speed up an ES-only reindex; "
                         + "map tiles become a stub. Default false — leave off when tiles are needed.",
@@ -49,14 +68,8 @@ public class MainClass {
         }
         Planetiler planetiler = Planetiler.create(args);
 
-        var esAddress = args.getString("es-address", "Elasticsearch address", "http://localhost:9200");
         var esClient = ElasticsearchHelper.createElasticsearchClient(esAddress);
         try {
-            var pointsIndexAlias = args.getString("es-points-index-alias", "Elasticsearch index to populate points",
-                    "points");
-            var bboxIndexAlias = args.getString("es-bbox-index-alias", "Elasticsearch index to populate bounding boxes",
-                    "bbox");
-            var supportedLanguages = args.getString("languages", "Languages to support", "en,he,ru,ar,es").split(",");
             var externalFilePath = args.getString("external-file-path", "External file path", "");
             var qrankPath = args.getString("qrank-path",
                     "Path to qrank.csv.gz for the prominence signal (empty = run without it)", "");

@@ -1,6 +1,5 @@
-package il.org.osm.israelhiking.relevance;
+package il.org.osm.israelhiking;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterAll;
@@ -9,8 +8,10 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.TestFactory;
 import org.junit.jupiter.api.TestInstance;
 
+import il.org.osm.israelhiking.SearchCases.Case;
+import il.org.osm.israelhiking.SearchCases.Hit;
+
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -26,22 +27,18 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.fail;
 
+/**
+ * Scores the search of a running site against the gold cases.
+ * It shares the cases and what makes a case pass with the end to end test, and
+ * only searches differently: through the search API of the site, and not
+ * against an index it built itself.
+ */
 @Tag("relevance")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class SearchRelevanceTest {
 
-  @JsonIgnoreProperties(ignoreUnknown = true)
-  record Case(String id, String searchTerm, String uiLanguage,
-      List<Double> center, int zoom, List<Double> expectedTarget,
-      double radiusMeters, int topN) {
-  }
-
-  private record Hit(String title, double lat, double lng) {
-  }
-
   private static final String DEFAULT_ENDPOINT = "https://mapeak.com";
   private static final Duration TIMEOUT = Duration.ofSeconds(20);
-  private static final double EARTH_R_M = 6_371_000.0;
   private static final int MAX_ATTEMPTS = 3;
   private static final long RETRY_BACKOFF_MS = 2_000;
   private static final int MAX_BODY_CHARS = 4_000_000;
@@ -57,16 +54,7 @@ public class SearchRelevanceTest {
   @TestFactory
   Stream<DynamicTest> searchRelevance() throws Exception {
     String endpoint = System.getProperty("relevance.endpoint", DEFAULT_ENDPOINT).replaceAll("/+$", "");
-    InputStream stream = getClass().getResourceAsStream("/search-relevance-cases.json");
-    if (stream == null) {
-      throw new IllegalStateException("missing classpath resource: /search-relevance-cases.json");
-    }
-    List<Case> cases = mapper.readValue(
-        stream,
-        mapper.getTypeFactory().constructCollectionType(List.class, Case.class));
-    cases.forEach(SearchRelevanceTest::validate);
-
-    return cases.stream().map(c -> DynamicTest.dynamicTest(
+    return SearchCases.load("/search-relevance-cases.json").stream().map(c -> DynamicTest.dynamicTest(
         c.id() + " · " + c.searchTerm() + " (" + c.uiLanguage() + ")",
         () -> assertTimeoutPreemptively(CASE_TIMEOUT, () -> assertNearTarget(endpoint, c))));
   }
@@ -76,48 +64,20 @@ public class SearchRelevanceTest {
     http.close();
   }
 
-  private static void validate(Case c) {
-    boolean ok = c.searchTerm() != null && c.uiLanguage() != null
-        && c.center() != null && c.center().size() >= 2
-        && c.expectedTarget() != null && c.expectedTarget().size() >= 2
-        && c.topN() >= 1 && c.radiusMeters() > 0;
-    if (!ok) {
-      throw new IllegalStateException("invalid gold case: " + c.id());
+  private void assertNearTarget(String endpoint, Case searchCase) throws Exception {
+    var failure = SearchCases.failure(searchCase, search(endpoint, searchCase));
+    if (failure != null) {
+      fail(failure);
     }
   }
 
-  private void assertNearTarget(String endpoint, Case c) throws Exception {
-    List<Hit> hits = search(endpoint, c);
-    int limit = Math.min(Math.max(c.topN(), 1), hits.size());
-
-    double best = Double.POSITIVE_INFINITY;
-    Hit bestHit = null;
-    for (int i = 0; i < limit; i++) {
-      Hit h = hits.get(i);
-      double d = haversineMeters(h.lat(), h.lng(),
-          c.expectedTarget().get(0), c.expectedTarget().get(1));
-      if (!Double.isNaN(d) && d < best) {
-        best = d;
-        bestHit = h;
-      }
-    }
-
-    if (best > c.radiusMeters()) {
-      String closest = bestHit == null
-          ? "none (no results)"
-          : String.format("\"%s\" at %.0f m", bestHit.title(), best);
-      fail(String.format(
-          "\"%s\" (%s): no hit in top %d within %.0f m of target — closest %s",
-          c.searchTerm(), c.uiLanguage(), c.topN(), c.radiusMeters(), closest));
-    }
-  }
-
-  private List<Hit> search(String endpoint, Case c) throws Exception {
-    String term = URLEncoder.encode(c.searchTerm(), StandardCharsets.UTF_8).replace("+", "%20");
+  private List<Hit> search(String endpoint, Case searchCase) throws Exception {
+    String term = URLEncoder.encode(searchCase.searchTerm(), StandardCharsets.UTF_8).replace("+", "%20");
     String url = endpoint + "/api/search/" + term + "?language="
-        + URLEncoder.encode(c.uiLanguage(), StandardCharsets.UTF_8);
-    if (c.center() != null && c.center().size() >= 2) {
-      url += "&lat=" + c.center().get(0) + "&lng=" + c.center().get(1) + "&zoom=" + c.zoom();
+        + URLEncoder.encode(searchCase.uiLanguage(), StandardCharsets.UTF_8);
+    if (searchCase.hasCenter()) {
+      url += "&lat=" + searchCase.center().get(0) + "&lng=" + searchCase.center().get(1)
+          + "&zoom=" + (searchCase.zoom() == null ? 12 : searchCase.zoom());
     }
 
     HttpRequest req = HttpRequest.newBuilder(URI.create(url))
@@ -171,14 +131,5 @@ public class SearchRelevanceTest {
       }
     }
     throw last;
-  }
-
-  private static double haversineMeters(double lat1, double lng1, double lat2, double lng2) {
-    double dPhi = Math.toRadians(lat2 - lat1);
-    double dLambda = Math.toRadians(lng2 - lng1);
-    double h = Math.sin(dPhi / 2) * Math.sin(dPhi / 2)
-        + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
-        * Math.sin(dLambda / 2) * Math.sin(dLambda / 2);
-    return 2 * EARTH_R_M * Math.asin(Math.sqrt(h));
   }
 }
