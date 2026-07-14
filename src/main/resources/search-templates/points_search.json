@@ -132,10 +132,10 @@
               ,{
                 "script_score": {
                   "script": {
-                    "source": "if (doc['location'].size() == 0) { return 0.0; } double z = params.zoom <= 0 ? params.default_zoom : Math.min(params.zoom, params.max_zoom); double beta = 1.0 / (1.0 + Math.exp(-params.beta_steepness * (z - params.beta_midpoint))); double offsetKm = Math.round(Math.pow(2.2, 18 - z) * 0.1 * 1000.0) / 1000.0; double d = doc['location'].arcDistance(params.lat, params.lon) / 1000.0; double x = Math.max(0.0, d - offsetKm); double g = Math.exp(-0.5 * (x * x) / (params.scale_km * params.scale_km)); return params.w_geo * beta * g;",
+                    "source": "if (doc['location'].size() == 0) { return 0.0; } double z = params.zoom <= 0 ? params.default_zoom : Math.min(params.zoom, params.max_zoom); double beta = 1.0 / (1.0 + Math.exp(-params.beta_steepness * (z - params.beta_midpoint))); double d = doc['location'].arcDistance(params.lat, params.lon) / 1000.0; double g = Math.pow(params.decay, d / params.scale_km); return params.w_geo * beta * g;",
                     "params": {
                       "lat": {{lat}}, "lon": {{lng}}, "zoom": {{zoom}},
-                      "w_geo": 1.0, "scale_km": 8.0,
+                      "w_geo": 1.0, "scale_km": 50.0, "decay": 0.5,
                       "beta_steepness": 0.7, "beta_midpoint": 8.0,
                       "default_zoom": 12, "max_zoom": 22
                     }

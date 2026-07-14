@@ -303,5 +303,14 @@
   {"id":"HG08","searchTerm":"צפת","uiLanguage":"he","center":[32.96,35.5],"zoom":11,"expectedTarget":[32.96463,35.502451],"radiusMeters":2000,"topN":3},
   {"id":"HV01","searchTerm":"שביל ישראל לאפניים","uiLanguage":"he","center":[31.26,35.24],"zoom":8,"expectedTarget":[31.261704,35.239051],"radiusMeters":60000,"topN":3},
   {"id":"HV02","searchTerm":"שביל אפניים","uiLanguage":"he","center":[32.67,35.55],"zoom":10,"expectedTarget":[32.677348,35.556918],"radiusMeters":5000,"topN":3},
-  {"id":"AV01","searchTerm":"IBT","uiLanguage":"en","center":[31.26,35.24],"zoom":8,"expectedTarget":[31.261704,35.239051],"radiusMeters":60000,"topN":3}
+  {"id":"AV01","searchTerm":"IBT","uiLanguage":"en","center":[31.26,35.24],"zoom":8,"expectedTarget":[31.261704,35.239051],"radiusMeters":60000,"topN":3},
+  {"id":"FF01","searchTerm":"הר מירון","uiLanguage":"he","center":[32.0853,34.7818],"zoom":12,"expectedTarget":[32.9978,35.4137],"radiusMeters":150,"topN":3},
+  {"id":"FF02","searchTerm":"מצדה","uiLanguage":"he","center":[32.0853,34.7818],"zoom":12,"expectedTarget":[31.3157,35.3539],"radiusMeters":2000,"topN":3},
+  {"id":"FF03","searchTerm":"עין גדי","uiLanguage":"he","center":[32.79,34.99],"zoom":12,"expectedTarget":[31.4614,35.3925],"radiusMeters":2000,"topN":3},
+  {"id":"FF04","searchTerm":"הר תבור","uiLanguage":"he","center":[31.2457,34.7925],"zoom":13,"expectedTarget":[32.6869,35.3903],"radiusMeters":150,"topN":3},
+  {"id":"FF05","searchTerm":"אילת","uiLanguage":"he","center":[31.78,35.21],"zoom":12,"expectedTarget":[29.556935,34.949795],"radiusMeters":2000,"topN":3},
+  {"id":"FF06","searchTerm":"Humphreys Peak","uiLanguage":"en","center":[33.45,-112.07],"zoom":12,"expectedTarget":[35.3464,-111.6777],"radiusMeters":500,"topN":3},
+  {"id":"FF07","searchTerm":"Mount Wrightson","uiLanguage":"en","center":[33.45,-112.07],"zoom":12,"expectedTarget":[31.6962,-110.8479],"radiusMeters":500,"topN":3},
+  {"id":"FF08","searchTerm":"Denali","uiLanguage":"en","center":[61.2181,-149.9003],"zoom":12,"expectedTarget":[63.0692,-151.007],"radiusMeters":1000,"topN":3},
+  {"id":"FF09","searchTerm":"הר מירון","uiLanguage":"he","center":[32.79,34.99],"zoom":11,"expectedTarget":[32.9978,35.4137],"radiusMeters":150,"topN":3}
 ]
