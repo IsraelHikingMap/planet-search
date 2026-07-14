@@ -1,6 +1,7 @@
 package il.org.osm.israelhiking;
 
 import java.io.InputStream;
+import java.util.HashSet;
 import java.util.List;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -27,7 +28,8 @@ public final class SearchCases {
    */
   @JsonIgnoreProperties(ignoreUnknown = true)
   public record Case(String id, String searchTerm, String uiLanguage, List<Double> center, Integer zoom,
-      Boolean prefix, String template, List<Double> expectedTarget, double radiusMeters, int topN) {
+      Boolean prefix, String template, List<Double> expectedTarget, double radiusMeters, int topN,
+      List<String> expectedIds, String expectedExactName, Boolean allowFailure) {
 
     public boolean hasCenter() {
       return center != null && center.size() >= 2;
@@ -36,10 +38,14 @@ public final class SearchCases {
     public boolean isPrefix() {
       return Boolean.TRUE.equals(prefix);
     }
+
+    public boolean isAllowedFailure() {
+      return Boolean.TRUE.equals(allowFailure);
+    }
   }
 
   /** A search result, whatever it was searched with. */
-  public record Hit(String title, double lat, double lng) {
+  public record Hit(String id, String title, double lat, double lng) {
   }
 
   /** Static utility class should not be instantiated. */
@@ -59,24 +65,36 @@ public final class SearchCases {
   }
 
   private static void validate(Case searchCase) {
+    boolean validIds = searchCase.expectedIds() == null
+        || (!searchCase.expectedIds().isEmpty() && searchCase.expectedIds().stream()
+            .allMatch(id -> id != null && id.matches("(OSM_)?(node|way|relation)_\\d+")));
+    boolean validExactName = searchCase.expectedExactName() == null
+        || !searchCase.expectedExactName().isBlank();
     boolean valid = searchCase.searchTerm() != null && searchCase.uiLanguage() != null
         && searchCase.expectedTarget() != null && searchCase.expectedTarget().size() >= 2
-        && searchCase.topN() >= 1 && searchCase.radiusMeters() > 0;
+        && searchCase.topN() >= 1 && searchCase.radiusMeters() > 0
+        && validIds && validExactName;
     if (!valid) {
       throw new IllegalStateException("invalid search case: " + searchCase.id());
     }
   }
 
   /**
-   * A case passes when one of its top hits is within the radius of the place it
-   * was expected to find.
+   * A case passes on exactly one criterion: when expectedIds is set, a top hit
+   * must be one of those entities; otherwise, when expectedExactName is set, a
+   * top hit must carry exactly that name within the radius; otherwise a top hit
+   * must be within the radius of the expected target.
    *
    * @return null when it passes, and what was found instead when it does not.
    */
   public static String failure(Case searchCase, List<Hit> hits) {
+    var top = hits.subList(0, Math.min(searchCase.topN(), hits.size()));
+    if (passes(searchCase, top)) {
+      return null;
+    }
     var closest = Double.POSITIVE_INFINITY;
     Hit closestHit = null;
-    for (var hit : hits.subList(0, Math.min(searchCase.topN(), hits.size()))) {
+    for (var hit : top) {
       var distance = distanceInMeters(hit.lat(), hit.lng(),
           searchCase.expectedTarget().get(0), searchCase.expectedTarget().get(1));
       if (!Double.isNaN(distance) && distance < closest) {
@@ -84,15 +102,49 @@ public final class SearchCases {
         closestHit = hit;
       }
     }
-    if (closest <= searchCase.radiusMeters()) {
-      return null;
-    }
     var found = closestHit == null
         ? "nothing"
         : String.format("\"%s\" at %.0f m", closestHit.title(), closest);
-    return String.format("%s: \"%s\" (%s) - no hit in the top %d within %.0f m, the closest was %s",
-        searchCase.id(), searchCase.searchTerm(), searchCase.uiLanguage(), searchCase.topN(),
-        searchCase.radiusMeters(), found);
+    return String.format("%s: \"%s\" (%s) - no %s in the top %d, the closest was %s",
+        searchCase.id(), searchCase.searchTerm(), searchCase.uiLanguage(),
+        expectation(searchCase), searchCase.topN(), found);
+  }
+
+  private static boolean passes(Case searchCase, List<Hit> top) {
+    if (searchCase.expectedIds() != null) {
+      var expected = new HashSet<String>();
+      for (var id : searchCase.expectedIds()) {
+        expected.add(normalizeOsmId(id));
+      }
+      return top.stream().anyMatch(
+          hit -> hit.id() != null && expected.contains(normalizeOsmId(hit.id())));
+    }
+    if (searchCase.expectedExactName() != null) {
+      return top.stream().anyMatch(hit -> searchCase.expectedExactName().equals(hit.title())
+          && withinRadius(searchCase, hit));
+    }
+    return top.stream().anyMatch(hit -> withinRadius(searchCase, hit));
+  }
+
+  private static boolean withinRadius(Case searchCase, Hit hit) {
+    var distance = distanceInMeters(hit.lat(), hit.lng(),
+        searchCase.expectedTarget().get(0), searchCase.expectedTarget().get(1));
+    return !Double.isNaN(distance) && distance <= searchCase.radiusMeters();
+  }
+
+  private static String expectation(Case searchCase) {
+    if (searchCase.expectedIds() != null) {
+      return "expected entity " + searchCase.expectedIds();
+    }
+    if (searchCase.expectedExactName() != null) {
+      return String.format("\"%s\" within %.0f m", searchCase.expectedExactName(),
+          searchCase.radiusMeters());
+    }
+    return String.format("hit within %.0f m", searchCase.radiusMeters());
+  }
+
+  private static String normalizeOsmId(String id) {
+    return id.startsWith("OSM_") ? id.substring(4) : id;
   }
 
   public static double distanceInMeters(double lat1, double lng1, double lat2, double lng2) {
