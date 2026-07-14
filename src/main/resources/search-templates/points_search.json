@@ -110,12 +110,12 @@
                 "script_score": {
                   "script": {
                     "source": "params.w_text * (_score / (_score + params.k_text))",
-                    "params": { "w_text": 5.0, "k_text": 30.0 }
+                    "params": { "w_text": 4.0, "k_text": 8.0 }
                   }
                 }
               },
               {
-                "field_value_factor": { "field": "poiProminence", "factor": 1.0 }
+                "field_value_factor": { "field": "poiProminence", "factor": 0.3 }
               },
               {
                 "filter": {
@@ -132,10 +132,10 @@
               ,{
                 "script_score": {
                   "script": {
-                    "source": "if (doc['location'].size() == 0) { return 0.0; } double z = params.zoom <= 0 ? params.default_zoom : Math.min(params.zoom, params.max_zoom); double beta = 1.0 / (1.0 + Math.exp(-params.beta_steepness * (z - params.beta_midpoint))); double d = doc['location'].arcDistance(params.lat, params.lon) / 1000.0; double g = Math.pow(params.decay, d / params.scale_km); return params.w_geo * beta * g;",
+                    "source": "if (doc['location'].size() == 0) { return 0.0; } double z = params.zoom <= 0 ? params.default_zoom : Math.min(params.zoom, params.max_zoom); double beta = 1.0 / (1.0 + Math.exp(-params.beta_steepness * (z - params.beta_midpoint))); double offsetKm = 0.5; double dsc = Math.max(params.scale_km, Math.pow(2.2, 18 - z) * 0.1); double d = doc['location'].arcDistance(params.lat, params.lon) / 1000.0; double x = Math.max(0.0, d - offsetKm); double g = Math.exp(-0.5 * (x * x) / (dsc * dsc)); return params.w_geo * beta * g;",
                     "params": {
                       "lat": {{lat}}, "lon": {{lng}}, "zoom": {{zoom}},
-                      "w_geo": 1.0, "scale_km": 50.0, "decay": 0.5,
+                      "w_geo": 1.0, "scale_km": 8.0,
                       "beta_steepness": 0.7, "beta_midpoint": 8.0,
                       "default_zoom": 12, "max_zoom": 22
                     }
