@@ -6,14 +6,16 @@ import com.onthegomap.planetiler.config.Arguments;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.Properties;
-import java.util.logging.Logger;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The main entry point
  */
 public class MainClass {
 
-    private static final Logger LOGGER = Logger.getLogger(MainClass.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(MainClass.class);
 
     /** Static utility class should not be instantiated. */
     private MainClass() {
@@ -34,7 +36,7 @@ public class MainClass {
             properties.load(stream);
         }
         var version = properties.getProperty("version");
-        LOGGER.info("Starting planet-search " + version);
+        LOGGER.info("Starting planet-search {}", version);
         var pointsIndexAlias = args.getString("es-points-index-alias", "Elasticsearch index to populate points",
                 "points");
         var bboxIndexAlias = args.getString("es-bbox-index-alias", "Elasticsearch index to populate bounding boxes",
@@ -49,7 +51,7 @@ public class MainClass {
             var esClient = ElasticsearchHelper.createElasticsearchClient(esAddress);
             try {
                 SearchTemplates.register(esClient, ElasticsearchHelper.allLanguages(supportedLanguages));
-                LOGGER.info("Updated the search templates of " + esAddress + ", the indices were left as they are");
+                LOGGER.info("Updated the search templates of {}, the indices were left as they are", esAddress);
             } finally {
                 esClient.close();
             }
@@ -60,7 +62,7 @@ public class MainClass {
                         + "map tiles become a stub. Default false — leave off when tiles are needed.",
                 false);
         if (skipTiles) {
-            LOGGER.warning("skip-tiles=true: collapsing tile output to z0. The ES search index is "
+            LOGGER.warn("skip-tiles=true: collapsing tile output to z0. The ES search index is "
                     + "built normally; the .pmtiles archive will be a stub. Do NOT use for a build "
                     + "whose map tiles are consumed (client / production map).");
             // Override only the zoom args (not the whole Arguments) — do not re-broaden this.

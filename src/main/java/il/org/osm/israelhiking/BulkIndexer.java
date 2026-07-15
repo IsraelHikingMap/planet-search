@@ -16,10 +16,11 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.logging.Logger;
 
 import org.apache.http.conn.ConnectTimeoutException;
 import org.elasticsearch.client.ResponseException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._helpers.bulk.BulkIngester;
@@ -40,7 +41,7 @@ import co.elastic.clients.transport.BackoffPolicy;
  * the meaning of those indices to the caller.
  */
 final class BulkIndexer implements BulkListener<Void>, AutoCloseable {
-  private static final Logger LOGGER = Logger.getLogger(BulkIndexer.class.getName());
+  private static final Logger LOGGER = LoggerFactory.getLogger(BulkIndexer.class);
 
   static final int MAX_RETRY_ATTEMPTS = 5;
   static final long BASE_BACKOFF_MILLIS = 1_000L;
@@ -104,8 +105,8 @@ final class BulkIndexer implements BulkListener<Void>, AutoCloseable {
     }
     List<BulkOperation> retryable = classifyAndCount(request.operations(), items);
     if (!retryable.isEmpty()) {
-      LOGGER.warning(() -> "Bulk request " + executionId + " had " + retryable.size()
-          + " retryable per-item failure(s); resubmitting with backoff.");
+      LOGGER.warn("Bulk request {} had {} retryable per-item failure(s); resubmitting with backoff.",
+          executionId, retryable.size());
       offloadRetry(executionId, retryable);
     }
   }
@@ -113,12 +114,12 @@ final class BulkIndexer implements BulkListener<Void>, AutoCloseable {
   @Override
   public void afterBulk(long executionId, BulkRequest request, List<Void> contexts, Throwable failure) {
     if (isRetryable(failure)) {
-      LOGGER.warning(() -> "Bulk request " + executionId + " failed transiently ("
-          + describe(failure) + "); retrying with backoff.");
+      LOGGER.warn("Bulk request {} failed transiently ({}); retrying with backoff.",
+          executionId, describe(failure));
       offloadRetry(executionId, request.operations());
     } else {
-      LOGGER.severe(() -> "Bulk request " + executionId + " failed non-retryably ("
-          + describe(failure) + "); counting " + request.operations().size() + " op(s) as failed.");
+      LOGGER.error("Bulk request {} failed non-retryably ({}); counting {} op(s) as failed.",
+          executionId, describe(failure), request.operations().size());
       request.operations().forEach(op -> recordFailure(bulkOperationIndex(op)));
     }
   }
@@ -143,8 +144,8 @@ final class BulkIndexer implements BulkListener<Void>, AutoCloseable {
     try {
       retryExecutor.execute(new RetryTask(executionId, batch));
     } catch (RejectedExecutionException ree) {
-      LOGGER.severe(() -> "Retry pool already shut down for bulk request " + executionId
-          + "; counting " + batch.size() + " op(s) as failed.");
+      LOGGER.error("Retry pool already shut down for bulk request {}; counting {} op(s) as failed.",
+          executionId, batch.size());
       batch.forEach(op -> recordFailure(bulkOperationIndex(op)));
     }
   }
@@ -159,7 +160,7 @@ final class BulkIndexer implements BulkListener<Void>, AutoCloseable {
       try {
         bulkIngester.close();
       } catch (Exception e) {
-        LOGGER.warning("Bulk ingester close failed: " + e.getMessage());
+        LOGGER.warn("Bulk ingester close failed: {}", e.getMessage());
       }
     }
     awaitRetries();
@@ -174,7 +175,7 @@ final class BulkIndexer implements BulkListener<Void>, AutoCloseable {
       String line = "Indexing finished for " + entry.getKey() + ": emitted=" + s.getEmitted()
           + " indexed=" + s.getIndexed() + " failed=" + s.getFailed() + ".";
       if (s.getFailed() > 0) {
-        LOGGER.warning(line);
+        LOGGER.warn(line);
       } else {
         LOGGER.info(line);
       }
@@ -189,8 +190,8 @@ final class BulkIndexer implements BulkListener<Void>, AutoCloseable {
     retryExecutor.shutdown();
     try {
       if (!retryExecutor.awaitTermination(DRAIN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
-        LOGGER.severe("Bulk retries did not drain within " + DRAIN_TIMEOUT_MILLIS
-            + " ms; forcing shutdown — some re-indexed docs may not have landed before the alias swap.");
+        LOGGER.error("Bulk retries did not drain within {} ms; forcing shutdown — some re-indexed "
+            + "docs may not have landed before the alias swap.", DRAIN_TIMEOUT_MILLIS);
         chargeDropped(retryExecutor.shutdownNow());
       }
     } catch (InterruptedException ie) {
@@ -212,8 +213,7 @@ final class BulkIndexer implements BulkListener<Void>, AutoCloseable {
         Thread.sleep(backoffMillis(attemptNo));
       } catch (InterruptedException ie) {
         Thread.currentThread().interrupt();
-        LOGGER.warning("Retry interrupted; charging remaining " + pending.size()
-            + " op(s) as failed.");
+        LOGGER.warn("Retry interrupted; charging remaining {} op(s) as failed.", pending.size());
         break;
       }
       final List<BulkOperation> batch = pending;
@@ -221,29 +221,25 @@ final class BulkIndexer implements BulkListener<Void>, AutoCloseable {
         BulkResponse response = esClient.bulk(BulkRequest.of(b -> b.operations(batch)));
         pending = classifyAndCount(batch, response.items() == null ? List.of() : response.items());
         if (pending.isEmpty()) {
-          final int n = batch.size();
-          final int a = attemptNo;
-          LOGGER.info(() -> "Bulk request " + executionId + " recovered on retry attempt "
-              + a + " (" + n + " op(s) re-applied).");
+          LOGGER.info("Bulk request {} recovered on retry attempt {} ({} op(s) re-applied).",
+              executionId, attemptNo, batch.size());
           return;
         }
       } catch (Exception e) {
         if (!isRetryable(e)) {
-          LOGGER.severe(() -> "Retry of bulk request " + executionId
-              + " hit a non-retryable error (" + describe(e) + "); counting "
-              + batch.size() + " op(s) as failed.");
+          LOGGER.error("Retry of bulk request {} hit a non-retryable error ({}); counting {} op(s) as failed.",
+              executionId, describe(e), batch.size());
           batch.forEach(op -> recordFailure(bulkOperationIndex(op)));
           return;
         }
-        final int a = attemptNo;
-        LOGGER.warning(() -> "Retry attempt " + a + " for bulk request " + executionId
-            + " failed transiently (" + describe(e) + ").");
+        LOGGER.warn("Retry attempt {} for bulk request {} failed transiently ({}).",
+            attemptNo, executionId, describe(e));
       }
     }
     if (!pending.isEmpty()) {
       final List<BulkOperation> remaining = pending;
-      LOGGER.warning(() -> "Bulk request " + executionId + " exhausted retries; counting "
-          + remaining.size() + " op(s) as failed.");
+      LOGGER.warn("Bulk request {} exhausted retries; counting {} op(s) as failed.",
+          executionId, remaining.size());
       remaining.forEach(op -> recordFailure(bulkOperationIndex(op)));
     }
   }
@@ -258,8 +254,7 @@ final class BulkIndexer implements BulkListener<Void>, AutoCloseable {
         statsFor(item.index()).indexed.increment();
       } else {
         recordFailure(item.index());
-        LOGGER.warning(() -> "Failed to index id=" + item.id() + " into " + item.index()
-            + ": " + item.error().reason());
+        LOGGER.warn("Failed to index id={} into {}: {}", item.id(), item.index(), item.error().reason());
       }
     }
     return retryable;
