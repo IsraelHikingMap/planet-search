@@ -34,7 +34,8 @@ public class ElasticsearchHelper {
       String bboxIndexTarget,
       String[] supportedLanguages,
       QRankLookup qrankLookup,
-      BulkIndexer bulkListener) {
+      BulkIndexer bulkListener,
+      ContainerIndex containerIndex) {
   }
 
   /**
@@ -139,6 +140,10 @@ public class ElasticsearchHelper {
                         .text(pt -> pt
                             .analyzer("prefix_index_analyzer")
                             .searchAnalyzer("prefix_search_analyzer")))));
+            m.properties("poiParentNames." + lang, k -> k
+                .text(p -> p.analyzer("universal_analyzer")));
+            m.properties("poiContainer." + lang, k -> k.keyword(kw -> kw));
+            m.properties("poiCountry." + lang, k -> k.keyword(kw -> kw));
           }
           m.properties("location", g -> g.geoPoint(p -> p));
           m.properties("poiProminence", n -> n.float_(f -> f));
@@ -204,16 +209,17 @@ public class ElasticsearchHelper {
   }
 
   public static ElasticRunContext initRun(ElasticsearchClient esClient,
+      BulkIndexer bulkListener,
       String pointsIndexAlias,
       String bboxIndexAlias,
       String[] supportedLanguages,
-      QRankLookup qrankLookup) throws Exception {
+      QRankLookup qrankLookup,
+      ContainerIndex containerIndex) throws Exception {
     var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias,
         supportedLanguages);
     var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
-    var bulkListener = new BulkIndexer(esClient);
     return new ElasticRunContext(esClient, pointsIndexAlias, bboxIndexAlias, targetPointsIndex, targetBBoxIndex,
-        supportedLanguages, qrankLookup, bulkListener);
+        supportedLanguages, qrankLookup, bulkListener, containerIndex);
   }
 
   /**
@@ -222,9 +228,9 @@ public class ElasticsearchHelper {
    * that were built for the live index.
    */
   public static void finalizeRun(ElasticRunContext context) throws Exception {
-    // Drains and logs what was indexed; any drops are logged, not fatal — the
-    // aliases still advance so a build never leaves the previous index live.
     context.bulkListener().close();
+
+    context.esClient().indices().refresh(r -> r.index(context.pointsIndexTarget(), context.bboxIndexTarget()));
 
     SearchTemplates.register(context.esClient(), allLanguages(context.supportedLanguages()));
 

@@ -159,9 +159,9 @@
             ]
           }
         }
-      ]
-      {{#hasPlaceShape}}
-      ,"filter": [
+      ],
+      "filter": [
+        {{#hasPlaceShape}}
         {
           "geo_shape": {
             "location": {
@@ -170,8 +170,18 @@
             }
           }
         }
+        {{/hasPlaceShape}}
+        {{#place}}
+        {{#hasPlaceShape}},{{/hasPlaceShape}}
+        {
+          "multi_match": {
+            "type": "phrase",
+            "query": "{{place}}",
+            "fields": [[[#languages]]"poiParentNames.[[lang]]"[[/languages]]]
+          }
+        }
+        {{/place}}
       ]
-      {{/hasPlaceShape}}
     }
   }
 }

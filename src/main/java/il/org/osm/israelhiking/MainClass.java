@@ -65,24 +65,28 @@ public class MainClass {
             LOGGER.warn("skip-tiles=true: collapsing tile output to z0. The ES search index is "
                     + "built normally; the .pmtiles archive will be a stub. Do NOT use for a build "
                     + "whose map tiles are consumed (client / production map).");
-            // Override only the zoom args (not the whole Arguments) — do not re-broaden this.
+            // Override only the zoom args (not the whole Arguments) — do not re-broaden
+            // this.
             args = Arguments.of("maxzoom", "0", "render_maxzoom", "0").orElse(args);
         }
         Planetiler planetiler = Planetiler.create(args);
 
-        var esClient = ElasticsearchHelper.createElasticsearchClient(esAddress);
-        BulkIndexer bulkListener = null;
-        try {
+        try (var esClient = ElasticsearchHelper.createElasticsearchClient(esAddress);
+                var bulkListener = new BulkIndexer(esClient)) {
             var externalFilePath = args.getString("external-file-path", "External file path", "");
             var qrankPath = args.getString("qrank-path",
                     "Path to qrank.csv.gz for the prominence signal (empty = run without it)", "");
             var qrankLookup = QRankLookup.load(qrankPath.isBlank() ? null : Path.of(qrankPath));
-            var context = ElasticsearchHelper.initRun(esClient, pointsIndexAlias, bboxIndexAlias,
-                    supportedLanguages, qrankLookup);
-            bulkListener = context.bulkListener();
+            String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
+            var containerIndexPath = Path.of(args.getString("container-index-path",
+                    "Path to the container index from the previous run; loaded to tag points with their "
+                            + "country/place, and rewritten from this run's containers for the next run",
+                    "data/sources/container-index-" + area + ".bin.gz"));
+            var containerIndex = ContainerIndex.load(containerIndexPath);
+            var context = ElasticsearchHelper.initRun(esClient, bulkListener, pointsIndexAlias, bboxIndexAlias,
+                    supportedLanguages, qrankLookup, containerIndex);
             var profile = new PlanetSearchProfile(planetiler.config(), context);
 
-            String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
             planetiler.setProfile(profile);
             // override this default with osm_path="path/to/data.osm.pbf"
             // Geofabrik has no whole-planet file, so area=planet uses the aws:latest
@@ -95,12 +99,9 @@ public class MainClass {
             planetiler.overwriteOutput(Path.of("data", "target", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"));
             planetiler.run();
 
+            containerIndex.write(containerIndexPath);
+
             ElasticsearchHelper.finalizeRun(context);
-        } finally {
-            if (bulkListener != null) {
-                bulkListener.close();
-            }
-            esClient.close();
         }
     }
 }

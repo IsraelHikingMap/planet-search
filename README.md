@@ -18,6 +18,7 @@ Additional arguments to this wrapper besides the Planetiler's arguments:
 | `external-file-path` | External geojson file path to allow adding non OSM features to the search and POIs. these features should have a specific format | "empty" |
 | `skip-tiles` | Collapse the tile pyramid to z0 so the `.pmtiles` archive is a near-instant stub, to speed up an Elasticsearch-only reindex. The search index is built identically; only the map tiles degrade, so do not use it for a build whose map tiles are consumed. | `false` |
 | `qrank-path` | Path to a gzipped `qrank.csv.gz` used to compute the `poiProminence` ranking signal. Optional — leave empty to build without it (every point still gets a base+metadata prominence; only the QRank signal is omitted). | "empty" |
+| `container-index-path` | Path to the container index the previous build wrote; it is loaded to tag every point with the places that contain it, and rewritten from this build's containers for the next build. Defaulted per `area`, since each area has its own containers. See [Containers on points](#containers-on-points). | `data/sources/container-index-<area>.bin.gz` |
 | `update-templates-only` | Store the search templates of this build in Elasticsearch and exit, without building anything. Updates the queries of a live index without a reindex | `false` |
 
 The QRank data file comes from [https://qrank.toolforge.org](https://qrank.toolforge.org) (CC0): a gzipped CSV (`Entity,QRank`) ranking Wikidata entities by aggregated Wikimedia pageviews. `qrank-path` is optional and fully omittable — omit it and the build runs unchanged without the ~363 MB file.
@@ -35,9 +36,8 @@ curl -s localhost:9200/points/_search/template -H 'Content-Type: application/jso
 
 | Template | Used for | Parameters |
 |-|-|-|
-| `points_search` | The main search. Add `hasPlaceShape` + `placeShape` to limit it to a container, i.e. the second half of a "point, place" search | `searchTerm`, `prefix`, `hasCenter`, `lat`, `lng`, `zoom`, `hasPlaceShape`, `placeShape` |
+| `points_search` | The main search. Add `place` to limit it to a container — a "point, place" search that resolves in one query, since every point already carries its containers (see [Containers on points](#containers-on-points)) | `searchTerm`, `prefix`, `hasCenter`, `lat`, `lng`, `zoom`, `place` |
 | `points_search_exact` | A quoted search, matches the whole name only | `searchTerm` |
-| `bbox_container` | Finds the container of a "point, place" search | `place`, `prefix` |
 | `bbox_contains` | Finds the container of a coordinate, i.e. which place a point is in | `shape` |
 
 Each template is a self contained query, tuning included, with two kinds of placeholders:
@@ -80,6 +80,18 @@ The templates are tested by [E2ETest.java](src/test/java/il/org/osm/israelhiking
 Adding a case is adding a line to that file. It runs on every pull request, and locally with:
 
 `docker compose up -d elasticsearch && mvn test -Prun-all-tests -Dtest=E2ETest`
+
+## Containers on points
+
+Every point is tagged at build time with the places that contain it, so a "point, place" search — say "spring, Jerusalem" — is a single query: `points_search` filters on the point's containers with the `place` parameter. Each point carries:
+
+- `poiParentNames` — every place it falls inside, per language; this is what `place` matches against.
+- `poiContainer` — the tightest place around it, for display.
+- `poiCountry` — the country, for display, shown next to the container when they differ.
+
+Point-in-polygon can't run in the single streaming pass, because a point is read before the boundary that contains it is assembled. So containers are carried between builds: a build collects its containers — admin boundaries up to level 8, settlements, parks and reserves — into `container-index-path`, and the next build loads that file into an in-memory spatial index and tags its points from it. Containers change rarely, so the one-build lag is by design.
+
+The catch is that a fresh deployment needs **two build cycles** to fully populate: the first writes the container index while its own points go untagged, and the second tags its points from that file. The end to end test exercises this by building twice.
 
 ## External features file format
 

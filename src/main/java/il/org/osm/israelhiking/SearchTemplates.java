@@ -38,7 +38,7 @@ public final class SearchTemplates {
   /** The parameters each template accepts, published in the search contract. */
   public static final Map<String, List<String>> PARAMETERS = Map.of(
       POINTS_SEARCH, List.of("searchTerm", "prefix", "hasCenter", "lat", "lng", "zoom",
-          "hasPlaceShape", "placeShape"),
+          "hasPlaceShape", "placeShape", "place"),
       POINTS_SEARCH_EXACT, List.of("searchTerm"),
       BBOX_CONTAINER, List.of("place", "prefix"),
       BBOX_CONTAINS, List.of("shape"));
