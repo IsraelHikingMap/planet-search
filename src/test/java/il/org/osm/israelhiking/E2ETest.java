@@ -105,9 +105,9 @@ public class E2ETest {
             var point = topPoint(esClient, term);
             if (point == null) {
                 failures.add("  " + term + ": no hit at all");
-            } else if (point.parentNames == null || point.parentNames.isEmpty()) {
-                failures.add("  " + term + ": no containers attached (parentNames=" + point.parentNames
-                        + ", container=" + point.container + ", country=" + point.country + ")");
+            } else if (point.poiParentNames == null || point.poiParentNames.isEmpty()) {
+                failures.add("  " + term + ": no containers attached (parentNames=" + point.poiParentNames
+                        + ", container=" + point.poiContainer + ", country=" + point.poiCountry + ")");
             }
         }
         if (!failures.isEmpty()) {

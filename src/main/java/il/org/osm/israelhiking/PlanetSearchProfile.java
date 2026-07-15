@@ -48,7 +48,10 @@ public class PlanetSearchProfile implements Profile {
   private PlanetilerConfig config;
   private ElasticRunContext context;
 
-  /** Containment near a border is fuzzy anyway; ~0.0005° ≈ 50 m trims the polygons hard. */
+  /**
+   * Containment near a border is fuzzy anyway; ~0.0005° ≈ 50 m trims the polygons
+   * hard.
+   */
   private static final double CONTAINER_SIMPLIFY_DEGREES = 0.0005;
 
   public static final String POINTS_LAYER_NAME = "global_points";
@@ -721,12 +724,12 @@ public class PlanetSearchProfile implements Profile {
     }
     Map<String, List<String>> parentNames = new LinkedHashMap<>();
     names.forEach((lang, set) -> parentNames.put(lang, new ArrayList<>(set)));
-    pointDocument.parentNames = parentNames;
+    pointDocument.poiParentNames = parentNames;
     if (country != null) {
-      pointDocument.country = country.names;
+      pointDocument.poiCountry = country.names;
     }
     if (container != null) {
-      pointDocument.container = container.names;
+      pointDocument.poiContainer = container.names;
     }
   }
 
@@ -781,7 +784,8 @@ public class PlanetSearchProfile implements Profile {
     } catch (RuntimeException e) {
       simplified = polygon;
     }
-    this.context.containerIndex().add(new ContainerRecord(new LinkedHashMap<>(bbox.name), adminLevel, bbox.area, simplified));
+    this.context.containerIndex()
+        .add(new ContainerRecord(new LinkedHashMap<>(bbox.name), adminLevel, bbox.area, simplified));
   }
 
   /**

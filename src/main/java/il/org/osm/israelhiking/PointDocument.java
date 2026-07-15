@@ -11,6 +11,15 @@ class PointDocument {
   public Map<String, String> name = new HashMap<String, String>();
   public Map<String, List<String>> alt_names;
   public Map<String, String> description = new HashMap<String, String>();
+  /**
+   * Names of every place this point falls inside, per language, for "point,
+   * place" search.
+   */
+  public Map<String, List<String>> poiParentNames;
+  /** The tightest enclosing place, per language, for display. */
+  public Map<String, String> poiContainer;
+  /** The enclosing country, per language, for display. */
+  public Map<String, String> poiCountry;
   public String wikidata;
   public String image;
   public String wikimedia_commons;
@@ -28,10 +37,5 @@ class PointDocument {
   public Boolean intermittent;
   public Integer population;
   public String poiFeatureClass;
-  /** Names of every place this point falls inside, per language, for "point, place" search. */
-  public Map<String, List<String>> parentNames;
-  /** The tightest enclosing place, per language, for display. */
-  public Map<String, String> container;
-  /** The enclosing country, per language, for display. */
-  public Map<String, String> country;
+
 }
