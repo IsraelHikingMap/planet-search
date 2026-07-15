@@ -36,8 +36,8 @@ import co.elastic.clients.transport.BackoffPolicy;
  * {@link #add}, per-index counters record what was emitted, indexed and
  * dropped, transient failures are retried with backoff, and {@link #close}
  * drains everything before the caller decides what to do with the result. It is
- * index-agnostic — it counts whatever indices the documents name, and leaves the
- * meaning of those indices to the caller.
+ * index-agnostic — it counts whatever indices the documents name, and leaves
+ * the meaning of those indices to the caller.
  */
 final class BulkIndexer implements BulkListener<Void>, AutoCloseable {
   private static final Logger LOGGER = Logger.getLogger(BulkIndexer.class.getName());
@@ -72,7 +72,9 @@ final class BulkIndexer implements BulkListener<Void>, AutoCloseable {
         .listener(this));
   }
 
-  /** Serialize-and-enqueue a document, counting it as emitted against its index. */
+  /**
+   * Serialize-and-enqueue a document, counting it as emitted against its index.
+   */
   void add(BulkOperation operation) {
     statsFor(bulkOperationIndex(operation)).emitted.increment();
     bulkIngester.add(operation);
@@ -147,7 +149,9 @@ final class BulkIndexer implements BulkListener<Void>, AutoCloseable {
     }
   }
 
-  /** Drains all in-flight work and retries, then logs what was indexed per index. */
+  /**
+   * Drains all in-flight work and retries, then logs what was indexed per index.
+   */
   @Override
   public void close() {
     boolean firstClose = ingesterClosed.compareAndSet(false, true);
