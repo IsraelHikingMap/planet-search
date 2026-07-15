@@ -10,7 +10,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.math.NumberUtils;
@@ -19,6 +18,8 @@ import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.Polygonal;
 import org.locationtech.jts.geom.util.GeometryFixer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.onthegomap.planetiler.FeatureCollector;
 import com.onthegomap.planetiler.FeatureCollector.Feature;
@@ -31,10 +32,12 @@ import com.onthegomap.planetiler.reader.WithTags;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
+import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
+
 import il.org.osm.israelhiking.ElasticsearchHelper.ElasticRunContext;
 
 public class PlanetSearchProfile implements Profile {
-  private static final Logger LOGGER = Logger.getLogger(PlanetSearchProfile.class.getName());
+  private static final Logger LOGGER = LoggerFactory.getLogger(PlanetSearchProfile.class);
 
   private PlanetilerConfig config;
   private ElasticRunContext context;
@@ -672,14 +675,11 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
-    try {
-      this.context.esClient().index(i -> i
-          .index(this.context.pointsIndexTarget())
-          .id(docId)
-          .document(pointDocument));
-    } catch (Exception e) {
-      // swallow
-    }
+    this.context.bulkListener().add(BulkOperation.of(op -> op
+        .index(idx -> idx
+            .index(this.context.pointsIndexTarget())
+            .id(docId)
+            .document(pointDocument))));
   }
 
   private void insertBboxToElasticsearch(SourceFeature feature, String[] supportedLanguages) {
@@ -705,12 +705,14 @@ public class PlanetSearchProfile implements Profile {
       if (feature.hasTag("name")) {
         CoalesceIntoMap(bbox.name, "default", feature.getString("name"));
       }
-      this.context.esClient().index(i -> i
-          .index(this.context.bboxIndexTarget())
-          .id(documentId)
-          .document(bbox));
+      this.context.bulkListener().add(BulkOperation.of(op -> op
+          .index(idx -> idx
+              .index(this.context.bboxIndexTarget())
+              .id(documentId)
+              .document(bbox))));
     } catch (Exception e) {
-      LOGGER.warning("Failed to index the bounding box of " + documentId + ": " + e.getMessage());
+      this.context.bulkListener().recordFailure(this.context.bboxIndexTarget());
+      LOGGER.warn("Failed to index the bounding box of {}: {}", documentId, e.getMessage());
     }
   }
 

@@ -12,11 +12,13 @@ import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.logging.Logger;
 import java.util.zip.GZIPInputStream;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 class QRankLookup {
-  private static final Logger LOGGER = Logger.getLogger(QRankLookup.class.getName());
+  private static final Logger LOGGER = LoggerFactory.getLogger(QRankLookup.class);
 
   private final LongIntHashMap qrankByQid;
 
@@ -66,8 +68,8 @@ class QRankLookup {
           + " rows; fix --qrank-path or omit it", e);
     }
     long heapMb = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024 * 1024);
-    LOGGER.info("QRankLookup: loaded " + rows + " rows from " + csvGz
-        + " in " + (System.currentTimeMillis() - startMs) + "ms (heap used ~" + heapMb + " MB)");
+    LOGGER.info("QRankLookup: loaded {} rows from {} in {}ms (heap used ~{} MB)",
+        rows, csvGz, System.currentTimeMillis() - startMs, heapMb);
     if (rows == 0) {
       throw new IllegalArgumentException("QRankLookup: " + csvGz
           + " yielded 0 usable rows (expected a gzipped 'Entity,QRank' CSV); fix --qrank-path or omit it");
