@@ -169,16 +169,18 @@ final class BulkIndexer implements BulkListener<Void>, AutoCloseable {
   }
 
   private void logSummary() {
-    statsByIndex.forEach((index, s) -> {
-      String line = "Indexing finished for " + index + ": emitted=" + s.getEmitted()
+    for (var entry : statsByIndex.entrySet()) {
+      IndexingStats s = entry.getValue();
+      String line = "Indexing finished for " + entry.getKey() + ": emitted=" + s.getEmitted()
           + " indexed=" + s.getIndexed() + " failed=" + s.getFailed() + ".";
       if (s.getFailed() > 0) {
         LOGGER.warning(line);
       } else {
         LOGGER.info(line);
       }
-    });
+    }
   }
+
 
   void awaitRetries() {
     if (!drained.compareAndSet(false, true)) {
