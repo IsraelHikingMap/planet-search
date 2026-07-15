@@ -28,4 +28,10 @@ class PointDocument {
   public Boolean intermittent;
   public Integer population;
   public String poiFeatureClass;
+  /** Names of every place this point falls inside, per language, for "point, place" search. */
+  public Map<String, List<String>> parentNames;
+  /** The tightest enclosing place, per language, for display. */
+  public Map<String, String> container;
+  /** The enclosing country, per language, for display. */
+  public Map<String, String> country;
 }

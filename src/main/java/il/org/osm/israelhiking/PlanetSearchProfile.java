@@ -3,12 +3,16 @@ package il.org.osm.israelhiking;
 import static com.onthegomap.planetiler.reader.osm.OsmElement.Type.RELATION;
 import static com.onthegomap.planetiler.reader.osm.OsmElement.Type.WAY;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -18,6 +22,7 @@ import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.Polygonal;
 import org.locationtech.jts.geom.util.GeometryFixer;
+import org.locationtech.jts.simplify.TopologyPreservingSimplifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,6 +39,7 @@ import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 
+import il.org.osm.israelhiking.ContainerIndex.ContainerRecord;
 import il.org.osm.israelhiking.ElasticsearchHelper.ElasticRunContext;
 
 public class PlanetSearchProfile implements Profile {
@@ -41,6 +47,9 @@ public class PlanetSearchProfile implements Profile {
 
   private PlanetilerConfig config;
   private ElasticRunContext context;
+
+  /** Containment near a border is fuzzy anyway; ~0.0005° ≈ 50 m trims the polygons hard. */
+  private static final double CONTAINER_SIMPLIFY_DEGREES = 0.0005;
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
@@ -675,11 +684,50 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
+    enrichWithContainers(pointDocument);
     this.context.bulkListener().add(BulkOperation.of(op -> op
         .index(idx -> idx
             .index(this.context.pointsIndexTarget())
             .id(docId)
             .document(pointDocument))));
+  }
+
+  /**
+   * Tags the point with the places it falls inside: the union of their names
+   * (for "point, place" search), plus the tightest enclosing place and the
+   * country (for display). Uses the container index loaded from the previous
+   * build, so a first-ever build tags nothing and simply produces the index.
+   */
+  private void enrichWithContainers(PointDocument pointDocument) {
+    if (pointDocument.location == null) {
+      return;
+    }
+    var matches = this.context.containerIndex().containing(pointDocument.location[1], pointDocument.location[0]);
+    if (matches.isEmpty()) {
+      return;
+    }
+    ContainerRecord country = null;
+    ContainerRecord container = null;
+    Map<String, Set<String>> names = new LinkedHashMap<>();
+    for (ContainerRecord match : matches) {
+      match.names.forEach((lang, name) -> names.computeIfAbsent(lang, k -> new LinkedHashSet<>()).add(name));
+      if (match.isCountry()) {
+        if (country == null || match.area < country.area) {
+          country = match;
+        }
+      } else if (container == null || match.area < container.area) {
+        container = match;
+      }
+    }
+    Map<String, List<String>> parentNames = new LinkedHashMap<>();
+    names.forEach((lang, set) -> parentNames.put(lang, new ArrayList<>(set)));
+    pointDocument.parentNames = parentNames;
+    if (country != null) {
+      pointDocument.country = country.names;
+    }
+    if (container != null) {
+      pointDocument.container = container.names;
+    }
   }
 
   private void insertBboxToElasticsearch(SourceFeature feature, String[] supportedLanguages) {
@@ -705,6 +753,7 @@ public class PlanetSearchProfile implements Profile {
       if (feature.hasTag("name")) {
         CoalesceIntoMap(bbox.name, "default", feature.getString("name"));
       }
+      collectContainer(feature, polygon, bbox);
       this.context.bulkListener().add(BulkOperation.of(op -> op
           .index(idx -> idx
               .index(this.context.bboxIndexTarget())
@@ -714,6 +763,25 @@ public class PlanetSearchProfile implements Profile {
       this.context.bulkListener().recordFailure(this.context.bboxIndexTarget());
       LOGGER.warn("Failed to index the bounding box of {}: {}", documentId, e.getMessage());
     }
+  }
+
+  /**
+   * Records a container for the next build to enrich points with: its names,
+   * admin level (for the country vs. local-container split), area (to pick the
+   * tightest), and a simplified polygon for the containment test.
+   */
+  private void collectContainer(SourceFeature feature, Geometry polygon, BBoxDocument bbox) {
+    if (bbox.name.isEmpty()) {
+      return;
+    }
+    int adminLevel = feature.hasTag("admin_level") ? (int) feature.getLong("admin_level") : 0;
+    Geometry simplified;
+    try {
+      simplified = TopologyPreservingSimplifier.simplify(polygon, CONTAINER_SIMPLIFY_DEGREES);
+    } catch (RuntimeException e) {
+      simplified = polygon;
+    }
+    this.context.containerIndex().add(new ContainerRecord(new LinkedHashMap<>(bbox.name), adminLevel, bbox.area, simplified));
   }
 
   /**
