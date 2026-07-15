@@ -179,6 +179,7 @@ public class ElasticsearchHelper {
           m.properties("bbox", g -> g.geoShape(p -> p));
           m.properties("area", n -> n.float_(f -> f));
           m.properties("center", g -> g.geoPoint(p -> p));
+          m.properties("adminLevel", n -> n.integer(f -> f));
           return m;
         }));
 

@@ -78,11 +78,7 @@ public class MainClass {
                     "Path to qrank.csv.gz for the prominence signal (empty = run without it)", "");
             var qrankLookup = QRankLookup.load(qrankPath.isBlank() ? null : Path.of(qrankPath));
             String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
-            var containerIndexPath = Path.of(args.getString("container-index-path",
-                    "Path to the container index from the previous run; loaded to tag points with their "
-                            + "country/place, and rewritten from this run's containers for the next run",
-                    "data/sources/container-index-" + area + ".bin.gz"));
-            var containerIndex = ContainerIndex.load(containerIndexPath);
+            var containerIndex = ContainerIndex.load(esClient, bboxIndexAlias);
             var context = ElasticsearchHelper.initRun(esClient, bulkListener, pointsIndexAlias, bboxIndexAlias,
                     supportedLanguages, qrankLookup, containerIndex);
             var profile = new PlanetSearchProfile(planetiler.config(), context);
@@ -98,8 +94,6 @@ public class MainClass {
             }
             planetiler.overwriteOutput(Path.of("data", "target", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"));
             planetiler.run();
-
-            containerIndex.write(containerIndexPath);
 
             ElasticsearchHelper.finalizeRun(context);
         }

@@ -6,17 +6,22 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.MultiPolygon;
 import org.locationtech.jts.geom.Polygon;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class BBoxDocument {
     public Map<String, String> name = new HashMap<String, String>();
     public Map<String, Object> bbox;
     public double area;
     public double[] center;
+    /** OSM admin_level (2 = country, 0 when not an admin boundary); read back to enrich points. */
+    public int adminLevel;
 
     public void setBBox(Geometry geometry) {
         bbox = new HashMap<String, Object>();

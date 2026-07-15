@@ -718,7 +718,7 @@ public class PlanetSearchProfile implements Profile {
         if (country == null || match.area < country.area) {
           country = match;
         }
-      } else if (container == null || match.area < container.area) {
+      } else if (!sharesName(pointDocument, match) && (container == null || match.area < container.area)) {
         container = match;
       }
     }
@@ -733,6 +733,21 @@ public class PlanetSearchProfile implements Profile {
     }
   }
 
+  /**
+   * Whether the container carries the same name as the point in any shared
+   * language.
+   * A place node commonly sits in a polygon of the same name; using it as
+   * the container would display "X, X", so skip it and let a wider place win.
+   */
+  private static boolean sharesName(PointDocument pointDocument, ContainerRecord container) {
+    for (var entry : pointDocument.name.entrySet()) {
+      if (entry.getValue().equals(container.names.get(entry.getKey()))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private void insertBboxToElasticsearch(SourceFeature feature, String[] supportedLanguages) {
     var documentId = sourceFeatureToDocumentId(feature);
     Geometry polygon;
@@ -744,19 +759,20 @@ public class PlanetSearchProfile implements Profile {
     if (polygon == null) {
       return;
     }
+    Geometry simplified = simplifyContainer(polygon);
     try {
       var bbox = new BBoxDocument();
       bbox.area = feature.areaMeters();
+      bbox.adminLevel = feature.hasTag("admin_level") ? (int) feature.getLong("admin_level") : 0;
       var lngLatCenterPoint = GeoUtils.worldToLatLonCoords(feature.centroid()).getCoordinate();
       bbox.center = new double[] { lngLatCenterPoint.getX(), lngLatCenterPoint.getY() };
-      bbox.setBBox(polygon);
+      bbox.setBBox(simplified);
       for (String lang : supportedLanguages) {
         CoalesceIntoMap(bbox.name, lang, feature.getString("name:" + lang));
       }
       if (feature.hasTag("name")) {
         CoalesceIntoMap(bbox.name, "default", feature.getString("name"));
       }
-      collectContainer(feature, polygon, bbox);
       this.context.bulkListener().add(BulkOperation.of(op -> op
           .index(idx -> idx
               .index(this.context.bboxIndexTarget())
@@ -769,23 +785,15 @@ public class PlanetSearchProfile implements Profile {
   }
 
   /**
-   * Records a container for the next build to enrich points with: its names,
-   * admin level (for the country vs. local-container split), area (to pick the
-   * tightest), and a simplified polygon for the containment test.
+   * Containment near a border is fuzzy anyway; simplifying keeps geometry cheap
+   * to read and write.
    */
-  private void collectContainer(SourceFeature feature, Geometry polygon, BBoxDocument bbox) {
-    if (bbox.name.isEmpty()) {
-      return;
-    }
-    int adminLevel = feature.hasTag("admin_level") ? (int) feature.getLong("admin_level") : 0;
-    Geometry simplified;
+  private static Geometry simplifyContainer(Geometry polygon) {
     try {
-      simplified = TopologyPreservingSimplifier.simplify(polygon, CONTAINER_SIMPLIFY_DEGREES);
+      return TopologyPreservingSimplifier.simplify(polygon, CONTAINER_SIMPLIFY_DEGREES);
     } catch (RuntimeException e) {
-      simplified = polygon;
+      return polygon;
     }
-    this.context.containerIndex()
-        .add(new ContainerRecord(new LinkedHashMap<>(bbox.name), adminLevel, bbox.area, simplified));
   }
 
   /**

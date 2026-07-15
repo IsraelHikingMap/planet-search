@@ -18,7 +18,6 @@ Additional arguments to this wrapper besides the Planetiler's arguments:
 | `external-file-path` | External geojson file path to allow adding non OSM features to the search and POIs. these features should have a specific format | "empty" |
 | `skip-tiles` | Collapse the tile pyramid to z0 so the `.pmtiles` archive is a near-instant stub, to speed up an Elasticsearch-only reindex. The search index is built identically; only the map tiles degrade, so do not use it for a build whose map tiles are consumed. | `false` |
 | `qrank-path` | Path to a gzipped `qrank.csv.gz` used to compute the `poiProminence` ranking signal. Optional — leave empty to build without it (every point still gets a base+metadata prominence; only the QRank signal is omitted). | "empty" |
-| `container-index-path` | Path to the container index the previous build wrote; it is loaded to tag every point with the places that contain it, and rewritten from this build's containers for the next build. Defaulted per `area`, since each area has its own containers. See [Containers on points](#containers-on-points). | `data/sources/container-index-<area>.bin.gz` |
 | `update-templates-only` | Store the search templates of this build in Elasticsearch and exit, without building anything. Updates the queries of a live index without a reindex | `false` |
 
 The QRank data file comes from [https://qrank.toolforge.org](https://qrank.toolforge.org) (CC0): a gzipped CSV (`Entity,QRank`) ranking Wikidata entities by aggregated Wikimedia pageviews. `qrank-path` is optional and fully omittable — omit it and the build runs unchanged without the ~363 MB file.
@@ -89,9 +88,9 @@ Every point is tagged at build time with the places that contain it, so a "point
 - `poiContainer` — the tightest place around it, for display.
 - `poiCountry` — the country, for display, shown next to the container when they differ.
 
-Point-in-polygon can't run in the single streaming pass, because a point is read before the boundary that contains it is assembled. So containers are carried between builds: a build collects its containers — admin boundaries up to level 8, settlements, parks and reserves — into `container-index-path`, and the next build loads that file into an in-memory spatial index and tags its points from it. Containers change rarely, so the one-build lag is by design.
+Point-in-polygon can't run in the single streaming pass, because a point is read before the boundary that contains it is assembled. So containers are carried between builds through the bbox index — the same documents used to answer `bbox_contains`, no separate store: at the start of a build the live `bbox` alias still points at the previous build's containers, so the build loads them (admin boundaries up to level 8, settlements, parks and reserves) into an in-memory spatial index and tags its points from them, before swapping in its own bbox index at the end. Containers change rarely, so the one-build lag is by design.
 
-The catch is that a fresh deployment needs **two build cycles** to fully populate: the first writes the container index while its own points go untagged, and the second tags its points from that file. The end to end test exercises this by building twice.
+The catch is that a fresh deployment needs **two build cycles** to fully populate: the first build has no previous bbox index to load, so its points go untagged, and the second tags its points from the first's containers. The end to end test exercises this by building twice.
 
 ## External features file format
 
