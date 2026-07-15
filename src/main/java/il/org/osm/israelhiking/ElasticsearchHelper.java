@@ -140,10 +140,10 @@ public class ElasticsearchHelper {
                         .text(pt -> pt
                             .analyzer("prefix_index_analyzer")
                             .searchAnalyzer("prefix_search_analyzer")))));
-            m.properties("parentNames." + lang, k -> k
+            m.properties("poiParentNames." + lang, k -> k
                 .text(p -> p.analyzer("universal_analyzer")));
-            m.properties("container." + lang, k -> k.keyword(kw -> kw));
-            m.properties("country." + lang, k -> k.keyword(kw -> kw));
+            m.properties("poiContainer." + lang, k -> k.keyword(kw -> kw));
+            m.properties("poiCountry." + lang, k -> k.keyword(kw -> kw));
           }
           m.properties("location", g -> g.geoPoint(p -> p));
           m.properties("poiProminence", n -> n.float_(f -> f));
