@@ -31,6 +31,8 @@ import com.onthegomap.planetiler.reader.WithTags;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
+import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
+
 import il.org.osm.israelhiking.ElasticsearchHelper.ElasticRunContext;
 
 public class PlanetSearchProfile implements Profile {
@@ -672,14 +674,11 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
-    try {
-      this.context.esClient().index(i -> i
-          .index(this.context.pointsIndexTarget())
-          .id(docId)
-          .document(pointDocument));
-    } catch (Exception e) {
-      // swallow
-    }
+    this.context.bulkListener().add(BulkOperation.of(op -> op
+        .index(idx -> idx
+            .index(this.context.pointsIndexTarget())
+            .id(docId)
+            .document(pointDocument))));
   }
 
   private void insertBboxToElasticsearch(SourceFeature feature, String[] supportedLanguages) {
@@ -705,11 +704,13 @@ public class PlanetSearchProfile implements Profile {
       if (feature.hasTag("name")) {
         CoalesceIntoMap(bbox.name, "default", feature.getString("name"));
       }
-      this.context.esClient().index(i -> i
-          .index(this.context.bboxIndexTarget())
-          .id(documentId)
-          .document(bbox));
+      this.context.bulkListener().add(BulkOperation.of(op -> op
+          .index(idx -> idx
+              .index(this.context.bboxIndexTarget())
+              .id(documentId)
+              .document(bbox))));
     } catch (Exception e) {
+      this.context.bulkListener().recordFailure(this.context.bboxIndexTarget());
       LOGGER.warning("Failed to index the bounding box of " + documentId + ": " + e.getMessage());
     }
   }

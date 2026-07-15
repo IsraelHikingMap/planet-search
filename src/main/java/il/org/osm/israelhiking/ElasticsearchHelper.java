@@ -33,7 +33,8 @@ public class ElasticsearchHelper {
       String pointsIndexTarget,
       String bboxIndexTarget,
       String[] supportedLanguages,
-      QRankLookup qrankLookup) {
+      QRankLookup qrankLookup,
+      BulkIndexer bulkListener) {
   }
 
   /**
@@ -210,8 +211,9 @@ public class ElasticsearchHelper {
     var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias,
         supportedLanguages);
     var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
+    var bulkListener = new BulkIndexer(esClient);
     return new ElasticRunContext(esClient, pointsIndexAlias, bboxIndexAlias, targetPointsIndex, targetBBoxIndex,
-        supportedLanguages, qrankLookup);
+        supportedLanguages, qrankLookup, bulkListener);
   }
 
   /**
@@ -220,8 +222,13 @@ public class ElasticsearchHelper {
    * that were built for the live index.
    */
   public static void finalizeRun(ElasticRunContext context) throws Exception {
+    // Drains and logs what was indexed; any drops are logged, not fatal — the
+    // aliases still advance so a build never leaves the previous index live.
+    context.bulkListener().close();
+
     SearchTemplates.register(context.esClient(), allLanguages(context.supportedLanguages()));
-    ElasticsearchHelper.switchAlias(context.esClient, context.pointsIndexAlias(), context.pointsIndexTarget());
-    ElasticsearchHelper.switchAlias(context.esClient, context.bboxIndexAlias(), context.bboxIndexTarget());
+
+    ElasticsearchHelper.switchAlias(context.esClient(), context.pointsIndexAlias(), context.pointsIndexTarget());
+    ElasticsearchHelper.switchAlias(context.esClient(), context.bboxIndexAlias(), context.bboxIndexTarget());
   }
 }

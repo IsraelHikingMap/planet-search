@@ -69,6 +69,7 @@ public class MainClass {
         Planetiler planetiler = Planetiler.create(args);
 
         var esClient = ElasticsearchHelper.createElasticsearchClient(esAddress);
+        BulkIndexer bulkListener = null;
         try {
             var externalFilePath = args.getString("external-file-path", "External file path", "");
             var qrankPath = args.getString("qrank-path",
@@ -76,6 +77,7 @@ public class MainClass {
             var qrankLookup = QRankLookup.load(qrankPath.isBlank() ? null : Path.of(qrankPath));
             var context = ElasticsearchHelper.initRun(esClient, pointsIndexAlias, bboxIndexAlias,
                     supportedLanguages, qrankLookup);
+            bulkListener = context.bulkListener();
             var profile = new PlanetSearchProfile(planetiler.config(), context);
 
             String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
@@ -93,6 +95,9 @@ public class MainClass {
 
             ElasticsearchHelper.finalizeRun(context);
         } finally {
+            if (bulkListener != null) {
+                bulkListener.close();
+            }
             esClient.close();
         }
     }
