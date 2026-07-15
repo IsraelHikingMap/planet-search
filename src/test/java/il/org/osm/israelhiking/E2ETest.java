@@ -63,19 +63,12 @@ public class E2ETest {
     private static final Path QRANK_FILE = Path.of("data", "sources", "qrank.csv.gz");
     private static final String QRANK_URL = "https://qrank.toolforge.org/download/qrank.csv.gz";
 
-    /**
-     * Written by the first build and loaded by the second to tag points with their
-     * containers.
-     */
-    private static final Path CONTAINER_INDEX = Path.of("data", "sources", "e2e-container-index.bin.gz");
-
     @Test
     public void test() throws Exception {
         var arguments = new ArrayList<String>(List.of("--download",
                 "--area", AREA,
                 "--external-file-path", EXTERNAL_FILE,
-                "--es-address", ES_ADDRESS,
-                "--container-index-path", CONTAINER_INDEX.toString()));
+                "--es-address", ES_ADDRESS));
         if (USE_QRANK) {
             arguments.add("--qrank-path");
             arguments.add(downloadQrankIfMissing().toString());
@@ -90,6 +83,7 @@ public class E2ETest {
                 assertEveryPointHasAContainer(esClient, CONTAINER_CASES);
             }
             assertPointsAreEnrichedWithContainers(esClient);
+            assertPlaceFilterScopesToContainers(esClient);
         }
     }
 
@@ -116,14 +110,53 @@ public class E2ETest {
         }
     }
 
+    /**
+     * The {@code place} parameter scopes a search to points whose containers
+     * include that place — the single query behind a "point, place" search. A
+     * point must survive a filter on one of its own containers and be dropped by
+     * a filter on a place that contains nothing.
+     */
+    private void assertPlaceFilterScopesToContainers(ElasticsearchClient esClient) throws Exception {
+        var term = "חיפה";
+        var unscoped = searchPoints(esClient, Map.of("searchTerm", JsonData.of(term)));
+        if (unscoped.isEmpty() || unscoped.get(0).poiParentNames == null
+                || unscoped.get(0).poiParentNames.isEmpty()) {
+            fail("cannot check the place filter: \"" + term + "\" returned no enriched point");
+        }
+        var container = unscoped.get(0).poiParentNames.values().stream()
+                .flatMap(List::stream).findFirst().orElseThrow();
+
+        var scopedToContainer = searchPoints(esClient,
+                Map.of("searchTerm", JsonData.of(term), "place", JsonData.of(container)));
+        var scopedToNowhere = searchPoints(esClient,
+                Map.of("searchTerm", JsonData.of(term), "place", JsonData.of("לא-מקום-שקיים")));
+
+        var failures = new ArrayList<String>();
+        if (scopedToContainer.isEmpty()) {
+            failures.add("  place=\"" + container + "\" (a real container of " + term + ") returned nothing");
+        }
+        if (!scopedToNowhere.isEmpty()) {
+            failures.add("  place=\"לא-מקום-שקיים\" (contains nothing) still returned "
+                    + scopedToNowhere.size() + " hit(s)");
+        }
+        if (!failures.isEmpty()) {
+            fail("the place filter did not scope the search:\n" + String.join("\n", failures));
+        }
+    }
+
     private PointDocument topPoint(ElasticsearchClient esClient, String term) throws Exception {
+        var hits = searchPoints(esClient, Map.of("searchTerm", JsonData.of(term)));
+        return hits.isEmpty() ? null : hits.get(0);
+    }
+
+    private List<PointDocument> searchPoints(ElasticsearchClient esClient, Map<String, JsonData> params)
+            throws Exception {
         var response = esClient.searchTemplate(s -> s
                 .index(POINTS_ALIAS)
                 .id(SearchTemplates.POINTS_SEARCH)
-                .params(Map.of("searchTerm", JsonData.of(term))),
+                .params(params),
                 PointDocument.class);
-        var hits = response.hits().hits();
-        return hits.isEmpty() ? null : hits.get(0).source();
+        return response.hits().hits().stream().map(hit -> hit.source()).toList();
     }
 
     /**

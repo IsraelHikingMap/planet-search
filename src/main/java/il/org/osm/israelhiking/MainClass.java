@@ -77,16 +77,16 @@ public class MainClass {
             var qrankPath = args.getString("qrank-path",
                     "Path to qrank.csv.gz for the prominence signal (empty = run without it)", "");
             var qrankLookup = QRankLookup.load(qrankPath.isBlank() ? null : Path.of(qrankPath));
+            String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
             var containerIndexPath = Path.of(args.getString("container-index-path",
                     "Path to the container index from the previous run; loaded to tag points with their "
                             + "country/place, and rewritten from this run's containers for the next run",
-                    "data/sources/container-index.bin.gz"));
+                    "data/sources/container-index-" + area + ".bin.gz"));
             var containerIndex = ContainerIndex.load(containerIndexPath);
             var context = ElasticsearchHelper.initRun(esClient, bulkListener, pointsIndexAlias, bboxIndexAlias,
                     supportedLanguages, qrankLookup, containerIndex);
             var profile = new PlanetSearchProfile(planetiler.config(), context);
 
-            String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
             planetiler.setProfile(profile);
             // override this default with osm_path="path/to/data.osm.pbf"
             // Geofabrik has no whole-planet file, so area=planet uses the aws:latest
