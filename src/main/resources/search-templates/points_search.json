@@ -126,7 +126,7 @@
                     ]
                   }
                 },
-                "weight": 0.5
+                "weight": 0.8
               }
               {{#hasCenter}}
               ,{
