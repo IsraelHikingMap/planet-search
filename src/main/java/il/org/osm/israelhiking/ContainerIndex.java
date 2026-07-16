@@ -30,11 +30,14 @@ import co.elastic.clients.elasticsearch.ElasticsearchClient;
  * queries and {@link PreparedGeometry#contains} are both thread-safe once the
  * tree has been built.
  *
- * <p>The containers are the same documents the build writes to the bbox index,
+ * The
+ * containers are the same documents the build writes to the bbox index,
  * so there is no separate store: a build {@link #load}s them from the live bbox
- * alias, which — until this build swaps its own bbox index in at the end — still
+ * alias, which — until this build swaps its own bbox index in at the end —
+ * still
  * points at the previous build's containers. Containers change rarely, so that
- * one-build lag is by design; a first-ever build finds no alias and tags nothing.
+ * one-build lag is by design; a first-ever build finds no alias and tags
+ * nothing.
  */
 final class ContainerIndex {
 
@@ -87,15 +90,23 @@ final class ContainerIndex {
     this.loadedCount = records.size();
   }
 
-  /** Loads the previous build's containers from the bbox alias; no alias yet yields an empty index. */
+  /**
+   * Loads the previous build's containers from the bbox alias; no alias yet
+   * yields an empty index.
+   */
   static ContainerIndex load(ElasticsearchClient esClient, String bboxAlias) throws IOException {
     if (!esClient.indices().existsAlias(a -> a.name(bboxAlias)).value()) {
       LOGGER.info("Container index: no '{}' index yet — this build tags no points", bboxAlias);
       return new ContainerIndex(List.of());
     }
-    List<ContainerRecord> records = scroll(esClient, bboxAlias);
-    LOGGER.info("Container index: loaded {} containers from '{}'", records.size(), bboxAlias);
-    return new ContainerIndex(records);
+    try {
+      List<ContainerRecord> records = scroll(esClient, bboxAlias);
+      LOGGER.info("Container index: loaded {} containers from '{}'", records.size(), bboxAlias);
+      return new ContainerIndex(records);
+    } catch (Exception e) {
+      LOGGER.error("Container index: failed to load containers from '{}'", bboxAlias, e);
+      return new ContainerIndex(List.of());
+    }
   }
 
   /** The containers that enclose the given coordinate, in no particular order. */
