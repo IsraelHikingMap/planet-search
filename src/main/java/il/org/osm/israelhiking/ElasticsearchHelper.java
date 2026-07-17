@@ -24,7 +24,9 @@ public class ElasticsearchHelper {
   static final String HEBREW_DOUBLED_VAV_PATTERN = "\\u05D5\\u05D5";
   static final String HEBREW_DOUBLED_YOD_PATTERN = "\\u05D9\\u05D9";
   static final String NIQQUD_PATTERN = "[\\u05B0-\\u05C7]";
-  static final List<String> HEBREW_CHAR_FILTERS = List.of("hebrew_niqqud", "hebrew_matres_vav", "hebrew_matres_yod");
+  static final String APOSTROPHES_PATTERN = "[\\u0027\\u2018\\u2019\\u02BC]";
+  static final List<String> COMMON_CHAR_FILTERS = List.of("hebrew_niqqud", "hebrew_matres_vav",
+      "hebrew_matres_yod", "latin_apostrophes");
 
   public static record ElasticRunContext(
       ElasticsearchClient esClient,
@@ -84,13 +86,18 @@ public class ElasticsearchHelper {
                 .patternReplace(pr -> pr
                     .pattern(HEBREW_DOUBLED_YOD_PATTERN)
                     .replacement(HEBREW_YOD))))
+        .charFilter("latin_apostrophes", cf -> cf
+            .definition(d -> d
+                .patternReplace(pr -> pr
+                    .pattern(APOSTROPHES_PATTERN)
+                    .replacement(""))))
         .normalizer("universal_normalizer", n -> n
             .custom(cn -> cn
-                .charFilter(HEBREW_CHAR_FILTERS)
+                .charFilter(COMMON_CHAR_FILTERS)
                 .filter("asciifolding", "lowercase")))
         .analyzer("universal_analyzer", an -> an
             .custom(ca -> ca
-                .charFilter(HEBREW_CHAR_FILTERS)
+                .charFilter(COMMON_CHAR_FILTERS)
                 .tokenizer("standard")
                 .filter("asciifolding", "lowercase")));
   }
@@ -110,12 +117,12 @@ public class ElasticsearchHelper {
                         .edgeNgram(en -> en.minGram(2).maxGram(15))))
                 .analyzer("prefix_index_analyzer", an -> an
                     .custom(ca -> ca
-                        .charFilter(HEBREW_CHAR_FILTERS)
+                        .charFilter(COMMON_CHAR_FILTERS)
                         .tokenizer("standard")
                         .filter("asciifolding", "lowercase", "edge_ngram_2_15")))
                 .analyzer("prefix_search_analyzer", an -> an
                     .custom(ca -> ca
-                        .charFilter(HEBREW_CHAR_FILTERS)
+                        .charFilter(COMMON_CHAR_FILTERS)
                         .tokenizer("standard")
                         .filter("asciifolding", "lowercase")))))
         .mappings(m -> {
