@@ -669,15 +669,15 @@ public class PlanetSearchProfile implements Profile {
   /**
    * Remembers a place relation that {@link #resolvesToPolygon resolves to a
    * polygon}, so its node and member ways can defer to it in the second pass.
-   * /
-   * ate sta
-   * i
-   *   return;
-   * 
-   * f
-   *  
-   * 
-   * }
+   */
+  private static void recordPlaceRelation(OsmElement.Relation relation) {
+    if (!relation.hasTag("place") || !resolvesToPolygon(relation)) {
+      return;
+    }
+    for (String key : placeKeys(relation)) {
+      PlacesByKey.computeIfAbsent(key, k -> new PlaceInfo()).hasRelation = true;
+    }
+  }
 
   /**
    * Mirrors planetiler's own multipolygon test, so a relation is only recorded
