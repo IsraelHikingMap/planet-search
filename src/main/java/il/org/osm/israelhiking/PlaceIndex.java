@@ -16,7 +16,7 @@ import com.onthegomap.planetiler.reader.osm.OsmSourceFeature;
 /**
  * Tracks how each place is represented across the OSM node / way / relation
  * forms seen in the first pass, so the second pass can index every place exactly
- * once under the ranking <b>relation &gt; node &gt; way</b>:
+ * once under the ranking relation then node then way:
  * <ul>
  * <li>a place is searchable by name even when it has no dedicated place node
  * (common in Israel);</li>
