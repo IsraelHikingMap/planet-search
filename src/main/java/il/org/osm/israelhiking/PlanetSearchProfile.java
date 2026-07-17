@@ -36,7 +36,6 @@ import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.reader.WithTags;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
-import com.onthegomap.planetiler.reader.osm.OsmSourceFeature;
 
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 
@@ -57,7 +56,8 @@ public class PlanetSearchProfile implements Profile {
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
-  private static final List<String> ALTERNATIVE_NAME_TAGS = List.of(
+  // Package-private: also read by PlaceIndex when trimming a place node's tags.
+  static final List<String> ALTERNATIVE_NAME_TAGS = List.of(
       "alt_name", "loc_name", "short_name", "old_name", "official_name");
 
   /**
@@ -70,21 +70,9 @@ public class PlanetSearchProfile implements Profile {
   private static final Map<String, MinWayIdFinder> Singles = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> NamedHighways = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> Waterways = new ConcurrentHashMap<>();
-  private static final Map<String, PlaceInfo> PlacesByKey = new ConcurrentHashMap<>();
 
-  private static final Set<String> MERGE_PLACE_TAG_KEYS = Set.of(
-      "name", "description", "wikidata", "image", "wikimedia_commons", "website", "ele", "population");
-
-  /**
-   * The first-pass knowledge about one place. Fields are written from both
-   * passes' threads.
-   */
-  private static final class PlaceInfo {
-    /** Trimmed tags of the place node, or null when the place has no node. */
-    volatile Map<String, Object> nodeTags;
-    /** Whether a place relation that resolves to a polygon exists. */
-    volatile boolean hasRelation;
-  }
+  /** Ranks a place's node / way / relation forms so each place is indexed exactly once. */
+  private final PlaceIndex placeIndex = new PlaceIndex();
 
   public PlanetSearchProfile(PlanetilerConfig config, ElasticRunContext context) {
     this.config = config;
@@ -173,36 +161,7 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.intermittent = true;
     }
     setProminence(pointDocument, feature);
-    setPopulation(pointDocument, feature);
-  }
-
-  private void setPopulation(PointDocument pointDocument, WithTags feature) {
-    String place = feature.getString("place");
-    if (place == null || place.isBlank()) {
-      return;
-    }
-    var parsed = OsmNumberParser.parsePopulation(feature.getString("population"));
-    if (parsed.isPresent()) {
-      pointDocument.population = parsed.getAsInt();
-      return;
-    }
-    switch (place) {
-      case "city":
-        pointDocument.population = 1_000_000;
-        break;
-      case "town":
-        pointDocument.population = 50_000;
-        break;
-      case "village":
-        pointDocument.population = 2_000;
-        break;
-      case "hamlet":
-        pointDocument.population = 200;
-        break;
-      default:
-        pointDocument.population = 20;
-        break;
-    }
+    PlaceIndex.estimatePopulation(feature).ifPresent(population -> pointDocument.population = population);
   }
 
   private void setProminence(PointDocument pointDocument, WithTags feature) {
@@ -278,7 +237,7 @@ public class PlanetSearchProfile implements Profile {
     if (relation.hasTag("state", "proposed")) {
       return null;
     }
-    recordPlaceRelation(relation);
+    placeIndex.recordRelation(relation);
     var pointDocument = new PointDocument();
     setIconColorCategory(pointDocument, relation);
 
@@ -328,16 +287,7 @@ public class PlanetSearchProfile implements Profile {
 
   @Override
   public void preprocessOsmNode(OsmElement.Node node) {
-    // Record named place nodes so a same-named polygon can dedup against them and
-    // a winning relation can merge their tags in; a nameless place node has
-    // nothing to search on, so skip it.
-    if (!node.hasTag("place") || !node.hasTag("name")) {
-      return;
-    }
-    var nodeTags = trimPlaceTags(node.tags());
-    for (String key : placeKeys(node)) {
-      PlacesByKey.computeIfAbsent(key, k -> new PlaceInfo()).nodeTags = nodeTags;
-    }
+    placeIndex.recordNode(node);
   }
 
   @Override
@@ -655,37 +605,11 @@ public class PlanetSearchProfile implements Profile {
   }
 
   /**
-   * Remembers a place relation that {@link #resolvesToPolygon resolves to a
-   * polygon}, so its node and member ways can defer to it in the second pass.
-   */
-  private static void recordPlaceRelation(OsmElement.Relation relation) {
-    if (!relation.hasTag("place") || !resolvesToPolygon(relation)) {
-      return;
-    }
-    for (String key : placeKeys(relation)) {
-      PlacesByKey.computeIfAbsent(key, k -> new PlaceInfo()).hasRelation = true;
-    }
-  }
-
-  /**
-   * Whether planetiler will turn this relation into a polygon in the second
-   * pass, mirroring its own multipolygon test. Only such a relation is worth
-   * deferring to: recording one that never materializes would suppress the node
-   * that still represents the place and drop it from search entirely.
-   */
-  private static boolean resolvesToPolygon(OsmElement.Relation relation) {
-    return relation.hasTag("type", "multipolygon", "boundary", "land_area")
-        && relation.members().stream().anyMatch(member -> member.type() == WAY);
-  }
-
-  /**
    * Places get their own flow, so a place is searchable by name even when it has
    * no dedicated place node (common in Israel), while a place with several
-   * representations shows up only once. The ranking is relation &gt; node &gt;
-   * way: a place relation carries a real area, so it wins and merges the matching
-   * node's tags in so nothing like wikidata or population is lost; failing a
-   * relation the node wins; a bare way is used only as the sole representation.
-   * Whatever is skipped here still serves as a bbox container, indexed separately
+   * representations shows up only once. {@link PlaceIndex} decides which
+   * representation to keep (relation &gt; node &gt; way) and which tags to index;
+   * whatever is skipped here still serves as a bbox container, indexed separately
    * by {@link #insertBboxToElasticsearch}.
    */
   private boolean processPlaceFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
@@ -693,35 +617,14 @@ public class PlanetSearchProfile implements Profile {
     if (place == null || place.isBlank()) {
       return false;
     }
-    if (!hasSearchableName(feature)) {
+    if (!PlaceIndex.hasSearchableName(feature, this.context.supportedLanguages())) {
       // Nothing to search on; leave nameless places to the generic flow.
       return false;
     }
-
-    boolean fromRelation = !feature.isPoint() && isFromRelation(feature);
-    PlaceInfo info = placeInfo(feature);
-    Map<String, Object> nodeTags = info == null ? null : info.nodeTags;
-    boolean hasRelation = info != null && info.hasRelation;
-
-    if (feature.isPoint()) {
-      // A node yields to a relation of the same place, but outranks a way.
-      if (hasRelation) {
-        return true;
-      }
-    } else if (!fromRelation) {
-      // A way is used only when neither a node nor a relation represents the place.
-      if (nodeTags != null || hasRelation) {
-        return true;
-      }
-    }
-
-    WithTags tags = feature;
-    if (fromRelation && nodeTags != null) {
-      // The relation won: keep its geometry and area, but fill in the node's
-      // tags (wikidata, population, extra names) that the boundary usually lacks.
-      var merged = new HashMap<>(nodeTags);
-      merged.putAll(feature.tags());
-      tags = WithTags.from(merged);
+    WithTags tags = placeIndex.winningTags(PlaceIndex.kindOf(feature), feature);
+    if (tags == null) {
+      // Another representation of this place carries the searchable point.
+      return true;
     }
 
     var point = feature.canBePolygon() ? (Point) feature.centroidIfConvex()
@@ -742,91 +645,6 @@ public class PlanetSearchProfile implements Profile {
         .setId(feature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
     setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
     return true;
-  }
-
-  /**
-   * The "name=..." and "wikidata=..." keys a place feature is indexed under.
-   * Wikidata is unique per entity, so it links a node and polygon even when
-   * their names differ slightly.
-   */
-  private static List<String> placeKeys(WithTags feature) {
-    var keys = new ArrayList<String>(2);
-    if (feature.hasTag("name")) {
-      keys.add("name=" + feature.getString("name"));
-    }
-    var wikidata = feature.getString("wikidata");
-    if (wikidata != null) {
-      keys.add("wikidata=" + wikidata);
-    }
-    return keys;
-  }
-
-  /**
-   * What the first pass learned about the place this feature belongs to, or null.
-   */
-  private static PlaceInfo placeInfo(WithTags feature) {
-    PlaceInfo byName = feature.hasTag("name") ? PlacesByKey.get("name=" + feature.getString("name")) : null;
-    var wikidata = feature.getString("wikidata");
-    PlaceInfo byWikidata = wikidata != null ? PlacesByKey.get("wikidata=" + wikidata) : null;
-    if (byName == null) {
-      return byWikidata;
-    }
-    if (byWikidata == null || byWikidata == byName) {
-      return byName;
-    }
-    // The two keys resolve to different places (a node and relation that agree on
-    // wikidata but not name, say); combine what each key contributed.
-    var combined = new PlaceInfo();
-    combined.nodeTags = byName.nodeTags != null ? byName.nodeTags : byWikidata.nodeTags;
-    combined.hasRelation = byName.hasRelation || byWikidata.hasRelation;
-    return combined;
-  }
-
-  /**
-   * Keeps only the node tags a winning relation should inherit (see
-   * {@link #MERGE_PLACE_TAG_KEYS}).
-   */
-  private static Map<String, Object> trimPlaceTags(Map<String, Object> tags) {
-    var trimmed = new HashMap<String, Object>();
-    tags.forEach((key, value) -> {
-      if (MERGE_PLACE_TAG_KEYS.contains(key) || isNameOrDescriptionTag(key)) {
-        trimmed.put(key, value);
-      }
-    });
-    return trimmed;
-  }
-
-  private static boolean isNameOrDescriptionTag(String key) {
-    if (key.startsWith("name:") || key.startsWith("description:")) {
-      return true;
-    }
-    for (String alt : ALTERNATIVE_NAME_TAGS) {
-      if (key.equals(alt) || key.startsWith(alt + ":")) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /**
-   * Whether this second-pass feature came from an OSM relation (vs a node or
-   * way).
-   */
-  private static boolean isFromRelation(SourceFeature feature) {
-    return feature instanceof OsmSourceFeature osm
-        && osm.originalElement() instanceof OsmElement.Relation;
-  }
-
-  private boolean hasSearchableName(SourceFeature feature) {
-    if (feature.hasTag("name")) {
-      return true;
-    }
-    for (String language : this.context.supportedLanguages()) {
-      if (feature.hasTag("name:" + language)) {
-        return true;
-      }
-    }
-    return false;
   }
 
   private boolean processOtherSourceFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
