@@ -386,13 +386,14 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.poiSource = feature.getString("poiSource");
     pointDocument.poiDifficulty = feature.getString("poiDifficulty");
     pointDocument.poiLength = NumberUtils.toDouble(feature.getString("poiLength"), 0.0);
-    convertTagsToDocument(pointDocument, feature);
     var point = feature.canBePolygon() ? (Point) feature.centroidIfConvex()
         : GeoUtils.point(feature.worldGeometry().getCoordinate());
     var docId = pointDocument.poiSource + "_" + feature.getString("identifier");
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
     pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
 
+    convertTagsToDocument(pointDocument, feature);
+    enrichWithContainers(pointDocument);
     insertPointToElasticsearch(pointDocument, docId);
 
     var tileFeature = features.geometry("external", point)
@@ -437,6 +438,7 @@ public class PlanetSearchProfile implements Profile {
       var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
       relation.pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
       relation.pointDocument.poiLength = relation.length;
+      enrichWithContainers(relation.pointDocument);
       insertPointToElasticsearch(relation.pointDocument, "OSM_relation_" + relation.id());
 
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
@@ -466,13 +468,6 @@ public class PlanetSearchProfile implements Profile {
         var minIdFeature = mergedFeature.representingFeature;
 
         var pointDocument = new PointDocument();
-        convertTagsToDocument(pointDocument, minIdFeature);
-        for (String language : this.context.supportedLanguages()) {
-          CoalesceIntoMap(pointDocument.name, language, minIdFeature.getString("mtb:name:" + language));
-        }
-        if (minIdFeature.hasTag("mtb:name")) {
-          CoalesceIntoMap(pointDocument.name, "default", minIdFeature.getString("mtb:name"));
-        }
         pointDocument.poiCategory = "Bicycle";
         pointDocument.poiIcon = "icon-bike";
         pointDocument.poiIconColor = "gray";
@@ -484,6 +479,14 @@ public class PlanetSearchProfile implements Profile {
         var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
         pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
 
+        convertTagsToDocument(pointDocument, minIdFeature);
+        for (String language : this.context.supportedLanguages()) {
+          CoalesceIntoMap(pointDocument.name, language, minIdFeature.getString("mtb:name:" + language));
+        }
+        if (minIdFeature.hasTag("mtb:name")) {
+          CoalesceIntoMap(pointDocument.name, "default", minIdFeature.getString("mtb:name"));
+        }
+        enrichWithContainers(pointDocument);
         insertPointToElasticsearch(pointDocument, "OSM_way_" + mergedFeature.minId);
         // This was the last way with the same mtb:name, so we can merge the lines and
         // add the feature
@@ -528,7 +531,6 @@ public class PlanetSearchProfile implements Profile {
         var minIdFeature = mergedFeature.representingFeature;
 
         var pointDocument = new PointDocument();
-        convertTagsToDocument(pointDocument, minIdFeature);
         pointDocument.poiCategory = "Water";
         pointDocument.poiIcon = "icon-river";
         pointDocument.poiIconColor = "#1e80e3";
@@ -540,6 +542,8 @@ public class PlanetSearchProfile implements Profile {
         var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
         pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
 
+        convertTagsToDocument(pointDocument, minIdFeature);
+        enrichWithContainers(pointDocument);
         insertPointToElasticsearch(pointDocument, "OSM_way_" + mergedFeature.minId);
         if (!isInterestingPoint(pointDocument)) {
           // Skip adding features without any description or image to tiles
@@ -590,13 +594,14 @@ public class PlanetSearchProfile implements Profile {
         var minIdFeature = mergedFeature.representingFeature;
         var pointDocument = new PointDocument();
         setIconColorCategory(pointDocument, minIdFeature);
-        convertTagsToDocument(pointDocument, minIdFeature);
         pointDocument.poiSource = "OSM";
         pointDocument.poiLength = mergedFeature.length;
 
         var point = GeoUtils.point((mergedFeature.geometry.getCoordinate()));
         var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
         pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
+        convertTagsToDocument(pointDocument, minIdFeature);
+        enrichWithContainers(pointDocument);
         insertPointToElasticsearch(pointDocument, "OSM_way_" + mergedFeature.minId);
 
         if (pointDocument.poiIcon == "icon-hike" ||
@@ -631,7 +636,6 @@ public class PlanetSearchProfile implements Profile {
         : GeoUtils.point(feature.worldGeometry().getCoordinate());
 
     var pointDocument = new PointDocument();
-    convertTagsToDocument(pointDocument, feature);
     if (feature.canBePolygon()) {
       pointDocument.poiAreaNormalized = normalizeArea(feature.areaMeters());
     }
@@ -649,6 +653,8 @@ public class PlanetSearchProfile implements Profile {
       return true;
     }
 
+    convertTagsToDocument(pointDocument, feature);
+    enrichWithContainers(pointDocument);
     insertPointToElasticsearch(pointDocument, docId);
 
     if ((pointDocument.poiIcon == "icon-peak" || pointDocument.poiIcon == "icon-river")
@@ -683,18 +689,18 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.poiIcon = category.icon;
     pointDocument.poiIconColor = category.color;
     pointDocument.poiCategory = category.poiCategory;
-    convertTagsToDocument(pointDocument, feature);
     pointDocument.poiSource = "OSM";
     var docId = sourceFeatureToDocumentId(feature);
     var point = feature.canBePolygon() ? (Point) feature.centroidIfConvex()
         : GeoUtils.point(feature.worldGeometry().getCoordinate());
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
     pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
+    convertTagsToDocument(pointDocument, feature);
+    enrichWithContainers(pointDocument);
     insertPointToElasticsearch(pointDocument, docId);
   }
 
   private void insertPointToElasticsearch(PointDocument pointDocument, String docId) {
-    enrichWithContainers(pointDocument);
     this.context.bulkListener().add(BulkOperation.of(op -> op
         .index(idx -> idx
             .index(this.context.pointsIndexTarget())
