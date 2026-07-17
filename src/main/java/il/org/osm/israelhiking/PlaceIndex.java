@@ -15,15 +15,14 @@ import com.onthegomap.planetiler.reader.osm.OsmSourceFeature;
 
 /**
  * Tracks how each place is represented across the OSM node / way / relation
- * forms seen in the first pass, so the second pass can index every place exactly
+ * forms seen in the first pass, so the second pass can index every place
+ * exactly
  * once under the ranking relation then node then way:
- * <ul>
- * <li>a place is searchable by name even when it has no dedicated place node
- * (common in Israel);</li>
- * <li>a place with several representations shows up only once;</li>
- * <li>when a relation wins it inherits the node's tags, so identity and ranking
- * fields such as {@code wikidata} and {@code population} are not lost.</li>
- * </ul>
+ * - a place is searchable by name even when it has no dedicated place node
+ * (common in Israel);
+ * - a place with several representations shows up only once;
+ * - when a relation wins it inherits the node's tags, so identity and ranking
+ * fields such as {@code wikidata} and {@code population} are not lost.
  *
  * Populated from {@code preprocessOsm*} on pass 1 and queried from
  * {@code processFeature} on pass 2; both run multi-threaded, so the backing map
@@ -47,7 +46,10 @@ final class PlaceIndex {
 
   private final Map<String, PlaceInfo> byKey = new ConcurrentHashMap<>();
 
-  /** The first-pass knowledge about one place. Fields are written from many threads. */
+  /**
+   * The first-pass knowledge about one place. Fields are written from many
+   * threads.
+   */
   private static final class PlaceInfo {
     /** Trimmed tags of the place node, or null when the place has no node. */
     volatile Map<String, Object> nodeTags;
@@ -55,9 +57,10 @@ final class PlaceIndex {
     volatile boolean hasRelation;
   }
 
-  // ---- first pass ----
-
-  /** Records a named place node so a same-named polygon can defer to it and inherit its tags. */
+  /**
+   * Records a named place node so a same-named polygon can defer to it and
+   * inherit its tags.
+   */
   void recordNode(OsmElement.Node node) {
     if (!node.hasTag("place") || !node.hasTag("name")) {
       return;
@@ -80,8 +83,6 @@ final class PlaceIndex {
       byKey.computeIfAbsent(key, k -> new PlaceInfo()).hasRelation = true;
     }
   }
-
-  // ---- second pass ----
 
   /**
    * The tags to index for this place representation, or {@code null} when
@@ -122,7 +123,10 @@ final class PlaceIndex {
     return Kind.WAY;
   }
 
-  /** Whether the feature has any name we can search on, in the default or a supported language. */
+  /**
+   * Whether the feature has any name we can search on, in the default or a
+   * supported language.
+   */
   static boolean hasSearchableName(WithTags feature, String[] languages) {
     if (feature.hasTag("name")) {
       return true;
@@ -158,8 +162,6 @@ final class PlaceIndex {
     });
   }
 
-  // ---- key derivation and trimming (package-private for unit tests) ----
-
   /**
    * Whether planetiler will turn this relation into a polygon in the second
    * pass, mirroring its own multipolygon test. Only such a relation is worth
@@ -188,7 +190,10 @@ final class PlaceIndex {
     return keys;
   }
 
-  /** Keeps only the node tags a winning relation should inherit (see {@link #MERGE_TAG_KEYS}). */
+  /**
+   * Keeps only the node tags a winning relation should inherit (see
+   * {@link #MERGE_TAG_KEYS}).
+   */
   static Map<String, Object> trimPlaceTags(Map<String, Object> tags) {
     var trimmed = new HashMap<String, Object>();
     tags.forEach((key, value) -> {
