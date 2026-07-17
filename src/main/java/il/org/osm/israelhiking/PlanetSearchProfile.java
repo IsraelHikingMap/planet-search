@@ -87,7 +87,10 @@ public class PlanetSearchProfile implements Profile {
   private static final Set<String> MERGE_TAG_KEYS = Set.of(
       "name", "description", "wikidata", "image", "wikimedia_commons", "website", "ele", "population");
 
-  /** The first-pass knowledge about one place. Fields are written from both passes' threads. */
+  /**
+   * The first-pass knowledge about one place. Fields are written from both
+   * passes' threads.
+   */
   private static final class PlaceInfo {
     /** Trimmed tags of the place node, or null when the place has no node. */
     volatile Map<String, Object> nodeTags;
@@ -664,19 +667,17 @@ public class PlanetSearchProfile implements Profile {
   }
 
   /**
-   * Remembers a place relation that resolves to a polygon (a boundary or
-   * multipolygon), so its node and member ways can defer to it in the second
-   * pass. Only polygonal types are recorded, so a malformed place relation that
-   * never materializes cannot suppress the node that still represents the place.
-   */
-  private static void recordPlaceRelation(OsmElement.Relation relation) {
-    if (!relation.hasTag("place") || !resolvesToPolygon(relation)) {
-      return;
-    }
-    for (String key : placeKeys(relation)) {
-      PlacesByKey.computeIfAbsent(key, k -> new PlaceInfo()).hasRelation = true;
-    }
-  }
+   * Remembers a place relation that {@link #resolvesToPolygon resolves to a
+   * polygon}, so its node and member ways can defer to it in the second pass.
+   * /
+   * ate sta
+   * i
+   *   return;
+   * 
+   * f
+   *  
+   * 
+   * }
 
   /**
    * Mirrors planetiler's own multipolygon test, so a relation is only recorded
@@ -772,7 +773,9 @@ public class PlanetSearchProfile implements Profile {
     return keys;
   }
 
-  /** What the first pass learned about the place this feature belongs to, or null. */
+  /**
+   * What the first pass learned about the place this feature belongs to, or null.
+   */
   private static PlaceInfo placeInfo(WithTags feature) {
     PlaceInfo byName = feature.hasTag("name") ? PlacesByKey.get("name=" + feature.getString("name")) : null;
     var wikidata = feature.getString("wikidata");
@@ -791,7 +794,10 @@ public class PlanetSearchProfile implements Profile {
     return combined;
   }
 
-  /** Keeps only the node tags a winning relation should inherit (see {@link #MERGE_TAG_KEYS}). */
+  /**
+   * Keeps only the node tags a winning relation should inherit (see
+   * {@link #MERGE_TAG_KEYS}).
+   */
   private static Map<String, Object> trimPlaceTags(Map<String, Object> tags) {
     var trimmed = new HashMap<String, Object>();
     tags.forEach((key, value) -> {
@@ -814,7 +820,10 @@ public class PlanetSearchProfile implements Profile {
     return false;
   }
 
-  /** Whether this second-pass feature came from an OSM relation (vs a node or way). */
+  /**
+   * Whether this second-pass feature came from an OSM relation (vs a node or
+   * way).
+   */
   private static boolean isFromRelation(SourceFeature feature) {
     return feature instanceof OsmSourceFeature osm
         && osm.originalElement() instanceof OsmElement.Relation;
