@@ -680,10 +680,10 @@ public class PlanetSearchProfile implements Profile {
   }
 
   /**
-   * Mirrors planetiler's own multipolygon test, so a relation is only recorded
-   * when it will actually surface as a polygon in the second pass. Recording one
-   * that never materializes would suppress the node that still represents the
-   * place, dropping it from search entirely.
+   * Whether planetiler will turn this relation into a polygon in the second
+   * pass, mirroring its own multipolygon test. Only such a relation is worth
+   * deferring to: recording one that never materializes would suppress the node
+   * that still represents the place and drop it from search entirely.
    */
   private static boolean resolvesToPolygon(OsmElement.Relation relation) {
     return relation.hasTag("type", "multipolygon", "boundary", "land_area")
