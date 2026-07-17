@@ -60,13 +60,7 @@ public class PlanetSearchProfile implements Profile {
       "alt_name", "loc_name", "short_name", "old_name", "official_name");
 
   /**
-   * {@code place=*} values that must never become a container: sub-city
-   * divisions and micro features (a square, a locality, an islet). Without this,
-   * a tiny {@code place=square} polygon enclosing a city node wins the
-   * tightest-container pick and a search for the city shows up as
-   * "City, Some Square". Larger place types (region, municipality, ...) are left
-   * in, as they are legitimate containers and often lack an admin boundary that
-   * would otherwise catch them.
+   * Values that must never become a container
    */
   private static final Set<String> NON_CONTAINER_PLACES = Set.of(
       "suburb", "neighbourhood", "quarter", "city_block", "borough",
