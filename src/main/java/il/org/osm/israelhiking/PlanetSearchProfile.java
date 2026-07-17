@@ -621,11 +621,12 @@ public class PlanetSearchProfile implements Profile {
       // Nothing to search on; leave nameless places to the generic flow.
       return false;
     }
-    WithTags tags = placeIndex.winningTags(PlaceIndex.kindOf(feature), feature);
-    if (tags == null) {
+    var kind = PlaceIndex.kindOf(feature);
+    if (!placeIndex.shouldIndex(kind, feature)) {
       // Another representation of this place carries the searchable point.
       return true;
     }
+    WithTags tags = placeIndex.tagsToIndex(kind, feature);
 
     var point = feature.canBePolygon() ? (Point) feature.centroidIfConvex()
         : GeoUtils.point(feature.worldGeometry().getCoordinate());

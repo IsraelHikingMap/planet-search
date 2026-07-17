@@ -15,7 +15,7 @@ import com.onthegomap.planetiler.reader.osm.OsmSourceFeature;
 
 /**
  * Tracks how each place is represented across the OSM node / way / relation
- * forms seen in the first pass, so the second pass can index every place
+ * element seen in the first pass, so the second pass can index every place
  * exactly
  * once under the ranking relation then node then way:
  * - a place is searchable by name even when it has no dedicated place node
@@ -30,7 +30,7 @@ import com.onthegomap.planetiler.reader.osm.OsmSourceFeature;
  */
 final class PlaceIndex {
 
-  /** Which OSM form a second-pass feature came from. */
+  /** Which OSM element type a second-pass feature came from. */
   enum Kind {
     NODE, WAY, RELATION
   }
@@ -85,34 +85,42 @@ final class PlaceIndex {
   }
 
   /**
-   * The tags to index for this place representation, or {@code null} when
-   * another representation should carry it. A winning relation inherits the
-   * node's trimmed tags (the relation's own tags win on conflict, keeping its
-   * geometry-derived identity); a winning node or way is returned unchanged.
+   * Whether this representation is the one to index for its place, applying the
+   * ranking relation &gt; node &gt; way: a node yields to a relation of the same
+   * place but outranks a way, a way is used only when neither a node nor a
+   * relation represents the place, and a relation always wins.
    */
-  WithTags winningTags(Kind kind, WithTags feature) {
+  boolean shouldIndex(Kind kind, WithTags feature) {
     PlaceInfo info = lookup(feature);
     boolean hasRelation = info != null && info.hasRelation;
-    Map<String, Object> nodeTags = info == null ? null : info.nodeTags;
-    switch (kind) {
-      case NODE:
-        // A node yields to a relation of the same place, but outranks a way.
-        return hasRelation ? null : feature;
-      case WAY:
-        // A way is used only when neither a node nor a relation represents the place.
-        return (nodeTags != null || hasRelation) ? null : feature;
-      case RELATION:
-      default:
-        if (nodeTags == null) {
-          return feature;
-        }
-        var merged = new HashMap<>(nodeTags);
-        merged.putAll(feature.tags());
-        return WithTags.from(merged);
-    }
+    boolean hasNode = info != null && info.nodeTags != null;
+    return switch (kind) {
+      case NODE -> !hasRelation;
+      case WAY -> !hasNode && !hasRelation;
+      case RELATION -> true;
+    };
   }
 
-  /** Which OSM form produced this second-pass feature. */
+  /**
+   * The tags to index for a winning representation: a relation inherits the
+   * matching node's trimmed tags (its own tags win on conflict, keeping its
+   * geometry-derived identity), while a node or way is used unchanged. Call only
+   * for a representation {@link #shouldIndex} accepted.
+   */
+  WithTags tagsToIndex(Kind kind, WithTags feature) {
+    if (kind != Kind.RELATION) {
+      return feature;
+    }
+    PlaceInfo info = lookup(feature);
+    if (info == null || info.nodeTags == null) {
+      return feature;
+    }
+    var merged = new HashMap<>(info.nodeTags);
+    merged.putAll(feature.tags());
+    return WithTags.from(merged);
+  }
+
+  /** Which OSM element type produced this second-pass feature. */
   static Kind kindOf(SourceFeature feature) {
     if (feature.isPoint()) {
       return Kind.NODE;

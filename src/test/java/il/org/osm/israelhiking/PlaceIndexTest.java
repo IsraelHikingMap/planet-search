@@ -2,8 +2,6 @@ package il.org.osm.israelhiking;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -130,79 +128,95 @@ public class PlaceIndexTest {
         assertEquals(20, PlaceIndex.estimatePopulation(tags("place", "isolated_dwelling")).getAsInt());
     }
 
-    // ---- winningTags: ranking relation > node > way ----
+    // ---- shouldIndex: ranking relation > node > way ----
 
     @Test
-    public void winningTags_soleRepresentationAlwaysWins() {
+    public void shouldIndex_soleRepresentationAlwaysWins() {
         var index = new PlaceIndex();
         for (Kind kind : Kind.values()) {
-            var feature = tags("name", "Lonely", "place", "village");
-            assertSame(feature, index.winningTags(kind, feature), kind + " alone should be indexed");
+            assertTrue(index.shouldIndex(kind, tags("name", "Lonely", "place", "village")),
+                    kind + " alone should be indexed");
         }
     }
 
     @Test
-    public void winningTags_nodeOutranksWayButNotRelation() {
+    public void shouldIndex_nodeOutranksWayButNotRelation() {
         var index = new PlaceIndex();
         index.recordNode(node("place", "city", "name", "Afula"));
 
         var afula = tags("name", "Afula");
-        assertSame(afula, index.winningTags(Kind.NODE, afula), "the node wins when there is no relation");
-        assertNull(index.winningTags(Kind.WAY, afula), "a way defers to the node of the same place");
-        assertNotNull(index.winningTags(Kind.WAY, tags("name", "Elsewhere")), "a different place is untouched");
+        assertTrue(index.shouldIndex(Kind.NODE, afula), "the node wins when there is no relation");
+        assertFalse(index.shouldIndex(Kind.WAY, afula), "a way defers to the node of the same place");
+        assertTrue(index.shouldIndex(Kind.WAY, tags("name", "Elsewhere")), "a different place is untouched");
     }
 
     @Test
-    public void winningTags_relationOutranksNodeAndWay() {
+    public void shouldIndex_relationOutranksNodeAndWay() {
         var index = new PlaceIndex();
-        index.recordNode(node("place", "city", "name", "Nazareth", "wikidata", "Q1", "population", "5000"));
+        index.recordNode(node("place", "city", "name", "Nazareth"));
         index.recordRelation(relation(List.of(wayMember()), "place", "city", "name", "Nazareth", "type", "boundary"));
 
-        assertNull(index.winningTags(Kind.NODE, tags("name", "Nazareth")), "the node defers to the relation");
-        assertNull(index.winningTags(Kind.WAY, tags("name", "Nazareth")), "the way defers to the relation");
-
-        var relationFeature = tags("name", "Nazareth", "type", "boundary", "boundary", "administrative");
-        var winning = index.winningTags(Kind.RELATION, relationFeature);
-        assertNotNull(winning);
-        assertEquals("5000", winning.getString("population"), "the node's population is merged in");
-        assertEquals("Q1", winning.getString("wikidata"), "the node's wikidata is merged in");
-        assertEquals("administrative", winning.getString("boundary"), "the relation keeps its own tags");
+        assertFalse(index.shouldIndex(Kind.NODE, tags("name", "Nazareth")), "the node defers to the relation");
+        assertFalse(index.shouldIndex(Kind.WAY, tags("name", "Nazareth")), "the way defers to the relation");
+        assertTrue(index.shouldIndex(Kind.RELATION, tags("name", "Nazareth", "type", "boundary")));
     }
 
     @Test
-    public void winningTags_relationWithoutNodeIsIndexedAsIs() {
+    public void shouldIndex_nonMaterializingRelationDoesNotSuppressNode() {
+        var index = new PlaceIndex();
+        index.recordNode(node("place", "city", "name", "Kept"));
+        // A boundary relation with no way member never becomes a polygon, so it must be ignored.
+        index.recordRelation(relation(List.of(relationMember()), "place", "city", "name", "Kept", "type", "boundary"));
+
+        assertTrue(index.shouldIndex(Kind.NODE, tags("name", "Kept")),
+                "the node must survive when the relation never materializes");
+    }
+
+    // ---- tagsToIndex: node/way as-is, relation merges the node's tags ----
+
+    @Test
+    public void tagsToIndex_returnsNodeAndWayFeaturesUnchanged() {
+        var index = new PlaceIndex();
+        var feature = tags("name", "Afula", "place", "city");
+        assertSame(feature, index.tagsToIndex(Kind.NODE, feature));
+        assertSame(feature, index.tagsToIndex(Kind.WAY, feature));
+    }
+
+    @Test
+    public void tagsToIndex_relationWithoutNodeIsUsedAsIs() {
         var index = new PlaceIndex();
         index.recordRelation(relation(List.of(wayMember()), "place", "town", "name", "NoNode", "type", "boundary"));
 
         var relationFeature = tags("name", "NoNode", "type", "boundary");
-        assertSame(relationFeature, index.winningTags(Kind.RELATION, relationFeature), "no node means nothing to merge");
-        assertNull(index.winningTags(Kind.WAY, tags("name", "NoNode")), "a way still defers to the relation");
+        assertSame(relationFeature, index.tagsToIndex(Kind.RELATION, relationFeature), "no node means nothing to merge");
     }
 
     @Test
-    public void winningTags_relationWinsOnConflictButNodeFillsGaps() {
+    public void tagsToIndex_relationInheritsNodeTags() {
+        var index = new PlaceIndex();
+        index.recordNode(node("place", "city", "name", "Nazareth", "wikidata", "Q1", "population", "5000"));
+        index.recordRelation(relation(List.of(wayMember()), "place", "city", "name", "Nazareth", "type", "boundary"));
+
+        var merged = index.tagsToIndex(Kind.RELATION,
+                tags("name", "Nazareth", "type", "boundary", "boundary", "administrative"));
+        assertEquals("5000", merged.getString("population"), "the node's population is merged in");
+        assertEquals("Q1", merged.getString("wikidata"), "the node's wikidata is merged in");
+        assertEquals("administrative", merged.getString("boundary"), "the relation keeps its own tags");
+    }
+
+    @Test
+    public void tagsToIndex_relationWinsOnConflictButNodeFillsGaps() {
         var index = new PlaceIndex();
         index.recordNode(node("place", "city", "name", "Old", "name:en", "OldEn", "wikidata", "Q1"));
         // The relation shares the node's wikidata but carries a different name.
         index.recordRelation(
                 relation(List.of(wayMember()), "place", "city", "name", "New", "wikidata", "Q1", "type", "boundary"));
 
-        assertNull(index.winningTags(Kind.NODE, tags("name", "Old", "wikidata", "Q1")),
+        assertFalse(index.shouldIndex(Kind.NODE, tags("name", "Old", "wikidata", "Q1")),
                 "the node defers to the relation matched by shared wikidata, not name");
 
-        var winning = index.winningTags(Kind.RELATION, tags("name", "New", "wikidata", "Q1", "type", "boundary"));
-        assertEquals("New", winning.getString("name"), "the relation's own name wins on conflict");
-        assertEquals("OldEn", winning.getString("name:en"), "the node fills in a name the relation lacked");
-    }
-
-    @Test
-    public void winningTags_nonMaterializingRelationDoesNotSuppressNode() {
-        var index = new PlaceIndex();
-        index.recordNode(node("place", "city", "name", "Kept"));
-        // A boundary relation with no way member never becomes a polygon, so it must be ignored.
-        index.recordRelation(relation(List.of(relationMember()), "place", "city", "name", "Kept", "type", "boundary"));
-
-        var kept = tags("name", "Kept");
-        assertSame(kept, index.winningTags(Kind.NODE, kept), "the node must survive when the relation never materializes");
+        var merged = index.tagsToIndex(Kind.RELATION, tags("name", "New", "wikidata", "Q1", "type", "boundary"));
+        assertEquals("New", merged.getString("name"), "the relation's own name wins on conflict");
+        assertEquals("OldEn", merged.getString("name:en"), "the node fills in a name the relation lacked");
     }
 }
