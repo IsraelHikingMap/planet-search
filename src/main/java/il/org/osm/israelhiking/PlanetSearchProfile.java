@@ -70,21 +70,9 @@ public class PlanetSearchProfile implements Profile {
   private static final Map<String, MinWayIdFinder> Singles = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> NamedHighways = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> Waterways = new ConcurrentHashMap<>();
-  /**
-   * What the first pass learned about each place, stored under both its
-   * "name=..." and "wikidata=..." key. The second pass reads it to rank a
-   * place's representations (relation &gt; node &gt; way) and, when a relation
-   * wins, to merge the node's tags in.
-   */
   private static final Map<String, PlaceInfo> PlacesByKey = new ConcurrentHashMap<>();
 
-  /**
-   * The node tags worth carrying onto a winning relation: the identity, ranking
-   * and metadata fields a boundary relation usually lacks. Every other tag is
-   * dropped so this map stays small on a planet-wide build; name and description
-   * tags are kept separately via {@link #isNameOrDescriptionTag}.
-   */
-  private static final Set<String> MERGE_TAG_KEYS = Set.of(
+  private static final Set<String> MERGE_PLACE_TAG_KEYS = Set.of(
       "name", "description", "wikidata", "image", "wikimedia_commons", "website", "ele", "population");
 
   /**
@@ -796,12 +784,12 @@ public class PlanetSearchProfile implements Profile {
 
   /**
    * Keeps only the node tags a winning relation should inherit (see
-   * {@link #MERGE_TAG_KEYS}).
+   * {@link #MERGE_PLACE_TAG_KEYS}).
    */
   private static Map<String, Object> trimPlaceTags(Map<String, Object> tags) {
     var trimmed = new HashMap<String, Object>();
     tags.forEach((key, value) -> {
-      if (MERGE_TAG_KEYS.contains(key) || isNameOrDescriptionTag(key)) {
+      if (MERGE_PLACE_TAG_KEYS.contains(key) || isNameOrDescriptionTag(key)) {
         trimmed.put(key, value);
       }
     });
