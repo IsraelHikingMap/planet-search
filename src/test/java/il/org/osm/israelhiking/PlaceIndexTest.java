@@ -50,28 +50,6 @@ public class PlaceIndexTest {
         return new OsmElement.Relation.Member(OsmElement.Type.RELATION, 20, "subarea");
     }
 
-    // ---- resolvesToPolygon ----
-
-    @Test
-    public void resolvesToPolygon_trueForPolygonalTypesWithAWayMember() {
-        for (String type : List.of("multipolygon", "boundary", "land_area")) {
-            assertTrue(PlaceIndex.resolvesToPolygon(relation(List.of(wayMember()), "type", type)),
-                    type + " with a way member should resolve to a polygon");
-        }
-    }
-
-    @Test
-    public void resolvesToPolygon_falseWithoutAWayMember() {
-        assertFalse(PlaceIndex.resolvesToPolygon(relation(List.of(relationMember()), "type", "boundary")),
-                "a boundary with no way member never materializes, so it must not suppress the node");
-    }
-
-    @Test
-    public void resolvesToPolygon_falseForNonPolygonalTypes() {
-        assertFalse(PlaceIndex.resolvesToPolygon(relation(List.of(wayMember()), "type", "route")));
-        assertFalse(PlaceIndex.resolvesToPolygon(relation(List.of(wayMember()))));
-    }
-
     // ---- placeKeys ----
 
     @Test
@@ -94,16 +72,6 @@ public class PlaceIndexTest {
 
         assertEquals(map("name", "Afula", "name:en", "Afula", "description", "d", "alt_name", "Affula",
                 "loc_name:he", "עפולה", "wikidata", "Q1", "population", "5000"), trimmed);
-    }
-
-    // ---- hasSearchableName ----
-
-    @Test
-    public void hasSearchableName_matchesDefaultOrSupportedLanguage() {
-        assertTrue(PlaceIndex.hasSearchableName(tags("name", "X"), new String[] {}));
-        assertTrue(PlaceIndex.hasSearchableName(tags("name:en", "X"), new String[] { "en" }));
-        assertFalse(PlaceIndex.hasSearchableName(tags("name:en", "X"), new String[] { "he" }));
-        assertFalse(PlaceIndex.hasSearchableName(tags("place", "city"), new String[] { "en" }));
     }
 
     // ---- estimatePopulation ----
@@ -162,14 +130,21 @@ public class PlaceIndexTest {
     }
 
     @Test
-    public void shouldIndex_nonMaterializingRelationDoesNotSuppressNode() {
-        var index = new PlaceIndex();
-        index.recordNode(node("place", "city", "name", "Kept"));
-        // A boundary relation with no way member never becomes a polygon, so it must be ignored.
-        index.recordRelation(relation(List.of(relationMember()), "place", "city", "name", "Kept", "type", "boundary"));
+    public void shouldIndex_relationThatWontBecomeAPolygonIsIgnored() {
+        // A relation only outranks the node when planetiler will actually turn it into a
+        // polygon: a polygonal type with at least one way member. Anything else is ignored,
+        // so the node keeps representing the place instead of vanishing from search.
+        var noWayMember = relation(List.of(relationMember()), "place", "city", "name", "Kept", "type", "boundary");
+        var nonPolygonalType = relation(List.of(wayMember()), "place", "city", "name", "Kept", "type", "route");
+        var noType = relation(List.of(wayMember()), "place", "city", "name", "Kept");
 
-        assertTrue(index.shouldIndex(Kind.NODE, tags("name", "Kept")),
-                "the node must survive when the relation never materializes");
+        for (var ignored : List.of(noWayMember, nonPolygonalType, noType)) {
+            var index = new PlaceIndex();
+            index.recordNode(node("place", "city", "name", "Kept"));
+            index.recordRelation(ignored);
+            assertTrue(index.shouldIndex(Kind.NODE, tags("name", "Kept")),
+                    "the node must survive when the relation never materializes");
+        }
     }
 
     // ---- tagsToIndex: node/way as-is, relation merges the node's tags ----

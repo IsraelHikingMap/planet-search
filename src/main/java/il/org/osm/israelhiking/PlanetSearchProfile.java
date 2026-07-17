@@ -56,10 +56,6 @@ public class PlanetSearchProfile implements Profile {
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
-  // Package-private: also read by PlaceIndex when trimming a place node's tags.
-  static final List<String> ALTERNATIVE_NAME_TAGS = List.of(
-      "alt_name", "loc_name", "short_name", "old_name", "official_name");
-
   /**
    * Values that must never become a container
    */
@@ -117,19 +113,9 @@ public class PlanetSearchProfile implements Profile {
   /**
    * Collects all the alternative names of a feature for a single language and
    * stores them under that language in the alt_names map.
-   * The "default" language reads the unsuffixed tags, i.e. alt_name, loc_name
-   * etc.
    */
   private static void AddAlternativeNames(PointDocument pointDocument, WithTags feature, String language) {
-    var suffix = "default".equals(language) ? "" : ":" + language;
-    var alternativeNames = ALTERNATIVE_NAME_TAGS.stream()
-        .map(tag -> feature.getString(tag + suffix))
-        .filter(Objects::nonNull)
-        .flatMap(value -> Arrays.stream(value.split(";")))
-        .map(s -> s.trim())
-        .filter(s -> !s.isEmpty())
-        .distinct()
-        .collect(Collectors.toList());
+    var alternativeNames = OsmNames.alternativeNames(feature, language);
     if (alternativeNames.isEmpty()) {
       return;
     }
@@ -617,7 +603,7 @@ public class PlanetSearchProfile implements Profile {
     if (place == null || place.isBlank()) {
       return false;
     }
-    if (!PlaceIndex.hasSearchableName(feature, this.context.supportedLanguages())) {
+    if (!OsmNames.hasSearchableName(feature, this.context.supportedLanguages())) {
       // Nothing to search on; leave nameless places to the generic flow.
       return false;
     }
@@ -967,14 +953,7 @@ public class PlanetSearchProfile implements Profile {
     if (!feature.canBePolygon()) {
       return false;
     }
-    var hasName = false;
-    for (String language : supportedLanguages) {
-      if (feature.hasTag("name:" + language)) {
-        hasName = true;
-        break;
-      }
-    }
-    if (!feature.hasTag("name") && !hasName) {
+    if (!OsmNames.hasSearchableName(feature, supportedLanguages)) {
       return false;
     }
     var isFeatureADecentCity = feature.hasTag("boundary", "administrative") &&

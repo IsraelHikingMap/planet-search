@@ -39,7 +39,7 @@ final class PlaceIndex {
    * The node tags worth carrying onto a winning relation: the identity, ranking
    * and metadata fields a boundary relation usually lacks. Every other tag is
    * dropped so this index stays small on a planet-wide build; name and
-   * description tags are kept separately via {@link #isNameOrDescriptionTag}.
+   * description tags are kept separately via {@link OsmNames#isNameOrDescriptionTag}.
    */
   private static final Set<String> MERGE_TAG_KEYS = Set.of(
       "name", "description", "wikidata", "image", "wikimedia_commons", "website", "ele", "population");
@@ -72,11 +72,18 @@ final class PlaceIndex {
   }
 
   /**
-   * Records a place relation that {@link #resolvesToPolygon resolves to a
-   * polygon}, so its node and member ways can defer to it in the second pass.
+   * Records a place relation, but only when planetiler will turn it into a
+   * polygon in the second pass — a polygonal type with a way member, mirroring
+   * its own multipolygon test. Recording one that never materializes would
+   * suppress the node that still represents the place and drop it from search.
    */
   void recordRelation(OsmElement.Relation relation) {
-    if (!relation.hasTag("place") || !resolvesToPolygon(relation)) {
+    if (!relation.hasTag("place")) {
+      return;
+    }
+    boolean resolvesToPolygon = relation.hasTag("type", "multipolygon", "boundary", "land_area")
+        && relation.members().stream().anyMatch(member -> member.type() == OsmElement.Type.WAY);
+    if (!resolvesToPolygon) {
       return;
     }
     for (String key : placeKeys(relation)) {
@@ -104,8 +111,7 @@ final class PlaceIndex {
   /**
    * The tags to index for a winning representation: a relation inherits the
    * matching node's trimmed tags (its own tags win on conflict, keeping its
-   * geometry-derived identity), while a node or way is used unchanged. Call only
-   * for a representation {@link #shouldIndex} accepted.
+   * geometry-derived identity), while a node or way is used unchanged.
    */
   WithTags tagsToIndex(Kind kind, WithTags feature) {
     if (kind != Kind.RELATION) {
@@ -132,22 +138,6 @@ final class PlaceIndex {
   }
 
   /**
-   * Whether the feature has any name we can search on, in the default or a
-   * supported language.
-   */
-  static boolean hasSearchableName(WithTags feature, String[] languages) {
-    if (feature.hasTag("name")) {
-      return true;
-    }
-    for (String language : languages) {
-      if (feature.hasTag("name:" + language)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /**
    * The population to index for a place: the parsed {@code population} tag when
    * present, otherwise a rough default from the place rank. Empty for a feature
    * with no {@code place} tag, so callers leave non-places untouched.
@@ -168,17 +158,6 @@ final class PlaceIndex {
       case "hamlet" -> 200;
       default -> 20;
     });
-  }
-
-  /**
-   * Whether planetiler will turn this relation into a polygon in the second
-   * pass, mirroring its own multipolygon test. Only such a relation is worth
-   * deferring to: recording one that never materializes would suppress the node
-   * that still represents the place and drop it from search entirely.
-   */
-  static boolean resolvesToPolygon(OsmElement.Relation relation) {
-    return relation.hasTag("type", "multipolygon", "boundary", "land_area")
-        && relation.members().stream().anyMatch(member -> member.type() == OsmElement.Type.WAY);
   }
 
   /**
@@ -205,23 +184,11 @@ final class PlaceIndex {
   static Map<String, Object> trimPlaceTags(Map<String, Object> tags) {
     var trimmed = new HashMap<String, Object>();
     tags.forEach((key, value) -> {
-      if (MERGE_TAG_KEYS.contains(key) || isNameOrDescriptionTag(key)) {
+      if (MERGE_TAG_KEYS.contains(key) || OsmNames.isNameOrDescriptionTag(key)) {
         trimmed.put(key, value);
       }
     });
     return trimmed;
-  }
-
-  private static boolean isNameOrDescriptionTag(String key) {
-    if (key.startsWith("name:") || key.startsWith("description:")) {
-      return true;
-    }
-    for (String alt : PlanetSearchProfile.ALTERNATIVE_NAME_TAGS) {
-      if (key.equals(alt) || key.startsWith(alt + ":")) {
-        return true;
-      }
-    }
-    return false;
   }
 
   /**
