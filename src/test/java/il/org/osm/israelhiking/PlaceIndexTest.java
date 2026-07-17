@@ -22,6 +22,8 @@ public class PlaceIndexTest {
 
     // ---- fixtures ----
 
+    private static final String[] LANGUAGES = { "en", "he" };
+
     private static Map<String, Object> map(String... kv) {
         Map<String, Object> m = new HashMap<>();
         for (int i = 0; i < kv.length; i += 2) {
@@ -110,7 +112,7 @@ public class PlaceIndexTest {
     @Test
     public void shouldIndex_nodeOutranksWayButNotRelation() {
         var index = new PlaceIndex();
-        index.recordNode(node("place", "city", "name", "Afula"));
+        index.recordNode(node("place", "city", "name", "Afula"), LANGUAGES);
 
         var afula = tags("name", "Afula");
         assertTrue(index.shouldIndex(Kind.NODE, afula), "the node wins when there is no relation");
@@ -121,7 +123,7 @@ public class PlaceIndexTest {
     @Test
     public void shouldIndex_relationOutranksNodeAndWay() {
         var index = new PlaceIndex();
-        index.recordNode(node("place", "city", "name", "Nazareth"));
+        index.recordNode(node("place", "city", "name", "Nazareth"), LANGUAGES);
         index.recordRelation(relation(List.of(wayMember()), "place", "city", "name", "Nazareth", "type", "boundary"));
 
         assertFalse(index.shouldIndex(Kind.NODE, tags("name", "Nazareth")), "the node defers to the relation");
@@ -140,7 +142,7 @@ public class PlaceIndexTest {
 
         for (var ignored : List.of(noWayMember, nonPolygonalType, noType)) {
             var index = new PlaceIndex();
-            index.recordNode(node("place", "city", "name", "Kept"));
+            index.recordNode(node("place", "city", "name", "Kept"), LANGUAGES);
             index.recordRelation(ignored);
             assertTrue(index.shouldIndex(Kind.NODE, tags("name", "Kept")),
                     "the node must survive when the relation never materializes");
@@ -169,7 +171,7 @@ public class PlaceIndexTest {
     @Test
     public void tagsToIndex_relationInheritsNodeTags() {
         var index = new PlaceIndex();
-        index.recordNode(node("place", "city", "name", "Nazareth", "wikidata", "Q1", "population", "5000"));
+        index.recordNode(node("place", "city", "name", "Nazareth", "wikidata", "Q1", "population", "5000"), LANGUAGES);
         index.recordRelation(relation(List.of(wayMember()), "place", "city", "name", "Nazareth", "type", "boundary"));
 
         var merged = index.tagsToIndex(Kind.RELATION,
@@ -182,7 +184,7 @@ public class PlaceIndexTest {
     @Test
     public void tagsToIndex_relationWinsOnConflictButNodeFillsGaps() {
         var index = new PlaceIndex();
-        index.recordNode(node("place", "city", "name", "Old", "name:en", "OldEn", "wikidata", "Q1"));
+        index.recordNode(node("place", "city", "name", "Old", "name:en", "OldEn", "wikidata", "Q1"), LANGUAGES);
         // The relation shares the node's wikidata but carries a different name.
         index.recordRelation(
                 relation(List.of(wayMember()), "place", "city", "name", "New", "wikidata", "Q1", "type", "boundary"));

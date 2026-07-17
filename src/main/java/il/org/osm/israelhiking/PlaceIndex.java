@@ -61,8 +61,8 @@ final class PlaceIndex {
    * Records a named place node so a same-named polygon can defer to it and
    * inherit its tags.
    */
-  void recordNode(OsmElement.Node node) {
-    if (!node.hasTag("place") || !node.hasTag("name")) {
+  void recordNode(OsmElement.Node node, String[] languages) {
+    if (!node.hasTag("place") || !OsmNames.hasSearchableName(node, languages)) {
       return;
     }
     var nodeTags = trimPlaceTags(node.tags());

@@ -273,7 +273,7 @@ public class PlanetSearchProfile implements Profile {
 
   @Override
   public void preprocessOsmNode(OsmElement.Node node) {
-    placeIndex.recordNode(node);
+    placeIndex.recordNode(node, this.context.supportedLanguages());
   }
 
   @Override
@@ -635,7 +635,7 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private boolean processOtherSourceFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
-    if (!feature.hasTag("name") &&
+    if (!OsmNames.hasSearchableName(feature, this.context.supportedLanguages()) &&
         !feature.hasTag("wikidata") &&
         !feature.hasTag("image") &&
         !feature.hasTag("description") &&
@@ -691,7 +691,7 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void addNonIconFeaturesToElasricseach(SourceFeature feature) throws GeometryException {
-    if (!feature.hasTag("name")) {
+    if (!OsmNames.hasSearchableName(feature, this.context.supportedLanguages())) {
       return;
     }
     var category = OsmFeatureClassifier.classifyNonIcon(feature);
