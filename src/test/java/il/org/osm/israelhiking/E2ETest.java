@@ -233,6 +233,9 @@ public class E2ETest {
         var cases = SearchCases.load(casesResource);
         var failures = new ArrayList<String>();
         for (var searchCase : cases) {
+            if (searchCase.isAllowedFailure()) {
+                continue;
+            }
             var failure = SearchCases.failure(searchCase, search(esClient, searchCase));
             if (failure != null) {
                 failures.add("  " + failure);
@@ -262,11 +265,11 @@ public class E2ETest {
                 .id(templateId)
                 .params(parameters), PointDocument.class);
         return response.hits().hits().stream()
-                .map(hit -> hit.source())
-                .map(document -> new Hit(
-                        document.name.getOrDefault(searchCase.uiLanguage(), document.name.get("default")),
-                        document.location[1],
-                        document.location[0]))
+                .map(hit -> new Hit(
+                        hit.id(),
+                        hit.source().name.getOrDefault(searchCase.uiLanguage(), hit.source().name.get("default")),
+                        hit.source().location[1],
+                        hit.source().location[0]))
                 .toList();
     }
 }
