@@ -56,9 +56,6 @@ public class PlanetSearchProfile implements Profile {
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
-  private static final List<String> ALTERNATIVE_NAME_TAGS = List.of(
-      "alt_name", "loc_name", "short_name", "old_name", "official_name");
-
   /**
    * Values that must never become a container
    */
@@ -69,6 +66,9 @@ public class PlanetSearchProfile implements Profile {
   private static final Map<String, MinWayIdFinder> Singles = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> NamedHighways = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> Waterways = new ConcurrentHashMap<>();
+
+  /** Ranks a place's node / way / relation forms so each place is indexed exactly once. */
+  private final PlaceIndex placeIndex = new PlaceIndex();
 
   public PlanetSearchProfile(PlanetilerConfig config, ElasticRunContext context) {
     this.config = config;
@@ -113,19 +113,9 @@ public class PlanetSearchProfile implements Profile {
   /**
    * Collects all the alternative names of a feature for a single language and
    * stores them under that language in the alt_names map.
-   * The "default" language reads the unsuffixed tags, i.e. alt_name, loc_name
-   * etc.
    */
   private static void AddAlternativeNames(PointDocument pointDocument, WithTags feature, String language) {
-    var suffix = "default".equals(language) ? "" : ":" + language;
-    var alternativeNames = ALTERNATIVE_NAME_TAGS.stream()
-        .map(tag -> feature.getString(tag + suffix))
-        .filter(Objects::nonNull)
-        .flatMap(value -> Arrays.stream(value.split(";")))
-        .map(s -> s.trim())
-        .filter(s -> !s.isEmpty())
-        .distinct()
-        .collect(Collectors.toList());
+    var alternativeNames = OsmNames.alternativeNames(feature, language);
     if (alternativeNames.isEmpty()) {
       return;
     }
@@ -157,36 +147,7 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.intermittent = true;
     }
     setProminence(pointDocument, feature);
-    setPopulation(pointDocument, feature);
-  }
-
-  private void setPopulation(PointDocument pointDocument, WithTags feature) {
-    String place = feature.getString("place");
-    if (place == null || place.isBlank()) {
-      return;
-    }
-    var parsed = OsmNumberParser.parsePopulation(feature.getString("population"));
-    if (parsed.isPresent()) {
-      pointDocument.population = parsed.getAsInt();
-      return;
-    }
-    switch (place) {
-      case "city":
-        pointDocument.population = 1_000_000;
-        break;
-      case "town":
-        pointDocument.population = 50_000;
-        break;
-      case "village":
-        pointDocument.population = 2_000;
-        break;
-      case "hamlet":
-        pointDocument.population = 200;
-        break;
-      default:
-        pointDocument.population = 20;
-        break;
-    }
+    PlaceIndex.estimatePopulation(feature).ifPresent(population -> pointDocument.population = population);
   }
 
   private void setProminence(PointDocument pointDocument, WithTags feature) {
@@ -262,6 +223,7 @@ public class PlanetSearchProfile implements Profile {
     if (relation.hasTag("state", "proposed")) {
       return null;
     }
+    placeIndex.recordRelation(relation);
     var pointDocument = new PointDocument();
     setIconColorCategory(pointDocument, relation);
 
@@ -307,6 +269,11 @@ public class PlanetSearchProfile implements Profile {
     info.RelationMemberIds = Collections.synchronizedList(relationMemberIds);
     info.isSuperRelation = info.RelationMemberIds.size() > 0;
     return List.of(info);
+  }
+
+  @Override
+  public void preprocessOsmNode(OsmElement.Node node) {
+    placeIndex.recordNode(node, this.context.supportedLanguages());
   }
 
   @Override
@@ -370,6 +337,8 @@ public class PlanetSearchProfile implements Profile {
         return;
       if (processHighwayFeautre(feature, features))
         return;
+      if (processPlaceFeature(feature, features))
+        return;
       if (processOtherSourceFeature(feature, features))
         return;
       addNonIconFeaturesToElasricseach(feature);
@@ -393,7 +362,7 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
 
     convertTagsToDocument(pointDocument, feature);
-    enrichWithContainers(pointDocument);
+    enrichWithContainers(pointDocument, false);
     insertPointToElasticsearch(pointDocument, docId);
 
     var tileFeature = features.geometry("external", point)
@@ -438,7 +407,7 @@ public class PlanetSearchProfile implements Profile {
       var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
       relation.pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
       relation.pointDocument.poiLength = relation.length;
-      enrichWithContainers(relation.pointDocument);
+      enrichWithContainers(relation.pointDocument, false);
       insertPointToElasticsearch(relation.pointDocument, "OSM_relation_" + relation.id());
 
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
@@ -486,7 +455,7 @@ public class PlanetSearchProfile implements Profile {
         if (minIdFeature.hasTag("mtb:name")) {
           CoalesceIntoMap(pointDocument.name, "default", minIdFeature.getString("mtb:name"));
         }
-        enrichWithContainers(pointDocument);
+        enrichWithContainers(pointDocument, false);
         insertPointToElasticsearch(pointDocument, "OSM_way_" + mergedFeature.minId);
         // This was the last way with the same mtb:name, so we can merge the lines and
         // add the feature
@@ -543,7 +512,7 @@ public class PlanetSearchProfile implements Profile {
         pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
 
         convertTagsToDocument(pointDocument, minIdFeature);
-        enrichWithContainers(pointDocument);
+        enrichWithContainers(pointDocument, false);
         insertPointToElasticsearch(pointDocument, "OSM_way_" + mergedFeature.minId);
         if (!isInterestingPoint(pointDocument)) {
           // Skip adding features without any description or image to tiles
@@ -601,7 +570,7 @@ public class PlanetSearchProfile implements Profile {
         var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
         pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
         convertTagsToDocument(pointDocument, minIdFeature);
-        enrichWithContainers(pointDocument);
+        enrichWithContainers(pointDocument, false);
         insertPointToElasticsearch(pointDocument, "OSM_way_" + mergedFeature.minId);
 
         if (pointDocument.poiIcon == "icon-hike" ||
@@ -621,8 +590,52 @@ public class PlanetSearchProfile implements Profile {
     }
   }
 
+  /**
+   * Places get their own flow, so a place is searchable by name even when it has
+   * no dedicated place node (common in Israel), while a place with several
+   * representations shows up only once. {@link PlaceIndex} decides which
+   * representation to keep (relation &gt; node &gt; way) and which tags to index;
+   * whatever is skipped here still serves as a bbox container, indexed separately
+   * by {@link #insertBboxToElasticsearch}.
+   */
+  private boolean processPlaceFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
+    String place = feature.getString("place");
+    if (place == null || place.isBlank()) {
+      return false;
+    }
+    if (!OsmNames.hasSearchableName(feature, this.context.supportedLanguages())) {
+      // Nothing to search on; leave nameless places to the generic flow.
+      return false;
+    }
+    var kind = PlaceIndex.kindOf(feature);
+    if (!placeIndex.shouldIndex(kind, feature)) {
+      // Another representation of this place carries the searchable point.
+      return true;
+    }
+    WithTags tags = placeIndex.tagsToIndex(kind, feature);
+
+    var point = feature.canBePolygon() ? (Point) feature.centroidIfConvex()
+        : GeoUtils.point(feature.worldGeometry().getCoordinate());
+    var pointDocument = new PointDocument();
+    if (feature.canBePolygon()) {
+      pointDocument.poiAreaNormalized = normalizeArea(feature.areaMeters());
+    }
+    pointDocument.poiSource = "OSM";
+    var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
+    pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
+    setIconColorCategory(pointDocument, tags);
+    convertTagsToDocument(pointDocument, tags);
+    enrichWithContainers(pointDocument, true);
+    insertPointToElasticsearch(pointDocument, sourceFeatureToDocumentId(feature));
+
+    var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
+        .setId(feature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
+    setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
+    return true;
+  }
+
   private boolean processOtherSourceFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
-    if (!feature.hasTag("name") &&
+    if (!OsmNames.hasSearchableName(feature, this.context.supportedLanguages()) &&
         !feature.hasTag("wikidata") &&
         !feature.hasTag("image") &&
         !feature.hasTag("description") &&
@@ -654,7 +667,7 @@ public class PlanetSearchProfile implements Profile {
     }
 
     convertTagsToDocument(pointDocument, feature);
-    enrichWithContainers(pointDocument);
+    enrichWithContainers(pointDocument, false);
     insertPointToElasticsearch(pointDocument, docId);
 
     if ((pointDocument.poiIcon == "icon-peak" || pointDocument.poiIcon == "icon-river")
@@ -678,7 +691,7 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void addNonIconFeaturesToElasricseach(SourceFeature feature) throws GeometryException {
-    if (!feature.hasTag("name")) {
+    if (!OsmNames.hasSearchableName(feature, this.context.supportedLanguages())) {
       return;
     }
     var category = OsmFeatureClassifier.classifyNonIcon(feature);
@@ -696,7 +709,7 @@ public class PlanetSearchProfile implements Profile {
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
     pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
     convertTagsToDocument(pointDocument, feature);
-    enrichWithContainers(pointDocument);
+    enrichWithContainers(pointDocument, false);
     insertPointToElasticsearch(pointDocument, docId);
   }
 
@@ -714,7 +727,7 @@ public class PlanetSearchProfile implements Profile {
    * country (for display). Uses the container index loaded from the previous
    * build, so a first-ever build tags nothing and simply produces the index.
    */
-  private void enrichWithContainers(PointDocument pointDocument) {
+  private void enrichWithContainers(PointDocument pointDocument, boolean isPlace) {
     if (pointDocument.location == null) {
       return;
     }
@@ -731,7 +744,8 @@ public class PlanetSearchProfile implements Profile {
         if (country == null || match.area < country.area) {
           country = match;
         }
-      } else if (!sharesName(pointDocument, match) && (container == null || match.area < container.area)) {
+      } else if (!sharesNameForPlace(pointDocument, match, isPlace)
+          && (container == null || match.area < container.area)) {
         container = match;
       }
     }
@@ -752,7 +766,10 @@ public class PlanetSearchProfile implements Profile {
    * A place node commonly sits in a polygon of the same name; using it as
    * the container would display "X, X", so skip it and let a wider place win.
    */
-  private static boolean sharesName(PointDocument pointDocument, ContainerRecord container) {
+  private static boolean sharesNameForPlace(PointDocument pointDocument, ContainerRecord container, boolean isPlace) {
+    if (!isPlace) {
+      return false;
+    }
     for (var entry : pointDocument.name.entrySet()) {
       if (entry.getValue().equals(container.names.get(entry.getKey()))) {
         return true;
@@ -936,14 +953,7 @@ public class PlanetSearchProfile implements Profile {
     if (!feature.canBePolygon()) {
       return false;
     }
-    var hasName = false;
-    for (String language : supportedLanguages) {
-      if (feature.hasTag("name:" + language)) {
-        hasName = true;
-        break;
-      }
-    }
-    if (!feature.hasTag("name") && !hasName) {
+    if (!OsmNames.hasSearchableName(feature, supportedLanguages)) {
       return false;
     }
     var isFeatureADecentCity = feature.hasTag("boundary", "administrative") &&
