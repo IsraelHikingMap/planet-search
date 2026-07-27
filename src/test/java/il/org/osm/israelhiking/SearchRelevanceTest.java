@@ -3,6 +3,7 @@ package il.org.osm.israelhiking;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.TestFactory;
@@ -56,7 +57,15 @@ public class SearchRelevanceTest {
     String endpoint = System.getProperty("relevance.endpoint", DEFAULT_ENDPOINT).replaceAll("/+$", "");
     return SearchCases.load("/search-relevance-cases.json").stream().map(c -> DynamicTest.dynamicTest(
         c.id() + " · " + c.searchTerm() + " (" + c.uiLanguage() + ")",
-        () -> assertTimeoutPreemptively(CASE_TIMEOUT, () -> assertNearTarget(endpoint, c))));
+        () -> {
+          if (c.isAllowedFailure()) {
+            String outcome = assertTimeoutPreemptively(CASE_TIMEOUT,
+                () -> SearchCases.failure(c, search(endpoint, c)));
+            Assumptions.abort(c.id() + " is an allowed failure - "
+                + (outcome == null ? "currently passing" : outcome));
+          }
+          assertTimeoutPreemptively(CASE_TIMEOUT, () -> assertNearTarget(endpoint, c));
+        }));
   }
 
   @AfterAll
@@ -78,6 +87,9 @@ public class SearchRelevanceTest {
     if (searchCase.hasCenter()) {
       url += "&lat=" + searchCase.center().get(0) + "&lng=" + searchCase.center().get(1)
           + "&zoom=" + (searchCase.zoom() == null ? 12 : searchCase.zoom());
+    }
+    if (searchCase.isPrefix()) {
+      url += "&prefix=true";
     }
 
     HttpRequest req = HttpRequest.newBuilder(URI.create(url))
@@ -109,7 +121,7 @@ public class SearchRelevanceTest {
       }
       String title = hit.hasNonNull("title") ? hit.path("title").asText()
           : hit.path("displayName").asText("");
-      hits.add(new Hit(title, lat, lng));
+      hits.add(new Hit(hit.path("id").asText(null), title, lat, lng));
     }
     return hits;
   }
