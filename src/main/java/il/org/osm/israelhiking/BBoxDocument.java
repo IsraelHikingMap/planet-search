@@ -22,6 +22,10 @@ public class BBoxDocument {
     public double[] center;
     /** OSM admin_level (2 = country, 0 when not an admin boundary); read back to enrich points. */
     public int adminLevel;
+    /** Whether this polygon is a place ({@code place=*}); read back to dedup place nodes it encloses. */
+    public boolean isPlace;
+    /** The {@code wikidata} id, if any; read back to match a place node to its polygon. */
+    public String wikidata;
 
     public void setBBox(Geometry geometry) {
         bbox = new HashMap<String, Object>();

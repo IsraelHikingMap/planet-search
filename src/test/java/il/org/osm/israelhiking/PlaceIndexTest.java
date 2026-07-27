@@ -46,7 +46,7 @@ public class PlaceIndexTest {
         assertEquals(20, PlaceIndex.estimatePopulation(tags("place", "isolated_dwelling")).getAsInt());
     }
 
-    private record Rep(String label, OsmElement element, int rank) {
+    private record Poly(String label, OsmElement element) {
     }
 
     private static Map<String, Object> tagMap(String... kv) {
@@ -57,29 +57,23 @@ public class PlaceIndexTest {
         return m;
     }
 
-    private static OsmElement.Relation.Member nodeMember(long ref) {
-        return new OsmElement.Relation.Member(OsmElement.Type.NODE, ref, "admin_centre");
+    private static OsmElement.Relation.Member member(long ref, String role) {
+        return new OsmElement.Relation.Member(OsmElement.Type.NODE, ref, role);
     }
 
-    private static Rep node(String label, long id, String... tags) {
-        return new Rep(label, new OsmElement.Node(id, tagMap(tags), 32.0, 35.0), PlaceIndex.RANK_NODE);
+    private static Poly way(String label, long id, String... tags) {
+        return new Poly(label, new OsmElement.Way(id, tagMap(tags), new LongArrayList()));
     }
 
-    private static Rep way(String label, long id, int rank, String... tags) {
-        return new Rep(label, new OsmElement.Way(id, tagMap(tags), new LongArrayList()), rank);
+    private static Poly relation(String label, long id, List<OsmElement.Relation.Member> members, String... tags) {
+        return new Poly(label, new OsmElement.Relation(id, tagMap(tags), members));
     }
 
-    private static Rep relation(String label, long id, int rank, List<OsmElement.Relation.Member> members,
-            String... tags) {
-        return new Rep(label, new OsmElement.Relation(id, tagMap(tags), members), rank);
-    }
-
-    /** The labels of the representations that survive dedup, in input order. */
-    private static List<String> survivors(Rep... reps) {
+    /** The labels of the polygons that survive tag/type/id dedup, in input order. */
+    private static List<String> survivors(Poly... polys) {
         var index = new PlaceIndex();
-        for (Rep rep : reps) {
-            switch (rep.element()) {
-                case OsmElement.Node n -> index.recordNodeIfNeeded(n);
+        for (Poly poly : polys) {
+            switch (poly.element()) {
                 case OsmElement.Way w -> index.recordWayIfNeeded(w);
                 case OsmElement.Relation r -> index.recordRelationIfNeeded(r);
                 default -> {
@@ -87,68 +81,61 @@ public class PlaceIndexTest {
             }
         }
         var kept = new ArrayList<String>();
-        for (Rep rep : reps) {
-            if (index.isWinner(rep.rank(), rep.element().id(), PlaceIndex.placeKeys(rep.element()))) {
-                kept.add(rep.label());
+        for (Poly poly : polys) {
+            if (index.isWinner(PlaceIndex.rankOf(poly.element()), poly.element().id(),
+                    PlaceIndex.placeKeys(poly.element()))) {
+                kept.add(poly.label());
             }
         }
         return kept;
     }
 
     @Test
-    public void nazareth_nodeYieldsToTheTownRelation() {
-        var relation = relation("relation", 17394564, PlaceIndex.RANK_PLAIN, List.of(),
-                "place", "town", "name", "נצרת", "wikidata", "Q111997770");
-        var node = node("node", 278477461, "place", "town", "name", "נצרת", "wikidata", "Q430776");
-        assertEquals(List.of("relation"), survivors(relation, node));
-    }
-
-    @Test
     public void jerusalem_relationWithNodeWinsOverTheResidentialRelation() {
-        var withNode = relation("relation-with-node", 1381350, PlaceIndex.RANK_RELATION_WITH_NODE,
-                List.of(nodeMember(30960212)), "place", "city", "name", "ירושלים", "wikidata", "Q1218");
-        var residential = relation("residential-relation", 6502363, PlaceIndex.RANK_RESIDENTIAL_RELATION, List.of(),
+        var withNode = relation("relation-with-node", 1381350, List.of(member(30960212, "admin_centre")),
+                "place", "city", "name", "ירושלים", "wikidata", "Q1218");
+        var residential = relation("residential-relation", 6502363, List.of(),
                 "place", "city", "landuse", "residential", "name", "ירושלים", "wikidata", "Q1218");
-        var node = node("node", 30960212, "place", "city", "name", "ירושלים", "wikidata", "Q1218");
-        assertEquals(List.of("relation-with-node"), survivors(withNode, residential, node));
+        assertEquals(List.of("relation-with-node"), survivors(withNode, residential));
     }
 
     @Test
     public void nesTziona_plainWayYieldsToTheResidentialWay() {
-        var residential = way("residential-way", 82991026, PlaceIndex.RANK_RESIDENTIAL_WAY,
+        var residential = way("residential-way", 82991026,
                 "place", "town", "landuse", "residential", "name", "נס ציונה", "wikidata", "Q168162");
-        var plain = way("plain-way", 38283881, PlaceIndex.RANK_PLAIN, "place", "town", "name", "נס ציונה");
-        var node = node("node", 202433223, "place", "town", "name", "נס ציונה", "wikidata", "Q168162");
-        assertEquals(List.of("residential-way"), survivors(residential, plain, node));
+        var plain = way("plain-way", 38283881, "place", "town", "name", "נס ציונה");
+        assertEquals(List.of("residential-way"), survivors(residential, plain));
     }
 
     @Test
     public void residentialWayYieldsToTheResidentialRelation() {
-        var relation = relation("relation", 100, PlaceIndex.RANK_RESIDENTIAL_RELATION, List.of(),
+        var relation = relation("relation", 100, List.of(),
                 "place", "town", "landuse", "residential", "name", "פלוני", "wikidata", "Q100");
-        var way = way("way", 200, PlaceIndex.RANK_RESIDENTIAL_WAY,
-                "place", "town", "landuse", "residential", "name", "פלוני", "wikidata", "Q100");
+        var way = way("way", 200, "place", "town", "landuse", "residential", "name", "פלוני", "wikidata", "Q100");
         assertEquals(List.of("relation"), survivors(relation, way));
     }
 
     @Test
     public void sameRankPolygonsAreBrokenByTheLowerId() {
-        var high = way("high-id", 200, PlaceIndex.RANK_PLAIN, "place", "town", "name", "פלוני", "wikidata", "Q100");
-        var low = way("low-id", 100, PlaceIndex.RANK_PLAIN, "place", "town", "name", "פלוני", "wikidata", "Q100");
+        var high = way("high-id", 200, "place", "town", "name", "פלוני", "wikidata", "Q100");
+        var low = way("low-id", 100, "place", "town", "name", "פלוני", "wikidata", "Q100");
         assertEquals(List.of("low-id"), survivors(high, low));
     }
 
     @Test
-    public void placesWithNoSharedNameOrWikidataBothSurvive() {
-        var here = node("here", 1, "place", "village", "name", "עין הראשונה", "wikidata", "Q1");
-        var far = node("far", 2, "place", "village", "name", "עין השנייה", "wikidata", "Q2");
+    public void polygonsWithNoSharedNameOrWikidataBothSurvive() {
+        var here = way("here", 1, "place", "town", "name", "עין הראשונה", "wikidata", "Q1");
+        var far = way("far", 2, "place", "town", "name", "עין השנייה", "wikidata", "Q2");
         assertEquals(List.of("here", "far"), survivors(here, far));
     }
 
     @Test
-    public void sameNameCollapsesEvenWithDifferentWikidata() {
-        var first = node("first", 1, "place", "village", "name", "עין X", "wikidata", "Q1");
-        var second = node("second", 2, "place", "village", "name", "עין X", "wikidata", "Q2");
-        assertEquals(List.of("first"), survivors(first, second));
+    public void onlyAdminCentreOrLabelNodeMakesARelationRankAsRelationWithNode() {
+        // Despite the higher id, the admin_centre relation outranks the one whose only node member is a plain member.
+        var withAnchor = relation("with-anchor", 2, List.of(member(50, "admin_centre")),
+                "place", "city", "name", "X", "wikidata", "Q1");
+        var withoutAnchor = relation("without-anchor", 1, List.of(member(51, "")),
+                "place", "city", "name", "X", "wikidata", "Q1");
+        assertEquals(List.of("with-anchor"), survivors(withAnchor, withoutAnchor));
     }
 }

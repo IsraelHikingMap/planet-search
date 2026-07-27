@@ -270,11 +270,6 @@ public class PlanetSearchProfile implements Profile {
   }
 
   @Override
-  public void preprocessOsmNode(OsmElement.Node node) {
-    placeIndex.recordNodeIfNeeded(node);
-  }
-
-  @Override
   public void preprocessOsmWay(OsmElement.Way way) {
     placeIndex.recordWayIfNeeded(way);
     if (way.hasTag("mtb:name")) {
@@ -592,9 +587,10 @@ public class PlanetSearchProfile implements Profile {
   /**
    * Places get their own flow, so a place is searchable by name even when it has
    * no dedicated place node (common in Israel), while a place with several
-   * representations shows up only once. {@link PlaceIndex} decides which
-   * representation to keep from OSM tags, element type and ids; whatever is
-   * skipped here still serves as a bbox container, indexed separately by
+   * representations shows up only once. Polygons of the same place are deduped by
+   * {@link PlaceIndex} (tags, element type and ids); a place node yields only to a
+   * same-place polygon that actually encloses it. Whatever is skipped here still
+   * serves as a bbox container, indexed separately by
    * {@link #insertBboxToElasticsearch}.
    */
   private boolean processPlaceFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
@@ -612,10 +608,6 @@ public class PlanetSearchProfile implements Profile {
       // Nothing to search on; leave nameless places to the generic flow.
       return false;
     }
-    if (!placeIndex.isWinner(feature)) {
-      // A better-ranked representation of this same place is indexed instead.
-      return true;
-    }
 
     var anchor = placeIndex.anchorWorldLocation(feature);
     Point point;
@@ -626,6 +618,17 @@ public class PlanetSearchProfile implements Profile {
           : GeoUtils.point(feature.worldGeometry().getCoordinate());
     }
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
+
+    if (feature.isPoint()) {
+      if (this.context.containerIndex().enclosesSamePlace(lngLatPoint.getY(), lngLatPoint.getX(),
+          PlaceIndex.placeNames(feature, this.context.supportedLanguages()), feature.getString("wikidata"))) {
+        // A same-place polygon encloses this node, so it is already represented.
+        return true;
+      }
+    } else if (!placeIndex.isWinner(feature)) {
+      // A better-ranked polygon of this same place is indexed instead.
+      return true;
+    }
 
     var pointDocument = new PointDocument();
     if (feature.canBePolygon()) {
@@ -804,6 +807,8 @@ public class PlanetSearchProfile implements Profile {
       var bbox = new BBoxDocument();
       bbox.area = feature.areaMeters();
       bbox.adminLevel = feature.hasTag("admin_level") ? (int) feature.getLong("admin_level") : 0;
+      bbox.isPlace = feature.hasTag("place");
+      bbox.wikidata = feature.getString("wikidata");
       var lngLatCenterPoint = GeoUtils.worldToLatLonCoords(feature.centroid()).getCoordinate();
       bbox.center = new double[] { lngLatCenterPoint.getX(), lngLatCenterPoint.getY() };
       bbox.setBBox(simplified);

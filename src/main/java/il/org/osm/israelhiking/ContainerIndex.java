@@ -62,16 +62,39 @@ final class ContainerIndex {
     final int adminLevel;
     final double area;
     final Geometry geometry;
+    /** Whether this container is itself a place (a {@code place=*} polygon). */
+    final boolean isPlace;
+    /** The container's wikidata id, if any; used to match a place node to its polygon. */
+    final String wikidata;
 
-    ContainerRecord(Map<String, String> names, int adminLevel, double area, Geometry geometry) {
+    ContainerRecord(Map<String, String> names, int adminLevel, double area, Geometry geometry, boolean isPlace,
+        String wikidata) {
       this.names = names;
       this.adminLevel = adminLevel;
       this.area = area;
       this.geometry = geometry;
+      this.isPlace = isPlace;
+      this.wikidata = wikidata;
     }
 
     boolean isCountry() {
       return adminLevel == COUNTRY_ADMIN_LEVEL;
+    }
+
+    /** Whether this is a place polygon representing the same place as the given node. */
+    boolean isSamePlaceAs(Collection<String> nodeNames, String nodeWikidata) {
+      if (!isPlace) {
+        return false;
+      }
+      if (nodeWikidata != null && nodeWikidata.equals(wikidata)) {
+        return true;
+      }
+      for (String name : names.values()) {
+        if (nodeNames.contains(name)) {
+          return true;
+        }
+      }
+      return false;
     }
   }
 
@@ -81,7 +104,7 @@ final class ContainerIndex {
   private final STRtree tree = new STRtree();
   private final int loadedCount;
 
-  private ContainerIndex(Collection<ContainerRecord> records) {
+  ContainerIndex(Collection<ContainerRecord> records) {
     for (ContainerRecord record : records) {
       tree.insert(record.geometry.getEnvelopeInternal(),
           new Entry(record, PreparedGeometryFactory.prepare(record.geometry)));
@@ -107,6 +130,21 @@ final class ContainerIndex {
       LOGGER.error("Container index: failed to load containers from '{}'", bboxAlias, e);
       return new ContainerIndex(List.of());
     }
+  }
+
+  /**
+   * Whether a place polygon of the same place (shared name or wikidata) encloses
+   * the coordinate, so a place node there is already represented by it. Uses the
+   * previous build's polygons, so a brand-new place polygon starts deduping its
+   * node one build later.
+   */
+  boolean enclosesSamePlace(double lat, double lng, Collection<String> nodeNames, String nodeWikidata) {
+    for (ContainerRecord record : containing(lat, lng)) {
+      if (record.isSamePlaceAs(nodeNames, nodeWikidata)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** The containers that enclose the given coordinate, in no particular order. */
@@ -171,7 +209,10 @@ final class ContainerIndex {
       if (geometry == null || geometry.isEmpty()) {
         return null;
       }
-      return new ContainerRecord(names, source.path("adminLevel").asInt(0), source.path("area").asDouble(0), geometry);
+      boolean isPlace = source.path("isPlace").asBoolean(false);
+      String wikidata = source.hasNonNull("wikidata") ? source.get("wikidata").asText() : null;
+      return new ContainerRecord(names, source.path("adminLevel").asInt(0), source.path("area").asDouble(0), geometry,
+          isPlace, wikidata);
     } catch (RuntimeException e) {
       LOGGER.warn("Skipping a container with unreadable geometry: {}", e.getMessage());
       return null;

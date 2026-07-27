@@ -25,10 +25,11 @@ import com.onthegomap.planetiler.reader.osm.OsmSourceFeature;
  * 0 — a plain place polygon;
  * -1 — a place node.
  *
- * Representations are grouped by shared name / wikidata; the winner is the
- * highest rank, ties broken by the lower OSM id. Everything is decided in the
- * first pass ({@link #recordNode}/{@link #recordWay}/{@link #recordRelation}),
- * so the second pass ({@link #isWinner}) is a same-build lookup with no lag.
+ * Polygons (ways / relations) are grouped by shared name / wikidata and deduped
+ * in the first pass ({@link #recordWayIfNeeded}/{@link #recordRelationIfNeeded}):
+ * the winner is the highest rank, ties broken by the lower OSM id. A place node
+ * is not ranked here — it yields only to a polygon of the same place that
+ * actually encloses it, which the caller checks against the container index.
  */
 final class PlaceIndex {
 
@@ -45,15 +46,9 @@ final class PlaceIndex {
   /** Captured world coordinate {x, y} of each recorded member node. */
   private final Map<Long, double[]> memberNodeLocations = new ConcurrentHashMap<>();
 
-  void recordNodeIfNeeded(OsmElement.Node node) {
-    if (isPlace(node)) {
-      record(node, RANK_NODE, node.id());
-    }
-  }
-
   void recordWayIfNeeded(OsmElement.Way way) {
     if (isPlace(way)) {
-      record(way, way.hasTag("landuse", "residential") ? RANK_RESIDENTIAL_WAY : RANK_PLAIN, way.id());
+      record(way, rankOf(way), way.id());
     }
   }
 
@@ -61,16 +56,29 @@ final class PlaceIndex {
     if (!isPlace(relation)) {
       return;
     }
-    boolean hasNodeMember = false;
     for (var member : relation.members()) {
-      if (member.type() == OsmElement.Type.NODE) {
-        hasNodeMember = true;
+      if (isAnchorMember(member)) {
         memberNodeIds.add(member.ref());
       }
     }
-    int rank = hasNodeMember ? RANK_RELATION_WITH_NODE
-        : relation.hasTag("landuse", "residential") ? RANK_RESIDENTIAL_RELATION : RANK_PLAIN;
-    record(relation, rank, relation.id());
+    record(relation, rankOf(relation), relation.id());
+  }
+
+  /** The rank of a place way or relation from its tags, element type and members. */
+  static int rankOf(OsmElement element) {
+    return switch (element) {
+      case OsmElement.Way way -> way.hasTag("landuse", "residential") ? RANK_RESIDENTIAL_WAY : RANK_PLAIN;
+      case OsmElement.Relation relation -> relation.members().stream().anyMatch(PlaceIndex::isAnchorMember)
+          ? RANK_RELATION_WITH_NODE
+          : relation.hasTag("landuse", "residential") ? RANK_RESIDENTIAL_RELATION : RANK_PLAIN;
+      default -> RANK_NODE;
+    };
+  }
+
+  /** A relation's settlement node: a node member with role {@code admin_centre} or {@code label}. */
+  private static boolean isAnchorMember(OsmElement.Relation.Member member) {
+    return member.type() == OsmElement.Type.NODE
+        && ("admin_centre".equals(member.role()) || "label".equals(member.role()));
   }
 
   private void record(WithTags feature, int rank, long id) {
@@ -128,7 +136,7 @@ final class PlaceIndex {
       return null;
     }
     for (var member : relation.members()) {
-      if (member.type() == OsmElement.Type.NODE) {
+      if (isAnchorMember(member)) {
         double[] location = memberNodeLocations.get(member.ref());
         if (location != null) {
           return location;
@@ -154,12 +162,13 @@ final class PlaceIndex {
   }
 
   /**
-   * Whether this relation carries a node as a member (the settlement's anchor).
+   * Whether this relation carries a settlement node member (role admin_centre or
+   * label), whose location anchors the relation's point.
    */
   static boolean hasNodeMember(SourceFeature feature) {
     return feature instanceof OsmSourceFeature osm
         && osm.originalElement() instanceof OsmElement.Relation relation
-        && relation.members().stream().anyMatch(member -> member.type() == OsmElement.Type.NODE);
+        && relation.members().stream().anyMatch(PlaceIndex::isAnchorMember);
   }
 
   /**
@@ -183,6 +192,20 @@ final class PlaceIndex {
       case "hamlet" -> 200;
       default -> 20;
     });
+  }
+
+  /** Every name the feature carries, across the default and supported languages. */
+  static Set<String> placeNames(WithTags feature, String[] languages) {
+    var names = new LinkedHashSet<String>();
+    if (feature.hasTag("name")) {
+      names.add(feature.getString("name"));
+    }
+    for (String language : languages) {
+      if (feature.hasTag("name:" + language)) {
+        names.add(feature.getString("name:" + language));
+      }
+    }
+    return names;
   }
 
   /** The keys a place is grouped by: its default name and its wikidata id. */
