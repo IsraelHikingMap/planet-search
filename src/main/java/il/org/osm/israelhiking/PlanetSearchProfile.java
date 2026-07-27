@@ -662,7 +662,7 @@ public class PlanetSearchProfile implements Profile {
       return false;
     }
 
-    if (feature.getString("place") != null && pointDocument.poiCategory == "Wikipedia" && !feature.isPoint()) {
+    if (feature.getString("place") != null && !feature.isPoint()) {
       return true;
     }
 
