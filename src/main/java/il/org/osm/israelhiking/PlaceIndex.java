@@ -18,29 +18,33 @@ import com.onthegomap.planetiler.reader.osm.OsmSourceFeature;
  * Ranking, matching and dedup rely solely on OSM tags, element type and ids —
  * never on geometry.
  *
- * Rank of a representation, highest first:
- * 3 — a relation anchored by a node member (its point becomes that node);
- * 2 — a landuse=residential relation;
- * 1 — a landuse=residential way;
- * 0 — a plain place polygon;
- * -1 — a place node.
- *
  * Polygons (ways / relations) are grouped by shared name / wikidata and deduped
  * in the first pass ({@link #recordWayIfNeeded}/{@link #recordRelationIfNeeded}):
- * the winner is the highest rank, ties broken by the lower OSM id. A place node
- * is not ranked here — it yields only to a polygon of the same place that
- * actually encloses it, which the caller checks against the container index.
+ * the winner is the highest {@link PlaceRank}, ties broken by the lower OSM id. A
+ * place node is not ranked here — it yields only to a polygon of the same place
+ * that actually encloses it, which the caller checks against the container index.
  */
 final class PlaceIndex {
 
-  static final int RANK_NODE = -1;
-  static final int RANK_PLAIN = 0;
-  static final int RANK_RESIDENTIAL_WAY = 1;
-  static final int RANK_RESIDENTIAL_RELATION = 2;
-  static final int RANK_RELATION_WITH_NODE = 3;
+  /** How strongly an OSM element represents its place, ordered weakest to strongest. */
+  enum PlaceRank {
+    NODE,
+    PLAIN,
+    RESIDENTIAL_WAY,
+    RESIDENTIAL_RELATION,
+    RELATION_WITH_NODE;
+  }
 
-  /** Place key ({@code name=…} / {@code wikidata=…}) -> best {rank, id} seen. */
-  private final Map<String, long[]> bestByKey = new ConcurrentHashMap<>();
+  /** A ranked place representation; the better one is the higher rank, then the lower id. */
+  private record Ranked(PlaceRank rank, long id) {
+    boolean betterThan(Ranked other) {
+      int byRank = rank.compareTo(other.rank);
+      return byRank > 0 || (byRank == 0 && id < other.id);
+    }
+  }
+
+  /** Place key ({@code name=…} / {@code wikidata=…}) -> the best representation seen. */
+  private final Map<String, Ranked> bestByKey = new ConcurrentHashMap<>();
   /** Nodes that are members of a place relation (their location anchors it). */
   private final Set<Long> memberNodeIds = ConcurrentHashMap.newKeySet();
   /** Captured world coordinate {x, y} of each recorded member node. */
@@ -65,13 +69,13 @@ final class PlaceIndex {
   }
 
   /** The rank of a place way or relation from its tags, element type and members. */
-  static int rankOf(OsmElement element) {
+  static PlaceRank rankOf(OsmElement element) {
     return switch (element) {
-      case OsmElement.Way way -> way.hasTag("landuse", "residential") ? RANK_RESIDENTIAL_WAY : RANK_PLAIN;
+      case OsmElement.Way way -> way.hasTag("landuse", "residential") ? PlaceRank.RESIDENTIAL_WAY : PlaceRank.PLAIN;
       case OsmElement.Relation relation -> relation.members().stream().anyMatch(PlaceIndex::isAnchorMember)
-          ? RANK_RELATION_WITH_NODE
-          : relation.hasTag("landuse", "residential") ? RANK_RESIDENTIAL_RELATION : RANK_PLAIN;
-      default -> RANK_NODE;
+          ? PlaceRank.RELATION_WITH_NODE
+          : relation.hasTag("landuse", "residential") ? PlaceRank.RESIDENTIAL_RELATION : PlaceRank.PLAIN;
+      default -> PlaceRank.NODE;
     };
   }
 
@@ -81,19 +85,11 @@ final class PlaceIndex {
         && ("admin_centre".equals(member.role()) || "label".equals(member.role()));
   }
 
-  private void record(WithTags feature, int rank, long id) {
-    long[] candidate = { rank, id };
+  private void record(WithTags feature, PlaceRank rank, long id) {
+    Ranked candidate = new Ranked(rank, id);
     for (String key : placeKeys(feature)) {
-      bestByKey.merge(key, candidate, (current, cand) -> better(cand, current) ? cand : current);
+      bestByKey.merge(key, candidate, (current, cand) -> cand.betterThan(current) ? cand : current);
     }
-  }
-
-  /**
-   * Whether {@code candidate} outranks {@code current} (higher rank, then lower
-   * id).
-   */
-  private static boolean better(long[] candidate, long[] current) {
-    return candidate[0] > current[0] || (candidate[0] == current[0] && candidate[1] < current[1]);
   }
 
   /**
@@ -106,10 +102,11 @@ final class PlaceIndex {
   }
 
   /** Whether an element of this rank and id wins every one of its place keys. */
-  boolean isWinner(int rank, long id, Set<String> keys) {
+  boolean isWinner(PlaceRank rank, long id, Set<String> keys) {
+    Ranked mine = new Ranked(rank, id);
     for (String key : keys) {
-      long[] best = bestByKey.get(key);
-      if (best != null && (best[0] != rank || best[1] != id)) {
+      Ranked best = bestByKey.get(key);
+      if (best != null && !best.equals(mine)) {
         return false;
       }
     }
@@ -147,18 +144,18 @@ final class PlaceIndex {
   }
 
   /** How strongly this feature represents its place (see the class javadoc). */
-  static int placeRank(SourceFeature feature) {
+  static PlaceRank placeRank(SourceFeature feature) {
     if (!isPlace(feature) || feature.isPoint()) {
-      return RANK_NODE;
+      return PlaceRank.NODE;
     }
     boolean relation = feature instanceof OsmSourceFeature osm && osm.originalElement() instanceof OsmElement.Relation;
     if (relation && hasNodeMember(feature)) {
-      return RANK_RELATION_WITH_NODE;
+      return PlaceRank.RELATION_WITH_NODE;
     }
     if (feature.hasTag("landuse", "residential")) {
-      return relation ? RANK_RESIDENTIAL_RELATION : RANK_RESIDENTIAL_WAY;
+      return relation ? PlaceRank.RESIDENTIAL_RELATION : PlaceRank.RESIDENTIAL_WAY;
     }
-    return RANK_PLAIN;
+    return PlaceRank.PLAIN;
   }
 
   /**
