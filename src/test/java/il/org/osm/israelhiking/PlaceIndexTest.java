@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,14 +42,11 @@ public class PlaceIndexTest {
         return new OsmElement.Node(id, map(kv), lat, lon);
     }
 
-    /** A first-pass place relation with the given node members plus a way member (so it resolves to a polygon). */
-    private static OsmElement.Relation placeRelation(long id, long[] memberNodeIds, String... kv) {
-        var members = new ArrayList<OsmElement.Relation.Member>();
-        members.add(new OsmElement.Relation.Member(OsmElement.Type.WAY, 999, "outer"));
-        for (long nid : memberNodeIds) {
-            members.add(new OsmElement.Relation.Member(OsmElement.Type.NODE, nid, "label"));
-        }
-        return new OsmElement.Relation(id, map(kv), members);
+    /** A first-pass place relation that resolves to a polygon (a boundary with a way member). */
+    private static OsmElement.Relation placeRelation(long id, String wikidata) {
+        var members = List.of(new OsmElement.Relation.Member(OsmElement.Type.WAY, 999, "outer"));
+        return new OsmElement.Relation(id,
+                map("place", "town", "type", "boundary", "name", "R", "wikidata", wikidata), members);
     }
 
     private static Geometry square(double minLon, double minLat, double maxLon, double maxLat) {
@@ -60,7 +56,7 @@ public class PlaceIndexTest {
                 new Coordinate(minLon, minLat) });
     }
 
-    /** A second-pass feature; geometry only matters for the WAY containment path. */
+    /** A second-pass feature; geometry drives whether it is treated as a point or a polygon. */
     private static SourceFeature feature(long id, Geometry geometry, String... kv) {
         return SimpleFeature.create(geometry, map(kv), id);
     }
@@ -99,43 +95,32 @@ public class PlaceIndexTest {
     }
 
     @Test
-    public void shouldIndex_nodeYieldsToRelationItBelongsTo() throws Exception {
+    public void shouldIndex_nodeWithoutAMatchingRelationIsIndexed() throws Exception {
         var index = new PlaceIndex();
-        index.recordNode(node(1, 5, 5, "place", "city", "name", "X"), LANGUAGES);
-        index.recordRelation(placeRelation(100, new long[] { 1 }, "place", "city", "name", "X", "type", "boundary"));
-        assertFalse(index.shouldIndex(nodeFeature(1, "name", "X")),
-                "the node is a member of the same-named relation");
+        assertTrue(index.shouldIndex(nodeFeature(1, "name", "X")), "no wikidata, nothing to yield to");
+        index.recordRelation(placeRelation(100, "Q1"));
+        assertTrue(index.shouldIndex(nodeFeature(1, "name", "X", "wikidata", "Q2")),
+                "a different wikidata than any place relation — the node stands on its own");
     }
 
     @Test
-    public void shouldIndex_unrelatedSameNamedNodeSurvives() throws Exception {
+    public void shouldIndex_nodeYieldsToRelationSharingItsWikidata() throws Exception {
         var index = new PlaceIndex();
-        index.recordNode(node(1, 5, 5, "place", "city", "name", "X"), LANGUAGES);
-        // A same-named relation elsewhere whose members do NOT include node 1.
-        index.recordRelation(placeRelation(100, new long[] { 2 }, "place", "city", "name", "X", "type", "boundary"));
-        assertTrue(index.shouldIndex(nodeFeature(1, "name", "X")),
-                "same name, but not a member — a distinct place must survive");
+        index.recordRelation(placeRelation(100, "Q1"));
+        assertFalse(index.shouldIndex(nodeFeature(1, "name", "X", "wikidata", "Q1")),
+                "the relation carrying this wikidata wins");
     }
 
     @Test
-    public void shouldIndex_memberOfADifferentlyNamedRelationSurvives() throws Exception {
-        var index = new PlaceIndex();
-        index.recordNode(node(1, 5, 5, "place", "city", "name", "X"), LANGUAGES);
-        index.recordRelation(placeRelation(100, new long[] { 1 }, "place", "city", "name", "Y", "type", "boundary"));
-        assertTrue(index.shouldIndex(nodeFeature(1, "name", "X")),
-                "a member with a different name is a different place");
-    }
-
-    @Test
-    public void shouldIndex_wayYieldsToNodeInsideIt() throws Exception {
+    public void shouldIndex_polygonYieldsToNodeInsideIt() throws Exception {
         var index = new PlaceIndex();
         index.recordNode(node(1, 5, 5, "place", "town", "name", "X"), LANGUAGES);
         assertFalse(index.shouldIndex(feature(10, square(0, 0, 10, 10), "name", "X")),
-                "the way contains the same-named node");
+                "the polygon contains the same-named node");
     }
 
     @Test
-    public void shouldIndex_wayYieldsToNodeMatchedByWikidata() throws Exception {
+    public void shouldIndex_polygonYieldsToNodeMatchedByWikidata() throws Exception {
         var index = new PlaceIndex();
         index.recordNode(node(1, 5, 5, "place", "town", "name", "Y", "wikidata", "Q1"), LANGUAGES);
         assertFalse(index.shouldIndex(feature(10, square(0, 0, 10, 10), "name", "X", "wikidata", "Q1")),
@@ -143,23 +128,23 @@ public class PlaceIndexTest {
     }
 
     @Test
-    public void shouldIndex_wayWithSameNamedNodeElsewhereSurvives() throws Exception {
+    public void shouldIndex_polygonWithSameNamedNodeElsewhereSurvives() throws Exception {
         var index = new PlaceIndex();
         index.recordNode(node(1, 50, 50, "place", "town", "name", "X"), LANGUAGES);
         assertTrue(index.shouldIndex(feature(10, square(0, 0, 10, 10), "name", "X")),
-                "same name, but the node is outside the way — a distinct place must survive");
+                "same name, but the node is outside the polygon — a distinct place must survive");
     }
 
     @Test
-    public void shouldIndex_wayWithADifferentNamedNodeInsideSurvives() throws Exception {
+    public void shouldIndex_polygonWithADifferentNamedNodeInsideSurvives() throws Exception {
         var index = new PlaceIndex();
         index.recordNode(node(1, 5, 5, "place", "town", "name", "Y"), LANGUAGES);
         assertTrue(index.shouldIndex(feature(10, square(0, 0, 10, 10), "name", "X")),
-                "a differently-named node inside the way is a different place");
+                "a differently-named node inside the polygon is a different place");
     }
 
     @Test
-    public void shouldIndex_nonAreaWayIsIndexed() throws Exception {
+    public void shouldIndex_nonAreaPolygonIsIndexed() throws Exception {
         var index = new PlaceIndex();
         index.recordNode(node(1, 5, 5, "place", "town", "name", "X"), LANGUAGES);
         var openWay = feature(10, GF.createLineString(new Coordinate[] {
