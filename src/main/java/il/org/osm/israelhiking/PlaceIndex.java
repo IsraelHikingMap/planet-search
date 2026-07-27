@@ -1,13 +1,17 @@
 package il.org.osm.israelhiking;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.locationtech.jts.geom.Geometry;
+
+import com.onthegomap.planetiler.geo.GeoUtils;
+import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.reader.WithTags;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
@@ -15,67 +19,47 @@ import com.onthegomap.planetiler.reader.osm.OsmSourceFeature;
 
 /**
  * Tracks how each place is represented across the OSM node / way / relation
- * element seen in the first pass, so the second pass can index every place
- * exactly
- * once under the ranking relation then node then way:
- * - a place is searchable by name even when it has no dedicated place node
- * (common in Israel);
- * - a place with several representations shows up only once;
- * - when a relation wins it inherits the node's tags, so identity and ranking
- * fields such as {@code wikidata} and {@code population} are not lost.
+ * forms seen in the first pass, so the second pass can index every place exactly
+ * once under the ranking relation then node then way — while only collapsing
+ * representations that are the same place, never two unrelated places that
+ * merely share a name. A shared name (or wikidata) is the fast first filter for
+ * "maybe the same place"; a structural check then confirms it:
+ * - a node is absorbed by a relation only when it is a member (child) of that
+ * relation;
+ * - a way is absorbed by a node only when the way's polygon contains that node.
+ * The winning representation is indexed with its own tags, so whatever a place
+ * looks like in OSM is what shows up here.
  *
- * Populated from {@code preprocessOsm*} on pass 1 and queried from
- * {@code processFeature} on pass 2; both run multi-threaded, so the backing map
- * and the per-place fields are concurrency-safe.
+ * Populated from preprocessOsm* on pass 1 and queried from processFeature on
+ * pass 2; both run multi-threaded, so the stores are concurrency-safe.
  */
 final class PlaceIndex {
 
-  /** Which OSM element type a second-pass feature came from. */
-  enum Kind {
-    NODE, WAY, RELATION
+  /** A place node's location, kept by OSM id for the way-containment test. */
+  private record PlaceNode(double lon, double lat) {
   }
 
-  /**
-   * The node tags worth carrying onto a winning relation: the identity, ranking
-   * and metadata fields a boundary relation usually lacks. Every other tag is
-   * dropped so this index stays small on a planet-wide build; name and
-   * description tags are kept separately via {@link OsmNames#isNameOrDescriptionTag}.
-   */
-  private static final Set<String> MERGE_TAG_KEYS = Set.of(
-      "name", "description", "wikidata", "image", "wikimedia_commons", "website", "ele", "population");
+  private final Map<Long, PlaceNode> nodesById = new ConcurrentHashMap<>();
+  /** name= / wikidata= key to the ids of the place nodes carrying it, for containment candidates. */
+  private final Map<String, List<Long>> nodeIdsByKey = new ConcurrentHashMap<>();
+  /** Node id to the name=/wikidata= keys of the place relations it is a member of. */
+  private final Map<Long, Set<String>> memberNodeRelationKeys = new ConcurrentHashMap<>();
 
-  private final Map<String, PlaceInfo> byKey = new ConcurrentHashMap<>();
-
-  /**
-   * The first-pass knowledge about one place. Fields are written from many
-   * threads.
-   */
-  private static final class PlaceInfo {
-    /** Trimmed tags of the place node, or null when the place has no node. */
-    volatile Map<String, Object> nodeTags;
-    /** Whether a place relation that resolves to a polygon exists. */
-    volatile boolean hasRelation;
-  }
-
-  /**
-   * Records a named place node so a same-named polygon can defer to it and
-   * inherit its tags.
-   */
   void recordNode(OsmElement.Node node, String[] languages) {
     if (!node.hasTag("place") || !OsmNames.hasSearchableName(node, languages)) {
       return;
     }
-    var nodeTags = trimPlaceTags(node.tags());
+    nodesById.put(node.id(), new PlaceNode(node.lon(), node.lat()));
     for (String key : placeKeys(node)) {
-      byKey.computeIfAbsent(key, k -> new PlaceInfo()).nodeTags = nodeTags;
+      nodeIdsByKey.computeIfAbsent(key, k -> Collections.synchronizedList(new ArrayList<>())).add(node.id());
     }
   }
 
   /**
-   * Records a place relation, but only when planetiler will turn it into a
-   * polygon in the second pass — a polygonal type with a way member, mirroring
-   * its own multipolygon test. Recording one that never materializes would
-   * suppress the node that still represents the place and drop it from search.
+   * Records a place relation and the nodes it contains as members, but only when
+   * planetiler will turn it into a polygon in the second pass — a polygonal type
+   * with a way member, mirroring its own multipolygon test. Recording one that
+   * never materializes would suppress the node that still represents the place.
    */
   void recordRelation(OsmElement.Relation relation) {
     if (!relation.hasTag("place")) {
@@ -86,55 +70,70 @@ final class PlaceIndex {
     if (!resolvesToPolygon) {
       return;
     }
-    for (String key : placeKeys(relation)) {
-      byKey.computeIfAbsent(key, k -> new PlaceInfo()).hasRelation = true;
+    List<String> keys = placeKeys(relation);
+    if (keys.isEmpty()) {
+      return;
+    }
+    for (var member : relation.members()) {
+      if (member.type() == OsmElement.Type.NODE) {
+        memberNodeRelationKeys.computeIfAbsent(member.ref(), k -> ConcurrentHashMap.newKeySet()).addAll(keys);
+      }
     }
   }
 
   /**
-   * Whether this representation is the one to index for its place, applying the
-   * ranking relation &gt; node &gt; way: a node yields to a relation of the same
-   * place but outranks a way, a way is used only when neither a node nor a
-   * relation represents the place, and a relation always wins.
+   * Whether this second-pass feature is the one to index for its place, applying
+   * the ranking relation then node then way: a relation always wins; a node
+   * yields only to a relation of the same place it is a member of; a way yields
+   * only to a place node of the same place that falls inside it. Structurally
+   * unrelated same-named places therefore both survive.
    */
-  boolean shouldIndex(Kind kind, WithTags feature) {
-    PlaceInfo info = lookup(feature);
-    boolean hasRelation = info != null && info.hasRelation;
-    boolean hasNode = info != null && info.nodeTags != null;
-    return switch (kind) {
-      case NODE -> !hasRelation;
-      case WAY -> !hasNode && !hasRelation;
-      case RELATION -> true;
-    };
-  }
-
-  /**
-   * The tags to index for a winning representation: a relation inherits the
-   * matching node's trimmed tags (its own tags win on conflict, keeping its
-   * geometry-derived identity), while a node or way is used unchanged.
-   */
-  WithTags tagsToIndex(Kind kind, WithTags feature) {
-    if (kind != Kind.RELATION) {
-      return feature;
-    }
-    PlaceInfo info = lookup(feature);
-    if (info == null || info.nodeTags == null) {
-      return feature;
-    }
-    var merged = new HashMap<>(info.nodeTags);
-    merged.putAll(feature.tags());
-    return WithTags.from(merged);
-  }
-
-  /** Which OSM element type produced this second-pass feature. */
-  static Kind kindOf(SourceFeature feature) {
+  boolean shouldIndex(SourceFeature feature) throws GeometryException {
     if (feature.isPoint()) {
-      return Kind.NODE;
+      return !isMemberOfMatchingRelation(feature);
     }
     if (feature instanceof OsmSourceFeature osm && osm.originalElement() instanceof OsmElement.Relation) {
-      return Kind.RELATION;
+      return true;
     }
-    return Kind.WAY;
+    return !containsMatchingNode(feature);
+  }
+
+  /** Whether this node is a member of a place relation that shares its name or wikidata. */
+  private boolean isMemberOfMatchingRelation(SourceFeature node) {
+    Set<String> relationKeys = memberNodeRelationKeys.get(node.id());
+    if (relationKeys == null) {
+      return false;
+    }
+    for (String key : placeKeys(node)) {
+      if (relationKeys.contains(key)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Whether the way's polygon contains a place node that shares its name or wikidata. */
+  private boolean containsMatchingNode(SourceFeature way) throws GeometryException {
+    if (!way.canBePolygon()) {
+      return false;
+    }
+    Geometry polygon = null;
+    for (String key : placeKeys(way)) {
+      List<Long> ids = nodeIdsByKey.get(key);
+      if (ids == null) {
+        continue;
+      }
+      if (polygon == null) {
+        polygon = way.latLonGeometry();
+      }
+      for (long id : ids) {
+        PlaceNode node = nodesById.get(id);
+        if (node != null && polygon.covers(GeoUtils.point(node.lon(), node.lat()))) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   /**
@@ -175,41 +174,5 @@ final class PlaceIndex {
       keys.add("wikidata=" + wikidata);
     }
     return keys;
-  }
-
-  /**
-   * Keeps only the node tags a winning relation should inherit (see
-   * {@link #MERGE_TAG_KEYS}).
-   */
-  static Map<String, Object> trimPlaceTags(Map<String, Object> tags) {
-    var trimmed = new HashMap<String, Object>();
-    tags.forEach((key, value) -> {
-      if (MERGE_TAG_KEYS.contains(key) || OsmNames.isNameOrDescriptionTag(key)) {
-        trimmed.put(key, value);
-      }
-    });
-    return trimmed;
-  }
-
-  /**
-   * What the first pass learned about the place this feature belongs to, or
-   * null. When the name and wikidata keys point at different places (a node and
-   * relation that agree on wikidata but not name, say), the two are combined so
-   * neither the node's tags nor the relation's existence is missed.
-   */
-  private PlaceInfo lookup(WithTags feature) {
-    PlaceInfo byName = feature.hasTag("name") ? byKey.get("name=" + feature.getString("name")) : null;
-    var wikidata = feature.getString("wikidata");
-    PlaceInfo byWikidata = wikidata != null ? byKey.get("wikidata=" + wikidata) : null;
-    if (byName == null) {
-      return byWikidata;
-    }
-    if (byWikidata == null || byWikidata == byName) {
-      return byName;
-    }
-    var combined = new PlaceInfo();
-    combined.nodeTags = byName.nodeTags != null ? byName.nodeTags : byWikidata.nodeTags;
-    combined.hasRelation = byName.hasRelation || byWikidata.hasRelation;
-    return combined;
   }
 }

@@ -44,17 +44,4 @@ final class OsmNames {
         .distinct()
         .toList();
   }
-
-  /** Whether the tag key holds a name or description in any language (including the alt-name tags). */
-  static boolean isNameOrDescriptionTag(String key) {
-    if (key.startsWith("name:") || key.startsWith("description:")) {
-      return true;
-    }
-    for (String alt : ALTERNATIVE_NAME_TAGS) {
-      if (key.equals(alt) || key.startsWith(alt + ":")) {
-        return true;
-      }
-    }
-    return false;
-  }
 }

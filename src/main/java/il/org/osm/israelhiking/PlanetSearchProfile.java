@@ -607,12 +607,10 @@ public class PlanetSearchProfile implements Profile {
       // Nothing to search on; leave nameless places to the generic flow.
       return false;
     }
-    var kind = PlaceIndex.kindOf(feature);
-    if (!placeIndex.shouldIndex(kind, feature)) {
+    if (!placeIndex.shouldIndex(feature)) {
       // Another representation of this place carries the searchable point.
       return true;
     }
-    WithTags tags = placeIndex.tagsToIndex(kind, feature);
 
     var point = feature.canBePolygon() ? (Point) feature.centroidIfConvex()
         : GeoUtils.point(feature.worldGeometry().getCoordinate());
@@ -623,8 +621,8 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.poiSource = "OSM";
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
     pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
-    setIconColorCategory(pointDocument, tags);
-    convertTagsToDocument(pointDocument, tags);
+    setIconColorCategory(pointDocument, feature);
+    convertTagsToDocument(pointDocument, feature);
     enrichWithContainers(pointDocument, true);
     insertPointToElasticsearch(pointDocument, sourceFeatureToDocumentId(feature));
 

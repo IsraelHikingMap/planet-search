@@ -2,27 +2,29 @@ package il.org.osm.israelhiking;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.locationtech.jts.geom.Coordinate;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.GeometryFactory;
 
+import com.onthegomap.planetiler.reader.SimpleFeature;
+import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.reader.WithTags;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
-
-import il.org.osm.israelhiking.PlaceIndex.Kind;
 
 @Tag("unit")
 public class PlaceIndexTest {
 
-    // ---- fixtures ----
-
     private static final String[] LANGUAGES = { "en", "he" };
+    private static final GeometryFactory GF = new GeometryFactory();
 
     private static Map<String, Object> map(String... kv) {
         Map<String, Object> m = new HashMap<>();
@@ -36,23 +38,36 @@ public class PlaceIndexTest {
         return WithTags.from(map(kv));
     }
 
-    private static OsmElement.Node node(String... kv) {
-        return new OsmElement.Node(1, map(kv), 0, 0);
+    /** A first-pass place node at (lon, lat). */
+    private static OsmElement.Node node(long id, double lon, double lat, String... kv) {
+        return new OsmElement.Node(id, map(kv), lat, lon);
     }
 
-    private static OsmElement.Relation relation(List<OsmElement.Relation.Member> members, String... kv) {
-        return new OsmElement.Relation(1, map(kv), members);
+    /** A first-pass place relation with the given node members plus a way member (so it resolves to a polygon). */
+    private static OsmElement.Relation placeRelation(long id, long[] memberNodeIds, String... kv) {
+        var members = new ArrayList<OsmElement.Relation.Member>();
+        members.add(new OsmElement.Relation.Member(OsmElement.Type.WAY, 999, "outer"));
+        for (long nid : memberNodeIds) {
+            members.add(new OsmElement.Relation.Member(OsmElement.Type.NODE, nid, "label"));
+        }
+        return new OsmElement.Relation(id, map(kv), members);
     }
 
-    private static OsmElement.Relation.Member wayMember() {
-        return new OsmElement.Relation.Member(OsmElement.Type.WAY, 10, "outer");
+    private static Geometry square(double minLon, double minLat, double maxLon, double maxLat) {
+        return GF.createPolygon(new Coordinate[] {
+                new Coordinate(minLon, minLat), new Coordinate(maxLon, minLat),
+                new Coordinate(maxLon, maxLat), new Coordinate(minLon, maxLat),
+                new Coordinate(minLon, minLat) });
     }
 
-    private static OsmElement.Relation.Member relationMember() {
-        return new OsmElement.Relation.Member(OsmElement.Type.RELATION, 20, "subarea");
+    /** A second-pass feature; geometry only matters for the WAY containment path. */
+    private static SourceFeature feature(long id, Geometry geometry, String... kv) {
+        return SimpleFeature.create(geometry, map(kv), id);
     }
 
-    // ---- placeKeys ----
+    private static SourceFeature nodeFeature(long id, String... kv) {
+        return feature(id, GF.createPoint(new Coordinate(0, 0)), kv);
+    }
 
     @Test
     public void placeKeys_derivesNameAndWikidataKeys() {
@@ -62,21 +77,6 @@ public class PlaceIndexTest {
         assertEquals(List.of("wikidata=Q1"), PlaceIndex.placeKeys(tags("wikidata", "Q1")));
         assertEquals(List.of(), PlaceIndex.placeKeys(tags("place", "city")));
     }
-
-    // ---- trimPlaceTags ----
-
-    @Test
-    public void trimPlaceTags_keepsMergeableTagsAndDropsTheRest() {
-        var trimmed = PlaceIndex.trimPlaceTags(map(
-                "name", "Afula", "name:en", "Afula", "description", "d", "alt_name", "Affula",
-                "loc_name:he", "עפולה", "wikidata", "Q1", "population", "5000",
-                "boundary", "administrative", "admin_level", "8", "type", "boundary", "highway", "primary"));
-
-        assertEquals(map("name", "Afula", "name:en", "Afula", "description", "d", "alt_name", "Affula",
-                "loc_name:he", "עפולה", "wikidata", "Q1", "population", "5000"), trimmed);
-    }
-
-    // ---- estimatePopulation ----
 
     @Test
     public void estimatePopulation_emptyForNonPlaces() {
@@ -98,102 +98,72 @@ public class PlaceIndexTest {
         assertEquals(20, PlaceIndex.estimatePopulation(tags("place", "isolated_dwelling")).getAsInt());
     }
 
-    // ---- shouldIndex: ranking relation > node > way ----
-
     @Test
-    public void shouldIndex_soleRepresentationAlwaysWins() {
+    public void shouldIndex_nodeYieldsToRelationItBelongsTo() throws Exception {
         var index = new PlaceIndex();
-        for (Kind kind : Kind.values()) {
-            assertTrue(index.shouldIndex(kind, tags("name", "Lonely", "place", "village")),
-                    kind + " alone should be indexed");
-        }
+        index.recordNode(node(1, 5, 5, "place", "city", "name", "X"), LANGUAGES);
+        index.recordRelation(placeRelation(100, new long[] { 1 }, "place", "city", "name", "X", "type", "boundary"));
+        assertFalse(index.shouldIndex(nodeFeature(1, "name", "X")),
+                "the node is a member of the same-named relation");
     }
 
     @Test
-    public void shouldIndex_nodeOutranksWayButNotRelation() {
+    public void shouldIndex_unrelatedSameNamedNodeSurvives() throws Exception {
         var index = new PlaceIndex();
-        index.recordNode(node("place", "city", "name", "Afula"), LANGUAGES);
-
-        var afula = tags("name", "Afula");
-        assertTrue(index.shouldIndex(Kind.NODE, afula), "the node wins when there is no relation");
-        assertFalse(index.shouldIndex(Kind.WAY, afula), "a way defers to the node of the same place");
-        assertTrue(index.shouldIndex(Kind.WAY, tags("name", "Elsewhere")), "a different place is untouched");
+        index.recordNode(node(1, 5, 5, "place", "city", "name", "X"), LANGUAGES);
+        // A same-named relation elsewhere whose members do NOT include node 1.
+        index.recordRelation(placeRelation(100, new long[] { 2 }, "place", "city", "name", "X", "type", "boundary"));
+        assertTrue(index.shouldIndex(nodeFeature(1, "name", "X")),
+                "same name, but not a member — a distinct place must survive");
     }
 
     @Test
-    public void shouldIndex_relationOutranksNodeAndWay() {
+    public void shouldIndex_memberOfADifferentlyNamedRelationSurvives() throws Exception {
         var index = new PlaceIndex();
-        index.recordNode(node("place", "city", "name", "Nazareth"), LANGUAGES);
-        index.recordRelation(relation(List.of(wayMember()), "place", "city", "name", "Nazareth", "type", "boundary"));
-
-        assertFalse(index.shouldIndex(Kind.NODE, tags("name", "Nazareth")), "the node defers to the relation");
-        assertFalse(index.shouldIndex(Kind.WAY, tags("name", "Nazareth")), "the way defers to the relation");
-        assertTrue(index.shouldIndex(Kind.RELATION, tags("name", "Nazareth", "type", "boundary")));
+        index.recordNode(node(1, 5, 5, "place", "city", "name", "X"), LANGUAGES);
+        index.recordRelation(placeRelation(100, new long[] { 1 }, "place", "city", "name", "Y", "type", "boundary"));
+        assertTrue(index.shouldIndex(nodeFeature(1, "name", "X")),
+                "a member with a different name is a different place");
     }
 
     @Test
-    public void shouldIndex_relationThatWontBecomeAPolygonIsIgnored() {
-        // A relation only outranks the node when planetiler will actually turn it into a
-        // polygon: a polygonal type with at least one way member. Anything else is ignored,
-        // so the node keeps representing the place instead of vanishing from search.
-        var noWayMember = relation(List.of(relationMember()), "place", "city", "name", "Kept", "type", "boundary");
-        var nonPolygonalType = relation(List.of(wayMember()), "place", "city", "name", "Kept", "type", "route");
-        var noType = relation(List.of(wayMember()), "place", "city", "name", "Kept");
-
-        for (var ignored : List.of(noWayMember, nonPolygonalType, noType)) {
-            var index = new PlaceIndex();
-            index.recordNode(node("place", "city", "name", "Kept"), LANGUAGES);
-            index.recordRelation(ignored);
-            assertTrue(index.shouldIndex(Kind.NODE, tags("name", "Kept")),
-                    "the node must survive when the relation never materializes");
-        }
-    }
-
-    // ---- tagsToIndex: node/way as-is, relation merges the node's tags ----
-
-    @Test
-    public void tagsToIndex_returnsNodeAndWayFeaturesUnchanged() {
+    public void shouldIndex_wayYieldsToNodeInsideIt() throws Exception {
         var index = new PlaceIndex();
-        var feature = tags("name", "Afula", "place", "city");
-        assertSame(feature, index.tagsToIndex(Kind.NODE, feature));
-        assertSame(feature, index.tagsToIndex(Kind.WAY, feature));
+        index.recordNode(node(1, 5, 5, "place", "town", "name", "X"), LANGUAGES);
+        assertFalse(index.shouldIndex(feature(10, square(0, 0, 10, 10), "name", "X")),
+                "the way contains the same-named node");
     }
 
     @Test
-    public void tagsToIndex_relationWithoutNodeIsUsedAsIs() {
+    public void shouldIndex_wayYieldsToNodeMatchedByWikidata() throws Exception {
         var index = new PlaceIndex();
-        index.recordRelation(relation(List.of(wayMember()), "place", "town", "name", "NoNode", "type", "boundary"));
-
-        var relationFeature = tags("name", "NoNode", "type", "boundary");
-        assertSame(relationFeature, index.tagsToIndex(Kind.RELATION, relationFeature), "no node means nothing to merge");
+        index.recordNode(node(1, 5, 5, "place", "town", "name", "Y", "wikidata", "Q1"), LANGUAGES);
+        assertFalse(index.shouldIndex(feature(10, square(0, 0, 10, 10), "name", "X", "wikidata", "Q1")),
+                "matched by wikidata, confirmed by containment even though the names differ");
     }
 
     @Test
-    public void tagsToIndex_relationInheritsNodeTags() {
+    public void shouldIndex_wayWithSameNamedNodeElsewhereSurvives() throws Exception {
         var index = new PlaceIndex();
-        index.recordNode(node("place", "city", "name", "Nazareth", "wikidata", "Q1", "population", "5000"), LANGUAGES);
-        index.recordRelation(relation(List.of(wayMember()), "place", "city", "name", "Nazareth", "type", "boundary"));
-
-        var merged = index.tagsToIndex(Kind.RELATION,
-                tags("name", "Nazareth", "type", "boundary", "boundary", "administrative"));
-        assertEquals("5000", merged.getString("population"), "the node's population is merged in");
-        assertEquals("Q1", merged.getString("wikidata"), "the node's wikidata is merged in");
-        assertEquals("administrative", merged.getString("boundary"), "the relation keeps its own tags");
+        index.recordNode(node(1, 50, 50, "place", "town", "name", "X"), LANGUAGES);
+        assertTrue(index.shouldIndex(feature(10, square(0, 0, 10, 10), "name", "X")),
+                "same name, but the node is outside the way — a distinct place must survive");
     }
 
     @Test
-    public void tagsToIndex_relationWinsOnConflictButNodeFillsGaps() {
+    public void shouldIndex_wayWithADifferentNamedNodeInsideSurvives() throws Exception {
         var index = new PlaceIndex();
-        index.recordNode(node("place", "city", "name", "Old", "name:en", "OldEn", "wikidata", "Q1"), LANGUAGES);
-        // The relation shares the node's wikidata but carries a different name.
-        index.recordRelation(
-                relation(List.of(wayMember()), "place", "city", "name", "New", "wikidata", "Q1", "type", "boundary"));
+        index.recordNode(node(1, 5, 5, "place", "town", "name", "Y"), LANGUAGES);
+        assertTrue(index.shouldIndex(feature(10, square(0, 0, 10, 10), "name", "X")),
+                "a differently-named node inside the way is a different place");
+    }
 
-        assertFalse(index.shouldIndex(Kind.NODE, tags("name", "Old", "wikidata", "Q1")),
-                "the node defers to the relation matched by shared wikidata, not name");
-
-        var merged = index.tagsToIndex(Kind.RELATION, tags("name", "New", "wikidata", "Q1", "type", "boundary"));
-        assertEquals("New", merged.getString("name"), "the relation's own name wins on conflict");
-        assertEquals("OldEn", merged.getString("name:en"), "the node fills in a name the relation lacked");
+    @Test
+    public void shouldIndex_nonAreaWayIsIndexed() throws Exception {
+        var index = new PlaceIndex();
+        index.recordNode(node(1, 5, 5, "place", "town", "name", "X"), LANGUAGES);
+        var openWay = feature(10, GF.createLineString(new Coordinate[] {
+                new Coordinate(0, 0), new Coordinate(1, 1) }), "name", "X");
+        assertTrue(index.shouldIndex(openWay), "a non-area way cannot contain a node");
     }
 }
