@@ -66,8 +66,6 @@ public class PlanetSearchProfile implements Profile {
   private static final Map<String, MinWayIdFinder> Singles = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> NamedHighways = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> Waterways = new ConcurrentHashMap<>();
-
-  /** Ranks a place's node / way / relation forms so each place is indexed exactly once. */
   private final PlaceIndex placeIndex = new PlaceIndex();
 
   public PlanetSearchProfile(PlanetilerConfig config, ElasticRunContext context) {
@@ -219,11 +217,11 @@ public class PlanetSearchProfile implements Profile {
 
   @Override
   public List<OsmRelationInfo> preprocessOsmRelation(OsmElement.Relation relation) {
+    placeIndex.recordRelationIfNeeded(relation);
     // If this is a "route" relation ...
     if (relation.hasTag("state", "proposed")) {
       return null;
     }
-    placeIndex.recordRelation(relation);
     var pointDocument = new PointDocument();
     setIconColorCategory(pointDocument, relation);
 
@@ -273,11 +271,12 @@ public class PlanetSearchProfile implements Profile {
 
   @Override
   public void preprocessOsmNode(OsmElement.Node node) {
-    placeIndex.recordNode(node, this.context.supportedLanguages());
+    placeIndex.recordNodeIfNeeded(node);
   }
 
   @Override
   public void preprocessOsmWay(OsmElement.Way way) {
+    placeIndex.recordWayIfNeeded(way);
     if (way.hasTag("mtb:name")) {
       String mtbName = way.getString("mtb:name");
       synchronized (mtbName.intern()) {
@@ -594,32 +593,45 @@ public class PlanetSearchProfile implements Profile {
    * Places get their own flow, so a place is searchable by name even when it has
    * no dedicated place node (common in Israel), while a place with several
    * representations shows up only once. {@link PlaceIndex} decides which
-   * representation to keep (relation &gt; node &gt; way) and which tags to index;
-   * whatever is skipped here still serves as a bbox container, indexed separately
-   * by {@link #insertBboxToElasticsearch}.
+   * representation to keep from OSM tags, element type and ids; whatever is
+   * skipped here still serves as a bbox container, indexed separately by
+   * {@link #insertBboxToElasticsearch}.
    */
   private boolean processPlaceFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
     String place = feature.getString("place");
     if (place == null || place.isBlank()) {
       return false;
     }
+    if (feature.isPoint()) {
+      // A place node may be a relation's anchor; remember where it is for that
+      // relation.
+      var worldCoordinate = feature.worldGeometry().getCoordinate();
+      placeIndex.captureMemberNode(feature.id(), worldCoordinate.getX(), worldCoordinate.getY());
+    }
     if (!OsmNames.hasSearchableName(feature, this.context.supportedLanguages())) {
       // Nothing to search on; leave nameless places to the generic flow.
       return false;
     }
-    if (!placeIndex.shouldIndex(feature)) {
-      // Another representation of this place carries the searchable point.
+    if (!placeIndex.isWinner(feature)) {
+      // A better-ranked representation of this same place is indexed instead.
       return true;
     }
 
-    var point = feature.canBePolygon() ? (Point) feature.centroidIfConvex()
-        : GeoUtils.point(feature.worldGeometry().getCoordinate());
+    var anchor = placeIndex.anchorWorldLocation(feature);
+    Point point;
+    if (anchor != null) {
+      point = GeoUtils.point(anchor[0], anchor[1]);
+    } else {
+      point = feature.canBePolygon() ? (Point) feature.centroidIfConvex()
+          : GeoUtils.point(feature.worldGeometry().getCoordinate());
+    }
+    var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
+
     var pointDocument = new PointDocument();
     if (feature.canBePolygon()) {
       pointDocument.poiAreaNormalized = normalizeArea(feature.areaMeters());
     }
     pointDocument.poiSource = "OSM";
-    var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
     pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
     setIconColorCategory(pointDocument, feature);
     convertTagsToDocument(pointDocument, feature);

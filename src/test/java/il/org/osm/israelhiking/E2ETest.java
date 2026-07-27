@@ -89,14 +89,15 @@ public class E2ETest {
     }
 
     /**
-     * A settlement that OSM maps as both a polygon and a place node must still be
-     * a single searchable place: {@code processPlaceFeature} keeps the polygon as
-     * a container only, so the node is not doubled by it. Each city below has both
-     * representations in this extract, so running the real search query and
-     * finding more than one place with the exact name means the dedup regressed.
+     * A place that OSM maps in several ways must still be a single searchable
+     * result. Each city below has more than one representation in this extract —
+     * a polygon plus a place node (עפולה, נס ציונה, גן יבנה, נצרת), or two
+     * relations sharing a wikidata (ירושלים: an admin boundary and a
+     * multipolygon, both {@code Q1218}). Running the real search query and finding
+     * more than one place with the exact name means the dedup regressed.
      */
     private void assertPlacesAreNotDuplicated(ElasticsearchClient esClient) throws Exception {
-        var cities = List.of("עפולה", "נס ציונה", "גן יבנה", "נצרת");
+        var cities = List.of("עפולה", "נס ציונה", "גן יבנה", "נצרת", "ירושלים");
         var failures = new ArrayList<String>();
         for (var city : cities) {
             var exactPlaces = searchPoints(esClient, Map.of("searchTerm", JsonData.of(city))).stream()
@@ -107,7 +108,7 @@ public class E2ETest {
                 failures.add("  " + city + ": the search returned no place with this exact name");
             } else if (exactPlaces > 1) {
                 failures.add("  " + city + ": the search returned " + exactPlaces
-                        + " places with this exact name (a same-named polygon was indexed as a second point)");
+                        + " places with this exact name (a second representation of the same place was indexed)");
             }
         }
         if (!failures.isEmpty()) {
