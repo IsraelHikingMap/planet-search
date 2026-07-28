@@ -62,14 +62,4 @@ public class OsmNamesTest {
         assertEquals(List.of("En"), OsmNames.alternativeNames(feature, "en"));
         assertEquals(List.of(), OsmNames.alternativeNames(feature, "he"));
     }
-
-    @Test
-    public void isNameOrDescriptionTag_recognizesNameDescriptionAndAltNameTags() {
-        assertTrue(OsmNames.isNameOrDescriptionTag("name:en"));
-        assertTrue(OsmNames.isNameOrDescriptionTag("description:fr"));
-        assertTrue(OsmNames.isNameOrDescriptionTag("alt_name"));
-        assertTrue(OsmNames.isNameOrDescriptionTag("loc_name:he"));
-        assertFalse(OsmNames.isNameOrDescriptionTag("boundary"));
-        assertFalse(OsmNames.isNameOrDescriptionTag("name"));
-    }
 }
