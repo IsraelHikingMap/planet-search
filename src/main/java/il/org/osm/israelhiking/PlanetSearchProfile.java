@@ -3,12 +3,9 @@ package il.org.osm.israelhiking;
 import static com.onthegomap.planetiler.reader.osm.OsmElement.Type.RELATION;
 import static com.onthegomap.planetiler.reader.osm.OsmElement.Type.WAY;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -39,7 +36,6 @@ import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 
-import il.org.osm.israelhiking.ContainerIndex.ContainerRecord;
 import il.org.osm.israelhiking.ElasticsearchHelper.ElasticRunContext;
 
 public class PlanetSearchProfile implements Profile {
@@ -355,7 +351,7 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
 
     convertTagsToDocument(pointDocument, feature);
-    enrichWithContainers(pointDocument, false);
+    this.context.containerIndex().enrich(pointDocument, false);
     insertPointToElasticsearch(pointDocument, docId);
 
     var tileFeature = features.geometry("external", point)
@@ -400,7 +396,7 @@ public class PlanetSearchProfile implements Profile {
       var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
       relation.pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
       relation.pointDocument.poiLength = relation.length;
-      enrichWithContainers(relation.pointDocument, false);
+      this.context.containerIndex().enrich(relation.pointDocument, false);
       insertPointToElasticsearch(relation.pointDocument, "OSM_relation_" + relation.id());
 
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
@@ -448,7 +444,7 @@ public class PlanetSearchProfile implements Profile {
         if (minIdFeature.hasTag("mtb:name")) {
           CoalesceIntoMap(pointDocument.name, "default", minIdFeature.getString("mtb:name"));
         }
-        enrichWithContainers(pointDocument, false);
+        this.context.containerIndex().enrich(pointDocument, false);
         insertPointToElasticsearch(pointDocument, "OSM_way_" + mergedFeature.minId);
         // This was the last way with the same mtb:name, so we can merge the lines and
         // add the feature
@@ -505,7 +501,7 @@ public class PlanetSearchProfile implements Profile {
         pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
 
         convertTagsToDocument(pointDocument, minIdFeature);
-        enrichWithContainers(pointDocument, false);
+        this.context.containerIndex().enrich(pointDocument, false);
         insertPointToElasticsearch(pointDocument, "OSM_way_" + mergedFeature.minId);
         if (!isInterestingPoint(pointDocument)) {
           // Skip adding features without any description or image to tiles
@@ -563,7 +559,7 @@ public class PlanetSearchProfile implements Profile {
         var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
         pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
         convertTagsToDocument(pointDocument, minIdFeature);
-        enrichWithContainers(pointDocument, false);
+        this.context.containerIndex().enrich(pointDocument, false);
         insertPointToElasticsearch(pointDocument, "OSM_way_" + mergedFeature.minId);
 
         if (pointDocument.poiIcon == "icon-hike" ||
@@ -637,7 +633,7 @@ public class PlanetSearchProfile implements Profile {
     pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
     setIconColorCategory(pointDocument, feature);
     convertTagsToDocument(pointDocument, feature);
-    enrichWithContainers(pointDocument, true);
+    this.context.containerIndex().enrich(pointDocument, true);
     insertPointToElasticsearch(pointDocument, sourceFeatureToDocumentId(feature));
 
     var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
@@ -679,7 +675,7 @@ public class PlanetSearchProfile implements Profile {
     }
 
     convertTagsToDocument(pointDocument, feature);
-    enrichWithContainers(pointDocument, false);
+    this.context.containerIndex().enrich(pointDocument, false);
     insertPointToElasticsearch(pointDocument, docId);
 
     if ((pointDocument.poiIcon == "icon-peak" || pointDocument.poiIcon == "icon-river")
@@ -721,7 +717,7 @@ public class PlanetSearchProfile implements Profile {
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
     pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
     convertTagsToDocument(pointDocument, feature);
-    enrichWithContainers(pointDocument, false);
+    this.context.containerIndex().enrich(pointDocument, false);
     insertPointToElasticsearch(pointDocument, docId);
   }
 
@@ -731,63 +727,6 @@ public class PlanetSearchProfile implements Profile {
             .index(this.context.pointsIndexTarget())
             .id(docId)
             .document(pointDocument))));
-  }
-
-  /**
-   * Tags the point with the places it falls inside: the union of their names
-   * (for "point, place" search), plus the tightest enclosing place and the
-   * country (for display). Uses the container index loaded from the previous
-   * build, so a first-ever build tags nothing and simply produces the index.
-   */
-  private void enrichWithContainers(PointDocument pointDocument, boolean isPlace) {
-    if (pointDocument.location == null) {
-      return;
-    }
-    var matches = this.context.containerIndex().containing(pointDocument.location[1], pointDocument.location[0]);
-    if (matches.isEmpty()) {
-      return;
-    }
-    ContainerRecord country = null;
-    ContainerRecord container = null;
-    Map<String, Set<String>> names = new LinkedHashMap<>();
-    for (ContainerRecord match : matches) {
-      match.names.forEach((lang, name) -> names.computeIfAbsent(lang, k -> new LinkedHashSet<>()).add(name));
-      if (match.isCountry()) {
-        if (country == null || match.area < country.area) {
-          country = match;
-        }
-      } else if (!sharesNameForPlace(pointDocument, match, isPlace)
-          && (container == null || match.area < container.area)) {
-        container = match;
-      }
-    }
-    Map<String, List<String>> parentNames = new LinkedHashMap<>();
-    names.forEach((lang, set) -> parentNames.put(lang, new ArrayList<>(set)));
-    pointDocument.poiParentNames = parentNames;
-    if (country != null) {
-      pointDocument.poiCountry = country.names;
-    }
-    if (container != null) {
-      pointDocument.poiContainer = container.names;
-    }
-  }
-
-  /**
-   * Whether the container carries the same name as the point in any shared
-   * language.
-   * A place node commonly sits in a polygon of the same name; using it as
-   * the container would display "X, X", so skip it and let a wider place win.
-   */
-  private static boolean sharesNameForPlace(PointDocument pointDocument, ContainerRecord container, boolean isPlace) {
-    if (!isPlace) {
-      return false;
-    }
-    for (var entry : pointDocument.name.entrySet()) {
-      if (entry.getValue().equals(container.names.get(entry.getKey()))) {
-        return true;
-      }
-    }
-    return false;
   }
 
   private void insertBboxToElasticsearch(SourceFeature feature, String[] supportedLanguages) {

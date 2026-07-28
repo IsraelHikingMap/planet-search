@@ -25,8 +25,9 @@ public class ElasticsearchHelper {
   static final String HEBREW_DOUBLED_YOD_PATTERN = "\\u05D9\\u05D9";
   static final String NIQQUD_PATTERN = "[\\u05B0-\\u05C7]";
   static final String APOSTROPHES_PATTERN = "[\\u0027\\u2018\\u2019\\u02BC]";
-  static final List<String> COMMON_CHAR_FILTERS = List.of("hebrew_niqqud", "hebrew_matres_vav",
-      "hebrew_matres_yod", "latin_apostrophes");
+  static final String DASHES_PATTERN = "[\\u002D\\u05BE\\u2010-\\u2015\\u2212]";
+  static final List<String> COMMON_CHAR_FILTERS = List.of("dashes_to_space", "hebrew_niqqud",
+      "hebrew_matres_vav", "hebrew_matres_yod", "latin_apostrophes");
 
   public static record ElasticRunContext(
       ElasticsearchClient esClient,
@@ -71,6 +72,11 @@ public class ElasticsearchHelper {
    */
   private static IndexSettingsAnalysis.Builder addCommonAnalysis(IndexSettingsAnalysis.Builder analysis) {
     return analysis
+        .charFilter("dashes_to_space", cf -> cf
+            .definition(d -> d
+                .patternReplace(pr -> pr
+                    .pattern(DASHES_PATTERN)
+                    .replacement(" "))))
         .charFilter("hebrew_niqqud", cf -> cf
             .definition(d -> d
                 .patternReplace(pr -> pr
@@ -155,7 +161,6 @@ public class ElasticsearchHelper {
           m.properties("location", g -> g.geoPoint(p -> p));
           m.properties("poiProminence", n -> n.float_(f -> f));
           m.properties("population", n -> n.integer(f -> f));
-          m.properties("poiFeatureClass", n -> n.keyword(f -> f));
           m.properties("poiAreaNormalized", n -> n.float_(f -> f.index(false)));
           m.properties("intermittent", n -> n.boolean_(f -> f.index(false)));
           return m;

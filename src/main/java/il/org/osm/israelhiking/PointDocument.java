@@ -36,6 +36,4 @@ class PointDocument {
   public Float poiAreaNormalized;
   public Boolean intermittent;
   public Integer population;
-  public String poiFeatureClass;
-
 }
