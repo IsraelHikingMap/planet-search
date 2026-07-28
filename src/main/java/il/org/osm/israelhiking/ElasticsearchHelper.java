@@ -162,7 +162,6 @@ public class ElasticsearchHelper {
           m.properties("location", g -> g.geoPoint(p -> p));
           m.properties("poiProminence", n -> n.float_(f -> f));
           m.properties("population", n -> n.integer(f -> f));
-          m.properties("poiFeatureClass", n -> n.keyword(f -> f));
           m.properties("poiAreaNormalized", n -> n.float_(f -> f.index(false)));
           m.properties("intermittent", n -> n.boolean_(f -> f.index(false)));
           return m;
