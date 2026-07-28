@@ -8,8 +8,10 @@ import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.onthegomap.planetiler.geo.GeoUtils;
 
 import org.locationtech.jts.geom.Coordinate;
+import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.LinearRing;
@@ -48,6 +50,20 @@ final class ContainerIndex {
   private static final int SCROLL_SIZE = 2000;
 
   /**
+   * Two same-place polygons whose centres are within this distance are treated as
+   * one even when neither encloses the other (their differently-shaped outlines
+   * still describe the same settlement).
+   */
+  private static final double NEAR_METERS = 10_000;
+  /**
+   * Degrees to grow the point's query box so it never misses a candidate whose
+   * centre is within {@link #NEAR_METERS} — deliberately over-estimated (uses a
+   * short ~80 km/° so the box is a little large; actual distance is then checked
+   * in metres).
+   */
+  private static final double NEAR_ENVELOPE_DEGREES = NEAR_METERS / 80_000.0;
+
+  /**
    * A place a point can fall inside — an admin boundary, a settlement polygon, a
    * park. Carries only what point enrichment needs: the localized names, the
    * admin level (2 == country, 0 when the container is not an admin boundary),
@@ -62,39 +78,75 @@ final class ContainerIndex {
     final int adminLevel;
     final double area;
     final Geometry geometry;
-    /** Whether this container is itself a place (a {@code place=*} polygon). */
-    final boolean isPlace;
-    /** The container's wikidata id, if any; used to match a place node to its polygon. */
+    /**
+     * The container's wikidata id, if any; used to match a place feature to its
+     * polygon.
+     */
     final String wikidata;
+    /**
+     * How strongly this polygon represents its place ({@code NONE} when it is not a
+     * place at all).
+     */
+    final PlaceHelper.PlaceRank rank;
+    /**
+     * OSM element id; breaks ties between same-ranked polygons and excludes
+     * self-containment.
+     */
+    final long id;
+    /**
+     * The polygon's centre's longitude; used for the "same place if centres are
+     * close" test.
+     */
+    final double centerLng;
+    /**
+     * The polygon's centre's latitude; used for the "same place if centres are
+     * close" test.
+     */
+    final double centerLat;
 
-    ContainerRecord(Map<String, String> names, int adminLevel, double area, Geometry geometry, boolean isPlace,
-        String wikidata) {
+    ContainerRecord(Map<String, String> names, int adminLevel, double area, Geometry geometry, String wikidata,
+        PlaceHelper.PlaceRank rank, long id, double centerLng, double centerLat) {
       this.names = names;
       this.adminLevel = adminLevel;
       this.area = area;
       this.geometry = geometry;
-      this.isPlace = isPlace;
       this.wikidata = wikidata;
+      this.rank = rank;
+      this.id = id;
+      this.centerLng = centerLng;
+      this.centerLat = centerLat;
     }
 
     boolean isCountry() {
       return adminLevel == COUNTRY_ADMIN_LEVEL;
     }
 
-    /** Whether this is a place polygon representing the same place as the given node. */
-    boolean isSamePlaceAs(Collection<String> nodeNames, String nodeWikidata) {
-      if (!isPlace) {
+    /**
+     * Whether this is a place polygon representing the same place as the given
+     * feature.
+     */
+    boolean isSamePlaceAs(Collection<String> otherNames, String otherWikidata) {
+      if (rank == PlaceHelper.PlaceRank.NONE) {
         return false;
       }
-      if (nodeWikidata != null && nodeWikidata.equals(wikidata)) {
+      if (otherWikidata != null && otherWikidata.equals(wikidata)) {
         return true;
       }
       for (String name : names.values()) {
-        if (nodeNames.contains(name)) {
+        if (otherNames.contains(name)) {
           return true;
         }
       }
       return false;
+    }
+
+    /**
+     * Whether this polygon outranks a feature of the given rank and id (ties: lower
+     * id).
+     */
+    boolean betterThan(PlaceHelper.PlaceRank otherRank, long otherId) {
+      int byRank = rank.compareTo(otherRank);
+      return byRank > 0 || (byRank == 0 && id < otherId);
     }
   }
 
@@ -133,14 +185,28 @@ final class ContainerIndex {
   }
 
   /**
-   * Whether a place polygon of the same place (shared name or wikidata) encloses
-   * the coordinate, so a place node there is already represented by it. Uses the
-   * previous build's polygons, so a brand-new place polygon starts deduping its
-   * node one build later.
+   * Whether a better-ranked polygon of the same place (shared name or wikidata)
+   * already carries this point — because it either encloses the point or has its
+   * centre within {@link #NEAR_METERS} of it. Uses the previous build's polygons,
+   * so a brand-new place polygon starts deduping one build later.
    */
-  boolean enclosesSamePlace(double lat, double lng, Collection<String> nodeNames, String nodeWikidata) {
-    for (ContainerRecord record : containing(lat, lng)) {
-      if (record.isSamePlaceAs(nodeNames, nodeWikidata)) {
+  boolean coveredByBetterPlace(double lat, double lng, Collection<String> names, String wikidata,
+      PlaceHelper.PlaceRank rank, long id) {
+    if (loadedCount == 0) {
+      return false;
+    }
+    Coordinate coordinate = new Coordinate(lng, lat);
+    Point point = GEOMETRY_FACTORY.createPoint(coordinate);
+    Envelope box = new Envelope(coordinate);
+    box.expandBy(NEAR_ENVELOPE_DEGREES);
+    for (Object candidate : tree.query(box)) {
+      Entry entry = (Entry) candidate;
+      ContainerRecord record = entry.record();
+      if (!record.isSamePlaceAs(names, wikidata) || !record.betterThan(rank, id)) {
+        continue;
+      }
+      if (entry.prepared().contains(point)
+          || GeoUtils.metersBetween(lng, lat, record.centerLng, record.centerLat) <= NEAR_METERS) {
         return true;
       }
     }
@@ -209,10 +275,14 @@ final class ContainerIndex {
       if (geometry == null || geometry.isEmpty()) {
         return null;
       }
-      boolean isPlace = source.path("isPlace").asBoolean(false);
       String wikidata = source.hasNonNull("wikidata") ? source.get("wikidata").asText() : null;
+      PlaceHelper.PlaceRank rank = PlaceHelper.PlaceRank.fromOrdinal(source.path("placeRank").asInt(0));
+      long id = source.path("id").asLong(0);
+      JsonNode center = source.path("center");
+      double centerLng = center.has(0) ? center.get(0).asDouble() : 0;
+      double centerLat = center.has(1) ? center.get(1).asDouble() : 0;
       return new ContainerRecord(names, source.path("adminLevel").asInt(0), source.path("area").asDouble(0), geometry,
-          isPlace, wikidata);
+          wikidata, rank, id, centerLng, centerLat);
     } catch (RuntimeException e) {
       LOGGER.warn("Skipping a container with unreadable geometry: {}", e.getMessage());
       return null;

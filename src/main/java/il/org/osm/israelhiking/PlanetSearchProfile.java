@@ -66,7 +66,7 @@ public class PlanetSearchProfile implements Profile {
   private static final Map<String, MinWayIdFinder> Singles = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> NamedHighways = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> Waterways = new ConcurrentHashMap<>();
-  private final PlaceIndex placeIndex = new PlaceIndex();
+  private final PlaceHelper placeHelper = new PlaceHelper();
 
   public PlanetSearchProfile(PlanetilerConfig config, ElasticRunContext context) {
     this.config = config;
@@ -145,7 +145,7 @@ public class PlanetSearchProfile implements Profile {
       pointDocument.intermittent = true;
     }
     setProminence(pointDocument, feature);
-    PlaceIndex.estimatePopulation(feature).ifPresent(population -> pointDocument.population = population);
+    PlaceHelper.estimatePopulation(feature).ifPresent(population -> pointDocument.population = population);
   }
 
   private void setProminence(PointDocument pointDocument, WithTags feature) {
@@ -217,7 +217,7 @@ public class PlanetSearchProfile implements Profile {
 
   @Override
   public List<OsmRelationInfo> preprocessOsmRelation(OsmElement.Relation relation) {
-    placeIndex.recordRelationIfNeeded(relation);
+    placeHelper.recordRelationIfNeeded(relation);
     // If this is a "route" relation ...
     if (relation.hasTag("state", "proposed")) {
       return null;
@@ -271,7 +271,6 @@ public class PlanetSearchProfile implements Profile {
 
   @Override
   public void preprocessOsmWay(OsmElement.Way way) {
-    placeIndex.recordWayIfNeeded(way);
     if (way.hasTag("mtb:name")) {
       String mtbName = way.getString("mtb:name");
       synchronized (mtbName.intern()) {
@@ -587,11 +586,12 @@ public class PlanetSearchProfile implements Profile {
   /**
    * Places get their own flow, so a place is searchable by name even when it has
    * no dedicated place node (common in Israel), while a place with several
-   * representations shows up only once. Polygons of the same place are deduped by
-   * {@link PlaceIndex} (tags, element type and ids); a place node yields only to a
-   * same-place polygon that actually encloses it. Whatever is skipped here still
-   * serves as a bbox container, indexed separately by
-   * {@link #insertBboxToElasticsearch}.
+   * representations shows up only once. A representation — node or polygon — is
+   * dropped when a better-ranked polygon of the same place already carries its
+   * representative point (the node, or the polygon's convex centre): either the
+   * polygon encloses that point or its centre sits within a few km of it, per the
+   * container index. Whatever is skipped here still serves as a bbox container,
+   * indexed separately by {@link #insertBboxToElasticsearch}.
    */
   private boolean processPlaceFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
     String place = feature.getString("place");
@@ -602,14 +602,14 @@ public class PlanetSearchProfile implements Profile {
       // A place node may be a relation's anchor; remember where it is for that
       // relation.
       var worldCoordinate = feature.worldGeometry().getCoordinate();
-      placeIndex.captureMemberNode(feature.id(), worldCoordinate.getX(), worldCoordinate.getY());
+      placeHelper.captureMemberNode(feature.id(), worldCoordinate.getX(), worldCoordinate.getY());
     }
     if (!OsmNames.hasSearchableName(feature, this.context.supportedLanguages())) {
       // Nothing to search on; leave nameless places to the generic flow.
       return false;
     }
 
-    var anchor = placeIndex.anchorWorldLocation(feature);
+    var anchor = placeHelper.getLabelNodeWorldLocation(feature);
     Point point;
     if (anchor != null) {
       point = GeoUtils.point(anchor[0], anchor[1]);
@@ -618,15 +618,14 @@ public class PlanetSearchProfile implements Profile {
           : GeoUtils.point(feature.worldGeometry().getCoordinate());
     }
     var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
+    var isCoveredByBetterPlace = this.context.containerIndex().coveredByBetterPlace(
+        lngLatPoint.getY(),
+        lngLatPoint.getX(),
+        PlaceHelper.getPlaceNames(feature, this.context.supportedLanguages()), feature.getString("wikidata"),
+        PlaceHelper.calculatePlaceRank(feature), feature.id());
 
-    if (feature.isPoint()) {
-      if (this.context.containerIndex().enclosesSamePlace(lngLatPoint.getY(), lngLatPoint.getX(),
-          PlaceIndex.placeNames(feature, this.context.supportedLanguages()), feature.getString("wikidata"))) {
-        // A same-place polygon encloses this node, so it is already represented.
-        return true;
-      }
-    } else if (!placeIndex.isWinner(feature)) {
-      // A better-ranked polygon of this same place is indexed instead.
+    if (isCoveredByBetterPlace) {
+      // A stronger representation of this same place already carries this point.
       return true;
     }
 
@@ -807,8 +806,9 @@ public class PlanetSearchProfile implements Profile {
       var bbox = new BBoxDocument();
       bbox.area = feature.areaMeters();
       bbox.adminLevel = feature.hasTag("admin_level") ? (int) feature.getLong("admin_level") : 0;
-      bbox.isPlace = feature.hasTag("place");
       bbox.wikidata = feature.getString("wikidata");
+      bbox.placeRank = PlaceHelper.calculatePlaceRank(feature).ordinal();
+      bbox.id = feature.id();
       var lngLatCenterPoint = GeoUtils.worldToLatLonCoords(feature.centroid()).getCoordinate();
       bbox.center = new double[] { lngLatCenterPoint.getX(), lngLatCenterPoint.getY() };
       bbox.setBBox(simplified);

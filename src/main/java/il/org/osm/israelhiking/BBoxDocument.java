@@ -22,10 +22,16 @@ public class BBoxDocument {
     public double[] center;
     /** OSM admin_level (2 = country, 0 when not an admin boundary); read back to enrich points. */
     public int adminLevel;
-    /** Whether this polygon is a place ({@code place=*}); read back to dedup place nodes it encloses. */
-    public boolean isPlace;
-    /** The {@code wikidata} id, if any; read back to match a place node to its polygon. */
+    /** The {@code wikidata} id, if any; read back to match a place feature to its polygon. */
     public String wikidata;
+    /**
+     * {@link PlaceHelper.PlaceRank} ordinal of this polygon; read back to keep the strongest representation. It is
+     * {@code NONE} (0) exactly when the polygon is not a place, which is how the dedup tells places from other
+     * containers.
+     */
+    public int placeRank;
+    /** OSM element id; read back to break ties between same-ranked polygons and exclude self-containment. */
+    public long id;
 
     public void setBBox(Geometry geometry) {
         bbox = new HashMap<String, Object>();
