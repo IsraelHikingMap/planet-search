@@ -132,12 +132,12 @@
               ,{
                 "script_score": {
                   "script": {
-                    "source": "if (doc['location'].size() == 0) { return 0.0; } double z = params.zoom <= 0 ? params.default_zoom : Math.min(params.zoom, params.max_zoom); double beta = 1.0 / (1.0 + Math.exp(-params.beta_steepness * (z - params.beta_midpoint))); double dsc = Math.max(params.scale_km, Math.pow(2.2, 18 - z) * 0.1); double d = doc['location'].arcDistance(params.lat, params.lon) / 1000.0; double x = Math.max(0.0, d - params.offset_km); double g = Math.exp(-0.5 * (x * x) / (dsc * dsc)); return params.w_geo * beta * g;",
+                    "source": "if (doc['location'].size() == 0) { return 0.0; } double z = params.zoom <= 0 ? params.default_zoom : Math.min(params.zoom, params.max_zoom); double beta = 1.0 / (1.0 + Math.exp(-params.beta_steepness * (z - params.beta_midpoint))); double dsc = Math.max(params.scale_km, Math.pow(2.2, 18 - z) * 0.1); double d = doc['location'].arcDistance(params.lat, params.lon) / 1000.0; double x = Math.max(0.0, d - params.offset_km); double g = Math.exp(-0.5 * (x * x) / (dsc * dsc)); double sf = (doc['poiIcon.keyword'].size() > 0 && doc['poiIcon.keyword'].value == 'icon-map-signs') ? params.street_geo : 1.0; return sf * params.w_geo * beta * g;",
                     "params": {
                       "lat": {{lat}}, "lon": {{lng}}, "zoom": {{zoom}},
                       "w_geo": 1.0, "scale_km": 8.0, "offset_km": 0.5,
                       "beta_steepness": 0.7, "beta_midpoint": 8.0,
-                      "default_zoom": 12, "max_zoom": 22
+                      "default_zoom": 12, "max_zoom": 22, "street_geo": 0.05
                     }
                   }
                 }
@@ -145,12 +145,12 @@
               {
                 "script_score": {
                   "script": {
-                    "source": "if (doc['location'].size() == 0) { return 0.0; } double z = params.zoom <= 0 ? params.default_zoom : Math.min(params.zoom, params.max_zoom); double beta = 1.0 / (1.0 + Math.exp(-params.beta_steepness * (z - params.beta_midpoint))); double offsetKm = Math.round(Math.pow(2.2, 18 - z) * 0.1 * 1000.0) / 1000.0; double halfKm = Math.max(5.0, Math.min(400.0, offsetKm * 3.0)); double halfLat = halfKm / params.km_per_deg; double cos = Math.max(0.2, Math.cos(params.lat * Math.PI / 180.0)); double halfLng = halfKm / (params.km_per_deg * cos); double dLat = Math.abs(doc['location'].lat - params.lat); double dLng = Math.abs(((doc['location'].lon - params.lon + 540.0) % 360.0) - 180.0); if (dLat <= halfLat && dLng <= halfLng) { return params.viewport_boost * beta * beta; } return 0.0;",
+                    "source": "if (doc['location'].size() == 0) { return 0.0; } double z = params.zoom <= 0 ? params.default_zoom : Math.min(params.zoom, params.max_zoom); double beta = 1.0 / (1.0 + Math.exp(-params.beta_steepness * (z - params.beta_midpoint))); double offsetKm = Math.round(Math.pow(2.2, 18 - z) * 0.1 * 1000.0) / 1000.0; double halfKm = Math.max(5.0, Math.min(400.0, offsetKm * 3.0)); double halfLat = halfKm / params.km_per_deg; double cos = Math.max(0.2, Math.cos(params.lat * Math.PI / 180.0)); double halfLng = halfKm / (params.km_per_deg * cos); double dLat = Math.abs(doc['location'].lat - params.lat); double dLng = Math.abs(((doc['location'].lon - params.lon + 540.0) % 360.0) - 180.0); double sf = (doc['poiIcon.keyword'].size() > 0 && doc['poiIcon.keyword'].value == 'icon-map-signs') ? params.street_geo : 1.0; if (dLat <= halfLat && dLng <= halfLng) { return sf * params.viewport_boost * beta * beta; } return 0.0;",
                     "params": {
                       "lat": {{lat}}, "lon": {{lng}}, "zoom": {{zoom}},
                       "viewport_boost": 0.15, "km_per_deg": 111.0,
                       "beta_steepness": 0.7, "beta_midpoint": 8.0,
-                      "default_zoom": 12, "max_zoom": 22
+                      "default_zoom": 12, "max_zoom": 22, "street_geo": 0.05
                     }
                   }
                 }

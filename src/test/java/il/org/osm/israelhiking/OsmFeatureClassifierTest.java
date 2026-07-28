@@ -89,6 +89,8 @@ public class OsmFeatureClassifierTest {
                 row("icon-hike", "black", "Hiking", "highway", "footway"),
                 row("icon-hike", "black", "Hiking", "highway", "path"),
                 row("icon-four-by-four", "black", "4x4", "highway", "track"),
+                row("icon-search", "black", "Other", "highway", "residential"),
+                row("icon-search", "black", "Other", "highway", "primary"),
                 row("icon-synagogue", "black", "Other", "amenity", "place_of_worship", "religion", "jewish"),
                 row("icon-church", "black", "Other", "amenity", "place_of_worship", "religion", "christian"),
                 row("icon-mosque", "black", "Other", "amenity", "place_of_worship", "religion", "muslim"),
@@ -185,7 +187,12 @@ public class OsmFeatureClassifierTest {
                 Arguments.of("icon-wikipedia-w", "black", "Other",
                         new String[] { "building", "yes", "wikipedia", "en:X" }),
                 Arguments.of("icon-tree", "#008000", "Other",
-                        new String[] { "landuse", "forest", "wikidata", "Q1" }));
+                        new String[] { "landuse", "forest", "wikidata", "Q1" }),
+                Arguments.of("icon-map-signs", "black", "Other", new String[] { "highway", "residential" }),
+                Arguments.of("icon-map-signs", "black", "Other", new String[] { "highway", "primary" }),
+                Arguments.of("icon-map-signs", "black", "Other", new String[] { "highway", "tertiary" }),
+                Arguments.of("icon-map-signs", "black", "Other", new String[] { "highway", "living_street" }),
+                Arguments.of("icon-map-signs", "black", "Other", new String[] { "highway", "pedestrian" }));
 
     }
 

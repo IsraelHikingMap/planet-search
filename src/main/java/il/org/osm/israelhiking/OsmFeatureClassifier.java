@@ -57,7 +57,8 @@ final class OsmFeatureClassifier {
     NONICON_MTB("icon-bike", "green", "Bicycle", DEFAULT_BASE_SCORE, 0.0),
     NONICON_FOREST("icon-tree", "#008000", "Other", DEFAULT_BASE_SCORE, 0.0),
     NONICON_WIKIPEDIA("icon-wikipedia-w", "black", "Other", DEFAULT_BASE_SCORE, 0.0),
-    NONICON_BED("icon-bed", "#734a08", "Other", DEFAULT_BASE_SCORE, 0.0);
+    NONICON_BED("icon-bed", "#734a08", "Other", DEFAULT_BASE_SCORE, 0.0),
+    NONICON_STREET("icon-map-signs", "black", "Other", 0.05, 0.0);
 
     final String icon;
     final String color;
@@ -250,6 +251,9 @@ final class OsmFeatureClassifier {
 
   static Category classifyNonIcon(WithTags f) {
     Category c = null;
+    if (StreetIndex.isStreetHighway(f.getString("highway"))) {
+      c = Category.NONICON_STREET;
+    }
     if (f.hasTag("amenity", "place_of_worship")) {
       c = Category.NONICON_GENERIC;
     }

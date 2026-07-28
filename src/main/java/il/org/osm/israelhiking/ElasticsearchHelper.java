@@ -25,8 +25,9 @@ public class ElasticsearchHelper {
   static final String HEBREW_DOUBLED_YOD_PATTERN = "\\u05D9\\u05D9";
   static final String NIQQUD_PATTERN = "[\\u05B0-\\u05C7]";
   static final String APOSTROPHES_PATTERN = "[\\u0027\\u2018\\u2019\\u02BC]";
-  static final List<String> COMMON_CHAR_FILTERS = List.of("hebrew_niqqud", "hebrew_matres_vav",
-      "hebrew_matres_yod", "latin_apostrophes");
+  static final String DASHES_PATTERN = "[\\u002D\\u05BE\\u2010-\\u2015\\u2212]";
+  static final List<String> COMMON_CHAR_FILTERS = List.of("dashes_to_space", "hebrew_niqqud",
+      "hebrew_matres_vav", "hebrew_matres_yod", "latin_apostrophes");
 
   public static record ElasticRunContext(
       ElasticsearchClient esClient,
@@ -37,7 +38,8 @@ public class ElasticsearchHelper {
       String[] supportedLanguages,
       QRankLookup qrankLookup,
       BulkIndexer bulkListener,
-      ContainerIndex containerIndex) {
+      ContainerIndex containerIndex,
+      StreetIndex streetHelper) {
   }
 
   /**
@@ -71,6 +73,11 @@ public class ElasticsearchHelper {
    */
   private static IndexSettingsAnalysis.Builder addCommonAnalysis(IndexSettingsAnalysis.Builder analysis) {
     return analysis
+        .charFilter("dashes_to_space", cf -> cf
+            .definition(d -> d
+                .patternReplace(pr -> pr
+                    .pattern(DASHES_PATTERN)
+                    .replacement(" "))))
         .charFilter("hebrew_niqqud", cf -> cf
             .definition(d -> d
                 .patternReplace(pr -> pr
@@ -227,7 +234,7 @@ public class ElasticsearchHelper {
         supportedLanguages);
     var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
     return new ElasticRunContext(esClient, pointsIndexAlias, bboxIndexAlias, targetPointsIndex, targetBBoxIndex,
-        supportedLanguages, qrankLookup, bulkListener, containerIndex);
+        supportedLanguages, qrankLookup, bulkListener, containerIndex, new StreetIndex());
   }
 
   /**
@@ -236,6 +243,8 @@ public class ElasticsearchHelper {
    * that were built for the live index.
    */
   public static void finalizeRun(ElasticRunContext context) throws Exception {
+    context.streetHelper().flush(context.bulkListener()::add, context.pointsIndexTarget());
+
     context.bulkListener().close();
 
     context.esClient().indices().refresh(r -> r.index(context.pointsIndexTarget(), context.bboxIndexTarget()));

@@ -4,8 +4,10 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.onthegomap.planetiler.geo.GeoUtils;
@@ -227,6 +229,62 @@ final class ContainerIndex {
       }
     }
     return hits;
+  }
+
+  /**
+   * Tags the point with the places it falls inside: the union of their names
+   * (for "point, place" search), plus the tightest enclosing place and the
+   * country (for display). Uses the containers loaded from the previous build,
+   * so a first-ever build tags nothing.
+   */
+  void enrich(PointDocument pointDocument, boolean isPlace) {
+    if (pointDocument.location == null) {
+      return;
+    }
+    var matches = containing(pointDocument.location[1], pointDocument.location[0]);
+    if (matches.isEmpty()) {
+      return;
+    }
+    ContainerRecord country = null;
+    ContainerRecord container = null;
+    Map<String, Set<String>> names = new LinkedHashMap<>();
+    for (ContainerRecord match : matches) {
+      match.names.forEach((lang, name) -> names.computeIfAbsent(lang, k -> new LinkedHashSet<>()).add(name));
+      if (match.isCountry()) {
+        if (country == null || match.area < country.area) {
+          country = match;
+        }
+      } else if (!sharesNameForPlace(pointDocument, match, isPlace)
+          && (container == null || match.area < container.area)) {
+        container = match;
+      }
+    }
+    Map<String, List<String>> parentNames = new LinkedHashMap<>();
+    names.forEach((lang, set) -> parentNames.put(lang, new ArrayList<>(set)));
+    pointDocument.poiParentNames = parentNames;
+    if (country != null) {
+      pointDocument.poiCountry = country.names;
+    }
+    if (container != null) {
+      pointDocument.poiContainer = container.names;
+    }
+  }
+
+  /**
+   * Whether the container carries the same name as the point in any shared
+   * language. A place node commonly sits in a polygon of the same name; using it
+   * as the container would display "X, X", so skip it and let a wider place win.
+   */
+  private static boolean sharesNameForPlace(PointDocument pointDocument, ContainerRecord container, boolean isPlace) {
+    if (!isPlace) {
+      return false;
+    }
+    for (var entry : pointDocument.name.entrySet()) {
+      if (entry.getValue().equals(container.names.get(entry.getKey()))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static List<ContainerRecord> scroll(ElasticsearchClient esClient, String bboxAlias) throws IOException {
