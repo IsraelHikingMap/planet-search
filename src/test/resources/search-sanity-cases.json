@@ -21,5 +21,7 @@
   {"id":"find-herzl-street-in-tel-aviv-by-center","searchTerm":"הרצל","uiLanguage":"he","center":[32.08,34.78],"zoom":13,"expectedTarget":[32.0879,34.7893],"radiusMeters":8000,"topN":3},
   {"id":"find-mount-meron-from-distant-center","searchTerm":"הר מירון","uiLanguage":"he","center":[32.0853,34.7818],"zoom":12,"expectedTarget":[32.9978,35.4137],"radiusMeters":150,"topN":3,"expectedIds":["OSM_node_275295939"]},
   {"id":"find-masada-from-tel-aviv","searchTerm":"מצדה","uiLanguage":"he","center":[32.0853,34.7818],"zoom":12,"expectedTarget":[31.3157,35.3539],"radiusMeters":2000,"topN":3},
-  {"id":"find-kinneret-lake","searchTerm":"הכנרת","uiLanguage":"he","center":[32.82,35.59],"zoom":11,"expectedTarget":[32.82,35.59],"radiusMeters":12000,"topN":1}
+  {"id":"find-kinneret-lake","searchTerm":"הכנרת","uiLanguage":"he","center":[32.82,35.59],"zoom":11,"expectedTarget":[32.82,35.59],"radiusMeters":12000,"topN":1},
+  {"id":"find-bor-aksa-from-distant-center","searchTerm":"בור עכסה","uiLanguage":"he","center":[31.9535,35.2605],"zoom":17,"expectedTarget":[31.44874,35.03820],"radiusMeters":300,"topN":1,"expectedIds":["OSM_node_12891750301"]},
+  {"id":"find-nahal-hakibbutzim-by-prefix","searchTerm":"נחל הקיבוצים","uiLanguage":"he","center":[32.6401,35.0985],"zoom":16,"prefix":true,"expectedTarget":[32.50313,35.45083],"radiusMeters":2000,"topN":1,"expectedIds":["OSM_way_127782153"]}
 ]
