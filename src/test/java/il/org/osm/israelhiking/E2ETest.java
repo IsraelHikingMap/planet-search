@@ -39,9 +39,6 @@ public class E2ETest {
     private static final Logger LOGGER = Logger.getLogger(E2ETest.class.getName());
 
     private static final String EXTERNAL_FILE = "./src/test/resources/external.geojson";
-    private static final String POINTS_ALIAS = "points";
-    private static final String BBOX_ALIAS = "bbox";
-
     private static final String ES_ADDRESS = "http://localhost:9200";
 
     // What this test runs on. The values below are the ones the CI runs, change
@@ -55,9 +52,11 @@ public class E2ETest {
     // USE_QRANK = true - prominence is only realistic with QRank, the file is
     // downloaded once into data/sources and reused
     private static final String AREA = "israel-and-palestine";
+    private static final String POINTS_ALIAS = "points";
+    private static final String BBOX_ALIAS = "bbox";
+    private static final boolean USE_QRANK = true;
     private static final String SEARCH_CASES = "/search-sanity-cases.json";
     private static final String CONTAINER_CASES = "/search-container-cases.json";
-    private static final boolean USE_QRANK = false;
 
     /** Downloaded on demand, next to the OSM extract planetiler downloads. */
     private static final Path QRANK_FILE = Path.of("data", "sources", "qrank.csv.gz");
@@ -68,7 +67,9 @@ public class E2ETest {
         var arguments = new ArrayList<String>(List.of("--download",
                 "--area", AREA,
                 "--external-file-path", EXTERNAL_FILE,
-                "--es-address", ES_ADDRESS));
+                "--es-address", ES_ADDRESS,
+                "--es-points-index-alias", POINTS_ALIAS,
+                "--es-bbox-index-alias", BBOX_ALIAS));
         if (USE_QRANK) {
             arguments.add("--qrank-path");
             arguments.add(downloadQrankIfMissing().toString());
