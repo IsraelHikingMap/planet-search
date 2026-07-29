@@ -487,9 +487,6 @@ public class PlanetSearchProfile implements Profile {
 
       waterway.ids.remove(feature.id());
       if (feature.canBeLine()) {
-        // Only lines take part in the merge; a multipolygon area sharing the name
-        // must not, since its geometry cannot be rebuilt after the pass (the id is
-        // still cleared above so the remaining line ways can complete their merge).
         waterway.features.add(feature);
       }
       if (!waterway.ids.isEmpty()) {
@@ -553,9 +550,6 @@ public class PlanetSearchProfile implements Profile {
 
       highway.ids.remove(feature.id());
       if (feature.canBeLine()) {
-        // Only lines take part in the merge; a multipolygon area sharing the name
-        // must not, since its geometry cannot be rebuilt after the pass (the id is
-        // still cleared above so the remaining line ways can complete their merge).
         highway.features.add(feature);
       }
 
