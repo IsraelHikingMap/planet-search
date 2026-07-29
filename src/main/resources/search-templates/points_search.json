@@ -128,6 +128,19 @@
                 },
                 "weight": 0.8
               }
+              {{^prefix}}
+              ,{
+                "filter": {
+                  "bool": {
+                    "minimum_should_match": 1,
+                    "should": [[[#languages]]
+                      { "match": { "name.[[lang]]": { "query": "{{searchTerm}}", "operator": "and" } } }[[/languages]]
+                    ]
+                  }
+                },
+                "weight": 1.5
+              }
+              {{/prefix}}
               {{#hasCenter}}
               ,{
                 "script_score": {
