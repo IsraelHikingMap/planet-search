@@ -415,8 +415,10 @@ public class PlanetSearchProfile implements Profile {
     }
     var single = Singles.get(mtbName);
     synchronized (single) {
-      single.features.add(feature);
       single.ids.remove(feature.id());
+      if (feature.canBeLine()) {
+        single.features.add(feature);
+      }
 
       if (!single.ids.isEmpty()) {
         return true;
@@ -480,8 +482,10 @@ public class PlanetSearchProfile implements Profile {
     var waterway = Waterways.get(name);
     synchronized (waterway) {
 
-      waterway.features.add(feature);
       waterway.ids.remove(feature.id());
+      if (feature.canBeLine()) {
+        waterway.features.add(feature);
+      }
       if (!waterway.ids.isEmpty()) {
         return true;
       }
@@ -541,8 +545,10 @@ public class PlanetSearchProfile implements Profile {
     var highway = NamedHighways.get(name);
     synchronized (highway) {
 
-      highway.features.add(feature);
       highway.ids.remove(feature.id());
+      if (feature.canBeLine()) {
+        highway.features.add(feature);
+      }
 
       if (!highway.ids.isEmpty()) {
         return true;
