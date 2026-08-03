@@ -140,11 +140,12 @@ public class PlanetSearchProfile implements Profile {
     if (feature.hasTag("intermittent", "yes")) {
       pointDocument.intermittent = true;
     }
-    setProminence(pointDocument, feature);
+    setProminence(pointDocument, feature, OsmFeatureClassifier.classify(feature));
     PlaceHelper.estimatePopulation(feature).ifPresent(population -> pointDocument.population = population);
   }
 
-  private void setProminence(PointDocument pointDocument, WithTags feature) {
+  private void setProminence(PointDocument pointDocument, WithTags feature,
+      OsmFeatureClassifier.Category category) {
     long qrankRaw = this.context.qrankLookup().qrankFor(pointDocument.wikidata);
     double ele = OsmNumberParser.parseElevation(feature.getString("ele")).orElse(Double.NaN);
     boolean hasImage = pointDocument.image != null || pointDocument.wikimedia_commons != null;
@@ -152,7 +153,7 @@ public class PlanetSearchProfile implements Profile {
     boolean hasWikidata = pointDocument.wikidata != null;
 
     pointDocument.poiProminence = ProminenceCalculator.compute(
-        OsmFeatureClassifier.classify(feature), ele, hasImage, hasWebsite, hasWikidata, qrankRaw);
+        category, ele, hasImage, hasWebsite, hasWikidata, qrankRaw);
   }
 
   private void setDifficulty(PointDocument pointDocument, WithTags feature) {
@@ -323,6 +324,8 @@ public class PlanetSearchProfile implements Profile {
       if (processMtbNameFeature(feature, features))
         return;
       if (processWaterwayFeature(feature, features))
+        return;
+      if (processStreetFeature(feature))
         return;
       if (processHighwayFeautre(feature, features))
         return;
@@ -583,6 +586,33 @@ public class PlanetSearchProfile implements Profile {
 
       return true;
     }
+  }
+
+  /**
+   * Records a named street line for the merge that runs after the input pass:
+   * the street's segments are keyed by name and enclosing container so its many
+   * ways collapse into one search document under its minimal way id. Streets are
+   * search only, so this never emits a tile feature.
+   */
+  private boolean processStreetFeature(SourceFeature feature) throws GeometryException {
+    if (!StreetIndex.isStreet(feature) || !feature.canBeLine()) {
+      return false;
+    }
+    var line = (LineString) feature.line();
+    var startPoint = GeoUtils.point(line.getCoordinate());
+    var lngLatPoint = GeoUtils.worldToLatLonCoords(startPoint).getCoordinate();
+    var pointDocument = new PointDocument();
+    pointDocument.poiSource = "OSM";
+    pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
+    var category = OsmFeatureClassifier.classifyNonIcon(feature);
+    pointDocument.poiIcon = category.icon;
+    pointDocument.poiIconColor = category.color;
+    pointDocument.poiCategory = category.poiCategory;
+    convertTagsToDocument(pointDocument, feature);
+    setProminence(pointDocument, feature, category);
+    this.context.containerIndex().enrich(pointDocument, false);
+    this.context.streetHelper().add(feature.id(), pointDocument);
+    return true;
   }
 
   /**

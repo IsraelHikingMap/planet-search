@@ -92,6 +92,10 @@ Point-in-polygon can't run in the single streaming pass, because a point is read
 
 The catch is that a fresh deployment needs **two build cycles** to fully populate: the first build has no previous bbox index to load, so its points go untagged, and the second tags its points from the first's containers. The end to end test exercises this by building twice.
 
+## Places and streets
+
+Places and streets each get their own handling so they are searchable the way OSM actually maps them. A **place** is searchable by name even when it has no dedicated place node and shows up only once when OSM maps it several ways — a node, a polygon and a relation of the same settlement are deduplicated into a single result. A **street** is rarely grouped into a relation in OSM, so it arrives as many disconnected named ways; these are merged by name within their enclosing settlement into one search result per town, indexed under the smallest way id so the result maps back to a real, editable element. Streets are **search only** — never written to the tiles — and are de-prioritized in `points_search` so a nearby street does not outrank a more notable point of interest of the same name.
+
 ## External features file format
 
 The file pointed at by `external-file-path` is a GeoJSON `FeatureCollection`. Every feature is reduced to a single point (a `Point` is used as is, a `LineString` uses the first coordinate, a polygon uses its centroid) and is added both to the search index and to the POIs tiles.

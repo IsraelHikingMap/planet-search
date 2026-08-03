@@ -38,7 +38,8 @@ public class ElasticsearchHelper {
       String[] supportedLanguages,
       QRankLookup qrankLookup,
       BulkIndexer bulkListener,
-      ContainerIndex containerIndex) {
+      ContainerIndex containerIndex,
+      StreetIndex streetHelper) {
   }
 
   /**
@@ -232,7 +233,7 @@ public class ElasticsearchHelper {
         supportedLanguages);
     var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
     return new ElasticRunContext(esClient, pointsIndexAlias, bboxIndexAlias, targetPointsIndex, targetBBoxIndex,
-        supportedLanguages, qrankLookup, bulkListener, containerIndex);
+        supportedLanguages, qrankLookup, bulkListener, containerIndex, new StreetIndex());
   }
 
   /**
@@ -241,6 +242,8 @@ public class ElasticsearchHelper {
    * that were built for the live index.
    */
   public static void finalizeRun(ElasticRunContext context) throws Exception {
+    context.streetHelper().flush(context.bulkListener()::add, context.pointsIndexTarget());
+
     context.bulkListener().close();
 
     context.esClient().indices().refresh(r -> r.index(context.pointsIndexTarget(), context.bboxIndexTarget()));
