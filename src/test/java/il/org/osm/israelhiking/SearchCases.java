@@ -29,7 +29,7 @@ public final class SearchCases {
   @JsonIgnoreProperties(ignoreUnknown = true)
   public record Case(String id, String searchTerm, String uiLanguage, List<Double> center, Integer zoom,
       Boolean prefix, String template, List<Double> expectedTarget, double radiusMeters, int topN,
-      List<String> expectedIds, String expectedExactName, Boolean allowFailure) {
+      List<String> expectedIds, String expectedExactName) {
 
     public boolean hasCenter() {
       return center != null && center.size() >= 2;
@@ -37,10 +37,6 @@ public final class SearchCases {
 
     public boolean isPrefix() {
       return Boolean.TRUE.equals(prefix);
-    }
-
-    public boolean isAllowedFailure() {
-      return Boolean.TRUE.equals(allowFailure);
     }
   }
 

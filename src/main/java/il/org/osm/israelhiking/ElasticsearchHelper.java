@@ -136,14 +136,14 @@ public class ElasticsearchHelper {
     esClient.indices().create(c -> c.index(targetIndex)
         .settings(s -> addCommonSettings(s)
             .analysis(a -> addCommonAnalysis(a)
-                .filter("edge_ngram_2_15", tf -> tf
+                .filter("edge_ngram_1_15", tf -> tf
                     .definition(d -> d
-                        .edgeNgram(en -> en.minGram(2).maxGram(15))))
+                        .edgeNgram(en -> en.minGram(1).maxGram(15))))
                 .analyzer("prefix_index_analyzer", an -> an
                     .custom(ca -> ca
                         .charFilter(COMMON_CHAR_FILTERS)
                         .tokenizer("standard")
-                        .filter("asciifolding", "lowercase", "edge_ngram_2_15")))
+                        .filter("asciifolding", "lowercase", "edge_ngram_1_15")))
                 .analyzer("prefix_search_analyzer", an -> an
                     .custom(ca -> ca
                         .charFilter(COMMON_CHAR_FILTERS)
