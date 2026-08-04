@@ -40,7 +40,7 @@ public class ElasticsearchHelper {
       QRankLookup qrankLookup,
       BulkIndexer bulkListener,
       ContainerIndex containerIndex,
-      StreetIndex streetHelper,
+      StreetIndex streetIndex,
       PointDocumentFactory documentFactory,
       Path osmPath,
       int threads) {
@@ -250,7 +250,7 @@ public class ElasticsearchHelper {
    * that were built for the live index.
    */
   public static void finalizeRun(ElasticRunContext context) throws Exception {
-    context.streetHelper().flush(context.bulkListener()::add, context.pointsIndexTarget(),
+    context.streetIndex().flush(context.bulkListener()::add, context.pointsIndexTarget(),
         context.osmPath(), context.threads(), context.documentFactory());
 
     context.bulkListener().close();

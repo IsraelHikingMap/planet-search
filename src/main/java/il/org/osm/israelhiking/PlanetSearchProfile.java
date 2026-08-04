@@ -439,7 +439,7 @@ public class PlanetSearchProfile implements Profile {
     var startPoint = feature.line().getCoordinate();
     double lng = GeoUtils.getWorldLon(startPoint.getX());
     double lat = GeoUtils.getWorldLat(startPoint.getY());
-    this.context.streetHelper().add(feature.id(), feature.getString("name"),
+    this.context.streetIndex().add(feature.id(), feature.getString("name"),
         this.context.containerIndex().tightestContainerName(lat, lng), lng, lat);
     return true;
   }
