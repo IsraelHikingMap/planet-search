@@ -28,11 +28,11 @@ public class StreetIndexTest {
     /** No point in this test falls in a container. */
     private static final String NO_CONTAINER = null;
 
-    // These tests only exercise the merge, which needs none of what the flush
-    // reads the OSM input with, so none of it is wired up here.
+    // These tests only exercise the merge, which touches none of what the flush
+    // needs to read the OSM input and index what it finds, so none of it is
+    // wired up here.
     private StreetIndex mergeOnly() {
-        return new StreetIndex(operation -> {
-        }, "points", Path.of("never-read.osm.pbf"), 1, null);
+        return new StreetIndex(null, "points", Path.of("never-read.osm.pbf"), 1, null);
     }
 
     @Test
