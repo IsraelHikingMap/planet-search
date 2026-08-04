@@ -233,14 +233,14 @@ public class PlanetSearchProfile implements Profile {
     for (var routeInfo : feature.relationInfo(RelationInfo.class, true)) {
       RelationInfo relation = routeInfo.relation();
       synchronized (relation) {
-        if (relation.waysMemberIds.remove(feature.id())) {
-          relation.length += feature.lengthMeters();
-        }
         if (relation.firstMemberId == feature.id()) {
           relation.firstMemberFeature = feature;
         }
         if (relation.secondMemberId == feature.id()) {
           relation.secondMemberFeature = feature;
+        }
+        if (relation.waysMemberIds.remove(feature.id())) {
+          relation.length += feature.lengthMeters();
         }
       }
     }
