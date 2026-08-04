@@ -11,6 +11,7 @@ import org.apache.http.HttpHost;
 import org.elasticsearch.client.RestClient;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch.indices.IndexSettings;
 import co.elastic.clients.elasticsearch.indices.IndexSettingsAnalysis;
 import co.elastic.clients.json.jackson.JacksonJsonpMapper;
 import co.elastic.clients.transport.ElasticsearchTransport;
@@ -63,6 +64,20 @@ public class ElasticsearchHelper {
     RestClient restClient = RestClient.builder(HttpHost.create(esAddress)).build();
     ElasticsearchTransport transport = new RestClientTransport(restClient, new JacksonJsonpMapper());
     return new ElasticsearchClient(transport);
+  }
+
+  /**
+   * The settings every index of a build shares. An index here is written once,
+   * by the build that creates it, and is only queried after the alias is
+   * switched onto it — so it never needs Elasticsearch to refresh it on a
+   * timer. Turning that off keeps a bulk load of tens of millions of documents
+   * from paying for a segment flush every second; {@link #finalizeRun} asks for
+   * the one refresh that matters, right before the switch.
+   */
+  private static IndexSettings.Builder addCommonSettings(IndexSettings.Builder settings) {
+    return settings
+        .refreshInterval(t -> t.time("-1"))
+        .numberOfReplicas("0");
   }
 
   /**
@@ -119,7 +134,7 @@ public class ElasticsearchHelper {
     }
     var allLanguages = allLanguages(supportedLanguages);
     esClient.indices().create(c -> c.index(targetIndex)
-        .settings(s -> s
+        .settings(s -> addCommonSettings(s)
             .analysis(a -> addCommonAnalysis(a)
                 .filter("edge_ngram_2_15", tf -> tf
                     .definition(d -> d
@@ -180,7 +195,7 @@ public class ElasticsearchHelper {
     }
     var allLanguages = allLanguages(supportedLanguages);
     esClient.indices().create(c -> c.index(targetIndex)
-        .settings(s -> s
+        .settings(s -> addCommonSettings(s)
             .analysis(a -> addCommonAnalysis(a)))
         .mappings(m -> {
           for (var lang : allLanguages) {
