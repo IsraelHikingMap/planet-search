@@ -263,9 +263,6 @@ public class E2ETest {
         var cases = SearchCases.load(casesResource);
         var failures = new ArrayList<String>();
         for (var searchCase : cases) {
-            if (searchCase.isAllowedFailure()) {
-                continue;
-            }
             var failure = SearchCases.failure(searchCase, search(esClient, searchCase));
             if (failure != null) {
                 failures.add("  " + failure);
