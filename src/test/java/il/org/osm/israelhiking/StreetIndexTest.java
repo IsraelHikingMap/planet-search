@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Path;
 import java.util.Map;
 
 import org.junit.jupiter.api.Tag;
@@ -27,6 +28,13 @@ public class StreetIndexTest {
     /** No point in this test falls in a container. */
     private static final String NO_CONTAINER = null;
 
+    // These tests only exercise the merge, which needs none of what the flush
+    // reads the OSM input with, so none of it is wired up here.
+    private StreetIndex mergeOnly() {
+        return new StreetIndex(operation -> {
+        }, "points", Path.of("never-read.osm.pbf"), 1, null);
+    }
+
     @Test
     public void isStreetAcceptsNamedRoutableHighwaysOnly() {
         assertTrue(StreetIndex.isStreet(street(1L, Map.of("highway", "residential", "name", "הרצל"))));
@@ -37,7 +45,7 @@ public class StreetIndexTest {
 
     @Test
     public void mergesSameNameAndCityIntoOneStreetAtMinId() {
-        var helper = new StreetIndex();
+        var helper = mergeOnly();
         helper.add(7L, "הרצל", "חיפה", 34.0, 32.0);
         helper.add(3L, "הרצל", "חיפה", 34.01, 32.01);
         helper.add(9L, "הרצל", "חיפה", 34.02, 32.02);
@@ -47,7 +55,7 @@ public class StreetIndexTest {
 
     @Test
     public void keepsSameNameInDifferentCitiesApart() {
-        var helper = new StreetIndex();
+        var helper = mergeOnly();
         helper.add(7L, "הרצל", "חיפה", 34.0, 32.0);
         helper.add(5L, "הרצל", "נתניה", 34.85, 32.3);
 
@@ -58,7 +66,7 @@ public class StreetIndexTest {
     // segments are from each other — the city, not distance, is the scope.
     @Test
     public void mergesSegmentsFarApartWithinTheSameCity() {
-        var helper = new StreetIndex();
+        var helper = mergeOnly();
         helper.add(7L, "הרצל", "חיפה", 34.0, 32.0);
         helper.add(3L, "הרצל", "חיפה", 34.4, 32.4);
 
@@ -67,7 +75,7 @@ public class StreetIndexTest {
 
     @Test
     public void scopesByGridCellWhenThereIsNoCity() {
-        var helper = new StreetIndex();
+        var helper = mergeOnly();
         helper.add(7L, "דרך", NO_CONTAINER, 34.0, 30.0);
         helper.add(3L, "דרך", NO_CONTAINER, 34.0, 30.0);
         helper.add(5L, "דרך", NO_CONTAINER, 35.0, 31.0);
@@ -77,7 +85,7 @@ public class StreetIndexTest {
 
     @Test
     public void keepsDifferentNamesInOneCityApart() {
-        var helper = new StreetIndex();
+        var helper = mergeOnly();
         helper.add(7L, "הרצל", "חיפה", 34.0, 32.0);
         helper.add(3L, "ביאליק", "חיפה", 34.0, 32.0);
 

@@ -104,6 +104,31 @@ final class StreetIndex {
    */
   private final LongAdder segments = new LongAdder();
 
+  private final BulkIndexer bulkIndexer;
+  private final String pointsIndex;
+  private final Path osmPath;
+  private final int threads;
+  private final PointDocumentFactory documents;
+
+  /**
+   * @param bulkIndexer where the merged street documents are handed to be
+   *                    indexed
+   * @param pointsIndex the index they are written to
+   * @param osmPath     the OSM input, read again in {@link #flush} to build the
+   *                    documents of the streets that won
+   * @param threads     how many threads that read may decode blocks on
+   * @param documents   builds a street's document from the way that represents
+   *                    it
+   */
+  StreetIndex(BulkIndexer bulkIndexer, String pointsIndex, Path osmPath, int threads,
+      PointDocumentFactory documents) {
+    this.bulkIndexer = bulkIndexer;
+    this.pointsIndex = pointsIndex;
+    this.osmPath = osmPath;
+    this.threads = threads;
+    this.documents = documents;
+  }
+
   /**
    * Records one segment of a street, keeping the segment with the smallest way
    * id per street. Nothing but that id and the point is kept: the document is
@@ -128,8 +153,7 @@ final class StreetIndex {
    * finalize step, once the input pass is over and every street's minimal id is
    * known.
    */
-  void flush(Consumer<BulkOperation> sink, String pointsIndex, Path osmPath, int threads,
-      PointDocumentFactory documents) throws IOException {
+  void flush() throws IOException {
     int held = winners.size();
     LOGGER.info("Street index: {} street segments merged into {} streets held in memory (heap used ~{} MB)",
         segments.sum(), held, usedHeapMegabytes());
@@ -147,7 +171,7 @@ final class StreetIndex {
           osmPath, held);
       return;
     }
-    rescan(sink, pointsIndex, osmPath, threads, documents, coordinateByWayId);
+    rescan(coordinateByWayId);
   }
 
   /**
@@ -156,8 +180,7 @@ final class StreetIndex {
    * purpose, so a slow consumer stalls the reader rather than letting undecoded
    * blocks pile up in memory, which is the thing this whole class is avoiding.
    */
-  private void rescan(Consumer<BulkOperation> sink, String pointsIndex, Path osmPath, int threads,
-      PointDocumentFactory documents, LongLongHashMap coordinateByWayId) throws IOException {
+  private void rescan(LongLongHashMap coordinateByWayId) throws IOException {
     long startTime = System.currentTimeMillis();
     var emitted = new LongAdder();
     var executor = new ThreadPoolExecutor(threads, threads, 0L, TimeUnit.MILLISECONDS,
@@ -170,7 +193,7 @@ final class StreetIndex {
           }
           long coordinate = coordinateByWayId.get(way.id());
           var document = documents.buildStreetDocument(way, longitudeOf(coordinate), latitudeOf(coordinate));
-          sink.accept(BulkOperation.of(op -> op
+          this.bulkIndexer.add(BulkOperation.of(op -> op
               .index(idx -> idx
                   .index(pointsIndex)
                   .id("OSM_way_" + way.id())

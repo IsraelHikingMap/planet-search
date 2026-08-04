@@ -41,9 +41,7 @@ public class ElasticsearchHelper {
       BulkIndexer bulkListener,
       ContainerIndex containerIndex,
       StreetIndex streetIndex,
-      PointDocumentFactory documentFactory,
-      Path osmPath,
-      int threads) {
+      PointDocumentFactory documentFactory) {
   }
 
   /**
@@ -227,7 +225,7 @@ public class ElasticsearchHelper {
   }
 
   public static ElasticRunContext initRun(ElasticsearchClient esClient,
-      BulkIndexer bulkListener,
+      BulkIndexer bulkIndexer,
       String pointsIndexAlias,
       String bboxIndexAlias,
       String[] supportedLanguages,
@@ -238,10 +236,10 @@ public class ElasticsearchHelper {
     var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias,
         supportedLanguages);
     var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
-    var documents = new PointDocumentFactory(supportedLanguages, qrankLookup, containerIndex);
+    var documentFactory = new PointDocumentFactory(supportedLanguages, qrankLookup, containerIndex);
+    var streetIndex = new StreetIndex(bulkIndexer, targetPointsIndex, osmPath, threads, documentFactory);
     return new ElasticRunContext(esClient, pointsIndexAlias, bboxIndexAlias, targetPointsIndex, targetBBoxIndex,
-        supportedLanguages, qrankLookup, bulkListener, containerIndex, new StreetIndex(), documents, osmPath,
-        threads);
+        supportedLanguages, qrankLookup, bulkIndexer, containerIndex, streetIndex, documentFactory);
   }
 
   /**
@@ -250,8 +248,7 @@ public class ElasticsearchHelper {
    * that were built for the live index.
    */
   public static void finalizeRun(ElasticRunContext context) throws Exception {
-    context.streetIndex().flush(context.bulkListener()::add, context.pointsIndexTarget(),
-        context.osmPath(), context.threads(), context.documentFactory());
+    context.streetIndex().flush();
 
     context.bulkListener().close();
 
