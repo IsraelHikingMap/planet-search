@@ -1,39 +1,52 @@
 package il.org.osm.israelhiking;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Consumer;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.carrotsearch.hppc.LongLongHashMap;
 import com.onthegomap.planetiler.reader.WithTags;
+import com.onthegomap.planetiler.reader.osm.OsmElement;
+import com.onthegomap.planetiler.reader.osm.OsmInputFile;
 
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 
 /**
  * Merges the many OSM ways that make up one named street into a single
- * searchable record, without ever holding their geometries in memory. OSM
- * rarely groups a street's ways into a relation, so a street reaches the
- * profile
- * as dozens of unconnected named ways; keying each way by its name scoped to
- * the
- * settlement that contains it collapses them into one street, while keeping
- * "הרצל" in Haifa apart from "הרצל" in Netanya. Only the smallest OSM way id —
- * so
- * the document id maps back to a real, editable element — and that way's
- * document are kept per street; every other segment is discarded as it streams
- * by, so the footprint is one record per street rather than one per segment.
+ * searchable record. OSM rarely groups a street's ways into a relation, so a
+ * street reaches the profile as dozens of unconnected named ways; keying each
+ * way by its name scoped to the settlement that contains it collapses them into
+ * one street, while keeping "הרצל" in Haifa apart from "הרצל" in Netanya. The
+ * smallest OSM way id wins, so the document id maps back to a real, editable
+ * element.
  *
- * A street's segments stream past on the worker threads, where the work is kept
- * to the minimum that can pick a winner: the container is looked up only as a
- * {@link ContainerIndex#tightestContainerScope scope handle}, and the kept
- * document is enriched with its containers' names only in {@link #flush}, once
- * per surviving street rather than once per segment.
+ * The merge cannot finish until the last segment has streamed by, and there are
+ * tens of millions of streets on the planet — so what is held between the two
+ * has to be small. This keeps two longs per street: the winning way id and its
+ * point, packed. Names are held as 64-bit hashes rather than strings, and no
+ * document is built during the input pass at all.
+ *
+ * The documents are built in {@link #flush}, from a second read of the OSM
+ * input that decodes only the ways that won. That read needs no node locations
+ * — every street's point was already recorded — so it is a sequential scan of
+ * the input, not a second planetiler pass.
  *
  * Streets are search only: this class feeds Elasticsearch, never the tile
  * layer.
  */
 final class StreetIndex {
+
+  private static final Logger LOGGER = LoggerFactory.getLogger(StreetIndex.class);
 
   private static final Set<String> STREET_HIGHWAYS = Set.of(
       "motorway", "trunk", "primary", "secondary", "tertiary",
@@ -55,17 +68,22 @@ final class StreetIndex {
    */
   private static final long GRID_COLUMNS = Math.round(360.0 / STREET_GRID_DEGREES) + 1;
 
+  /** Fixed-point degrees — OSM's own coordinate precision, about a centimetre. */
+  private static final double COORDINATE_SCALE = 1e7;
+
+  /** How long the second read may take before the build gives up on it. */
+  private static final long RESCAN_TIMEOUT_HOURS = 6;
+
   /**
-   * A named street scoped by the handle of its container, as it is keyed while
-   * the input streams by — before any container has been named. A grid cell
-   * stands in, as a negative scope so it can never be mistaken for a container,
-   * when the street falls in none.
+   * A named street scoped to the settlement that holds it, both as 64-bit
+   * hashes: at tens of millions of streets, holding the two strings instead is
+   * gigabytes.
    */
-  private record StreetCell(String name, long scope) {
+  private record StreetKey(long name, long scope) {
   }
 
-  /** A named street scoped to the settlement (or grid cell) that holds it. */
-  record StreetKey(String name, String scope) {
+  /** The way that represents a street: the smallest id seen, and its point. */
+  private record StreetWinner(long wayId, long coordinate) {
   }
 
   /** Whether a highway tag value is a routable street this helper merges. */
@@ -78,99 +96,147 @@ final class StreetIndex {
     return isStreetHighway(feature.getString("highway")) && feature.hasTag("name");
   }
 
-  /** The single way kept per street: its minimal id and that way's document. */
-  static final class StreetAggregator {
-    private final long minId;
-    private final PointDocument document;
-
-    private StreetAggregator(long minId, PointDocument document) {
-      this.minId = minId;
-      this.document = document;
-    }
-
-    long minId() {
-      return minId;
-    }
-
-    PointDocument document() {
-      return document;
-    }
-  }
-
-  private final ConcurrentHashMap<StreetCell, StreetAggregator> candidates = new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<StreetKey, StreetWinner> winners = new ConcurrentHashMap<>();
 
   /**
-   * Records one segment of a street — a document carrying only what its own tags
-   * say — keyed by its name and the container it falls in, or the grid cell of
-   * its point when it falls in none, keeping the segment with the smallest way
-   * id.
-   *
-   * @param containerScope the handle of the container this segment falls in, or
-   *                       0 for none; only its identity matters here, its names
-   *                       are resolved in {@link #flush}
+   * Segments seen, to report against the number of streets kept — the gap is
+   * what this merge exists to collapse.
    */
-  void add(long wayId, PointDocument document, long containerScope) {
-    var key = new StreetCell(document.name.get("default"),
-        containerScope != 0 ? containerScope : gridCell(document.location));
-    candidates.compute(key, (k, current) -> {
-      if (current == null || wayId < current.minId) {
-        return new StreetAggregator(wayId, document);
+  private final LongAdder segments = new LongAdder();
+
+  /**
+   * Records one segment of a street, keeping the segment with the smallest way
+   * id per street. Nothing but that id and the point is kept: the document is
+   * built later, in {@link #flush}.
+   *
+   * @param containerName the name of the settlement the segment falls in, or
+   *                      null when it falls in none — then the point's grid
+   *                      cell scopes the name instead
+   */
+  void add(long wayId, String name, String containerName, double lng, double lat) {
+    segments.increment();
+    var key = new StreetKey(hash(name), containerName != null ? hash(containerName) : gridCell(lng, lat));
+    long coordinate = packCoordinate(lng, lat);
+    winners.compute(key, (k, current) -> current == null || wayId < current.wayId()
+        ? new StreetWinner(wayId, coordinate)
+        : current);
+  }
+
+  /**
+   * Builds and emits one document per merged street, by reading the OSM input
+   * again and decoding only the ways that won their street. Called from the
+   * finalize step, once the input pass is over and every street's minimal id is
+   * known.
+   */
+  void flush(Consumer<BulkOperation> sink, String pointsIndex, Path osmPath, int threads,
+      PointDocumentFactory documents) throws IOException {
+    int held = winners.size();
+    LOGGER.info("Street index: {} street segments merged into {} streets held in memory (heap used ~{} MB)",
+        segments.sum(), held, usedHeapMegabytes());
+    if (held == 0) {
+      return;
+    }
+    var coordinateByWayId = new LongLongHashMap(held);
+    for (StreetWinner winner : winners.values()) {
+      coordinateByWayId.put(winner.wayId(), winner.coordinate());
+    }
+    winners.clear();
+
+    if (!Files.exists(osmPath)) {
+      LOGGER.error("Street index: {} is no longer there, so {} streets cannot be built and go unindexed",
+          osmPath, held);
+      return;
+    }
+    rescan(sink, pointsIndex, osmPath, threads, documents, coordinateByWayId);
+  }
+
+  /**
+   * Reads the OSM input and builds a document for every way that represents a
+   * street. Blocks are decoded on a bounded pool — the queue is small on
+   * purpose, so a slow consumer stalls the reader rather than letting undecoded
+   * blocks pile up in memory, which is the thing this whole class is avoiding.
+   */
+  private void rescan(Consumer<BulkOperation> sink, String pointsIndex, Path osmPath, int threads,
+      PointDocumentFactory documents, LongLongHashMap coordinateByWayId) throws IOException {
+    long startTime = System.currentTimeMillis();
+    var emitted = new LongAdder();
+    var executor = new ThreadPoolExecutor(threads, threads, 0L, TimeUnit.MILLISECONDS,
+        new ArrayBlockingQueue<>(threads * 2), new ThreadPoolExecutor.CallerRunsPolicy());
+    try (var blocks = new OsmInputFile(osmPath).get()) {
+      blocks.forEachBlock(block -> executor.execute(() -> {
+        for (OsmElement element : block.decodeElements()) {
+          if (!(element instanceof OsmElement.Way way) || !coordinateByWayId.containsKey(way.id())) {
+            continue;
+          }
+          long coordinate = coordinateByWayId.get(way.id());
+          var document = documents.buildStreetDocument(way, longitudeOf(coordinate), latitudeOf(coordinate));
+          sink.accept(BulkOperation.of(op -> op
+              .index(idx -> idx
+                  .index(pointsIndex)
+                  .id("OSM_way_" + way.id())
+                  .document(document))));
+          emitted.increment();
+        }
+      }));
+      executor.shutdown();
+      if (!executor.awaitTermination(RESCAN_TIMEOUT_HOURS, TimeUnit.HOURS)) {
+        LOGGER.error("Street index: reading {} did not finish in {}h, some streets go unindexed",
+            osmPath, RESCAN_TIMEOUT_HOURS);
       }
-      return current;
-    });
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IOException("Interrupted while reading " + osmPath + " for the street documents", e);
+    } finally {
+      executor.shutdownNow();
+    }
+    LOGGER.info("Street index: built {} street documents from {} in {}ms (heap used ~{} MB)",
+        emitted.sum(), osmPath, System.currentTimeMillis() - startTime, usedHeapMegabytes());
+  }
+
+  /** The way ids that represent the merged streets, smallest first. */
+  long[] winningWayIds() {
+    return winners.values().stream().mapToLong(StreetWinner::wayId).sorted().toArray();
+  }
+
+  /**
+   * A 64-bit FNV-1a hash of a name, so a street key holds two longs instead of
+   * two strings. Over tens of millions of streets a 64-bit collision — two
+   * unrelated streets merged into one — is vanishingly unlikely, and a grid
+   * cell landing on a name's hash more so, since cells occupy a narrow band of
+   * small negative numbers.
+   */
+  private static long hash(String value) {
+    long hash = 0xcbf29ce484222325L;
+    for (int i = 0; i < value.length(); i++) {
+      hash = (hash ^ value.charAt(i)) * 0x100000001b3L;
+    }
+    return hash;
   }
 
   /** A grid-cell scope for a point that falls in no container. */
-  private static long gridCell(double[] location) {
-    long latCell = (long) Math.floor((location[1] + 90.0) / STREET_GRID_DEGREES);
-    long lngCell = (long) Math.floor((location[0] + 180.0) / STREET_GRID_DEGREES);
-    // Negative, so a cell can never collide with a container handle.
+  private static long gridCell(double lng, double lat) {
+    long latCell = (long) Math.floor((lat + 90.0) / STREET_GRID_DEGREES);
+    long lngCell = (long) Math.floor((lng + 180.0) / STREET_GRID_DEGREES);
+    // Negative, to stay clear of the hashes of the containers that have a name.
     return -(latCell * GRID_COLUMNS + lngCell) - 1;
   }
 
-  /** The city the document was tagged with, or its grid cell when it has none. */
-  private static StreetKey streetKey(PointDocument document) {
-    if (document.poiContainer != null) {
-      String city = document.poiContainer.get("default");
-      if (city != null) {
-        return new StreetKey(document.name.get("default"), city);
-      }
-    }
-    return new StreetKey(document.name.get("default"), createGridCellKey(document.location));
+  /** Both ordinates in one long, as fixed-point degrees. */
+  private static long packCoordinate(double lng, double lat) {
+    return (Math.round(lng * COORDINATE_SCALE) << 32) | (Math.round(lat * COORDINATE_SCALE) & 0xffffffffL);
   }
 
-  /** A grid-cell scope for a point that falls in no container. */
-  private static String createGridCellKey(double[] location) {
-    long latCell = (long) Math.floor((location[1] + 90.0) / STREET_GRID_DEGREES);
-    long lngCell = (long) Math.floor((location[0] + 180.0) / STREET_GRID_DEGREES);
-    return "grid:" + latCell + ":" + lngCell;
+  private static double longitudeOf(long coordinate) {
+    return (int) (coordinate >> 32) / COORDINATE_SCALE;
   }
 
-  /**
-   * Emits one index operation per merged street, under its minimal way id, to
-   * the given sink. Called from the finalize step, once the input pass is over
-   * and every street's minimal id is known.
-   *
-   * This is where a kept street is enriched with the names of the places it
-   * falls in — once per street rather than once per segment — and where the
-   * streets are merged a second time, now by the container's name: a street
-   * long enough to have been keyed by two different grid cells while streaming
-   * by is one street again here, as long as both cells resolve to the same
-   * place.
-   */
-  void flush(Consumer<BulkOperation> sink, String pointsIndex, Consumer<PointDocument> enricher) {
-    candidates.values().parallelStream().forEach(candidate -> enricher.accept(candidate.document()));
-    Map<StreetKey, StreetAggregator> streets = new HashMap<>();
-    for (StreetAggregator candidate : candidates.values()) {
-      streets.merge(streetKey(candidate.document()), candidate,
-          (kept, other) -> kept.minId() <= other.minId() ? kept : other);
-    }
-    for (StreetAggregator street : streets.values()) {
-      sink.accept(BulkOperation.of(op -> op
-          .index(idx -> idx
-              .index(pointsIndex)
-              .id("OSM_way_" + street.minId())
-              .document(street.document()))));
-    }
+  private static double latitudeOf(long coordinate) {
+    return (int) coordinate / COORDINATE_SCALE;
+  }
+
+  /** Heap in use, to size what the merge actually costs on a planet build. */
+  private static long usedHeapMegabytes() {
+    var runtime = Runtime.getRuntime();
+    return (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024);
   }
 }

@@ -3,6 +3,7 @@ package il.org.osm.israelhiking;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -126,36 +127,40 @@ public class ContainerIndexTest {
     }
 
     @Test
-    public void tightestScopeIsTheSmallestEnclosingContainer() {
-        var city = nonPlace(1, Map.of("he", "חיפה"), square(0, 0, 0.1, 0.1));
-        var district = nonPlace(2, Map.of("he", "מחוז חיפה"), square(-1, -1, 1, 1));
+    public void tightestContainerNameIsTheSmallestEnclosingContainer() {
+        var city = nonPlace(1, Map.of("default", "חיפה"), square(0, 0, 0.1, 0.1));
+        var district = nonPlace(2, Map.of("default", "מחוז חיפה"), square(-1, -1, 1, 1));
         var index = indexOf(city, district);
 
-        var scope = index.tightestContainerScope(0.05, 0.05);
-        assertNotEquals(0, scope, "the point is inside both containers");
-        assertEquals(scope, index.tightestContainerScope(0.06, 0.06),
-                "a second point in the same city gets the same scope");
-        assertNotEquals(scope, index.tightestContainerScope(0.5, 0.5),
-                "a point only the district encloses is a different scope");
+        assertEquals("חיפה", index.tightestContainerName(0.05, 0.05), "both enclose the point; the city is tighter");
+        assertEquals("מחוז חיפה", index.tightestContainerName(0.5, 0.5), "only the district encloses this one");
     }
 
     @Test
-    public void tightestScopeIsZeroOutsideEveryContainer() {
-        var index = indexOf(nonPlace(1, Map.of("he", "חיפה"), square(0, 0, 0.1, 0.1)));
-        assertEquals(0, index.tightestContainerScope(50, 50), "the point is in no container");
+    public void tightestContainerNameIsNullOutsideEveryContainer() {
+        var index = indexOf(nonPlace(1, Map.of("default", "חיפה"), square(0, 0, 0.1, 0.1)));
+        assertNull(index.tightestContainerName(50, 50), "the point is in no container");
     }
 
     @Test
-    public void tightestScopeIgnoresCountries() {
-        var index = indexOf(country(1, Map.of("he", "ישראל"), square(-1, -1, 1, 1)));
-        assertEquals(0, index.tightestContainerScope(0.05, 0.05),
+    public void tightestContainerNameIgnoresCountries() {
+        var index = indexOf(country(1, Map.of("default", "ישראל"), square(-1, -1, 1, 1)));
+        assertNull(index.tightestContainerName(0.05, 0.05),
                 "a country is not a scope a street name is kept apart by");
     }
 
-    // The scope a street is keyed by while the input streams past has to agree
-    // with the container the same document is enriched with at flush time.
     @Test
-    public void tightestScopeAgreesWithTheContainerEnrichmentPicks() {
+    public void tightestContainerNameIsNullWhenTheContainerHasNoDefaultName() {
+        var index = indexOf(nonPlace(1, Map.of("he", "חיפה"), square(0, 0, 0.1, 0.1)));
+        assertNull(index.tightestContainerName(0.05, 0.05),
+                "there is no name to scope by, so the caller falls back to the grid");
+    }
+
+    // The name a street is keyed by while the input streams past has to be the
+    // same one the document ends up carrying, or a street would be scoped by
+    // one place and displayed in another.
+    @Test
+    public void tightestContainerNameIsTheOneEnrichmentPicks() {
         var city = nonPlace(1, Map.of("default", "חיפה"), square(0, 0, 0.1, 0.1));
         var district = nonPlace(2, Map.of("default", "מחוז חיפה"), square(-1, -1, 1, 1));
         var index = indexOf(city, district, country(3, Map.of("default", "ישראל"), square(-2, -2, 2, 2)));
@@ -164,10 +169,7 @@ public class ContainerIndexTest {
         pointDocument.location = new double[] { 0.05, 0.05 };
         index.enrich(pointDocument, false);
 
-        assertEquals("חיפה", pointDocument.poiContainer.get("default"));
-        assertEquals(index.tightestContainerScope(0.05, 0.05), index.tightestContainerScope(0.05, 0.05));
-        assertNotEquals(index.tightestContainerScope(0.5, 0.5), index.tightestContainerScope(0.05, 0.05),
-                "the district and the city are told apart, just as enrichment tells them apart");
+        assertEquals(pointDocument.poiContainer.get("default"), index.tightestContainerName(0.05, 0.05));
     }
 
     @Test

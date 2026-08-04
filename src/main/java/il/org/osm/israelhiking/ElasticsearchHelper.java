@@ -1,5 +1,6 @@
 package il.org.osm.israelhiking;
 
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.logging.Level;
@@ -39,7 +40,10 @@ public class ElasticsearchHelper {
       QRankLookup qrankLookup,
       BulkIndexer bulkListener,
       ContainerIndex containerIndex,
-      StreetIndex streetHelper) {
+      StreetIndex streetHelper,
+      PointDocumentFactory documentFactory,
+      Path osmPath,
+      int threads) {
   }
 
   /**
@@ -228,12 +232,16 @@ public class ElasticsearchHelper {
       String bboxIndexAlias,
       String[] supportedLanguages,
       QRankLookup qrankLookup,
-      ContainerIndex containerIndex) throws Exception {
+      ContainerIndex containerIndex,
+      Path osmPath,
+      int threads) throws Exception {
     var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias,
         supportedLanguages);
     var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
+    var documents = new PointDocumentFactory(supportedLanguages, qrankLookup, containerIndex);
     return new ElasticRunContext(esClient, pointsIndexAlias, bboxIndexAlias, targetPointsIndex, targetBBoxIndex,
-        supportedLanguages, qrankLookup, bulkListener, containerIndex, new StreetIndex());
+        supportedLanguages, qrankLookup, bulkListener, containerIndex, new StreetIndex(), documents, osmPath,
+        threads);
   }
 
   /**
@@ -243,7 +251,7 @@ public class ElasticsearchHelper {
    */
   public static void finalizeRun(ElasticRunContext context) throws Exception {
     context.streetHelper().flush(context.bulkListener()::add, context.pointsIndexTarget(),
-        pointDocument -> context.containerIndex().enrich(pointDocument, false));
+        context.osmPath(), context.threads(), context.documentFactory());
 
     context.bulkListener().close();
 

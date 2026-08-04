@@ -30,6 +30,15 @@
       <version>2.0.17</version>
     </dependency>
 
+    <!-- Primitive collections: the street merge keeps tens of millions of
+         entries, where boxed longs would not fit. Comes in through planetiler
+         too; declared because it is used directly. -->
+    <dependency>
+      <groupId>com.carrotsearch</groupId>
+      <artifactId>hppc</artifactId>
+      <version>0.10.0</version>
+    </dependency>
+
     <dependency>
       <groupId>com.univocity</groupId>
       <artifactId>univocity-parsers</artifactId>

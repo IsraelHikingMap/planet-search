@@ -152,22 +152,16 @@ final class ContainerIndex {
     }
   }
 
-  /**
-   * @param scope a handle unique within this index, so a caller can tell two
-   *              containers apart without relying on the OSM id — a way and a
-   *              relation can share one.
-   */
-  private record Entry(long scope, ContainerRecord record, PreparedGeometry prepared) {
+  private record Entry(ContainerRecord record, PreparedGeometry prepared) {
   }
 
   private final STRtree tree = new STRtree();
   private final int loadedCount;
 
   ContainerIndex(Collection<ContainerRecord> records) {
-    long scope = 0;
     for (ContainerRecord record : records) {
       tree.insert(record.geometry.getEnvelopeInternal(),
-          new Entry(++scope, record, PreparedGeometryFactory.prepare(record.geometry)));
+          new Entry(record, PreparedGeometryFactory.prepare(record.geometry)));
     }
     tree.build();
     this.loadedCount = records.size();
@@ -222,32 +216,38 @@ final class ContainerIndex {
   }
 
   /**
-   * A handle for the tightest enclosing container that is not a country, or 0
-   * when the coordinate falls in none. Same choice {@link #enrich} makes for a
-   * non-place point, without its cost: no names are collected and nothing is
-   * allocated per match, and a candidate wider than the tightest one found so
-   * far is dropped before its polygon is tested at all.
+   * The name of the tightest enclosing container that is not a country, or null
+   * when the coordinate falls in none — the container {@link #enrich} picks for
+   * a non-place point, and the name it puts in {@code poiContainer}, but
+   * without enrichment's cost: no names are collected into per-language maps,
+   * nothing is allocated per match, and a candidate wider than the tightest one
+   * found so far is dropped before its polygon is tested at all.
+   *
+   * This exists for the street merge, which runs on every named road way and
+   * needs a street's settlement only to tell same-named streets in different
+   * towns apart.
    */
-  long tightestContainerScope(double lat, double lng) {
+  String tightestContainerName(double lat, double lng) {
     if (loadedCount == 0) {
-      return 0;
+      return null;
     }
     Point point = GEOMETRY_FACTORY.createPoint(new Coordinate(lng, lat));
-    Entry tightest = null;
+    ContainerRecord tightest = null;
     for (Object candidate : tree.query(point.getEnvelopeInternal())) {
       Entry entry = (Entry) candidate;
-      if (entry.record().isCountry() || (tightest != null && entry.record().area >= tightest.record().area)) {
+      ContainerRecord record = entry.record();
+      if (record.isCountry() || (tightest != null && record.area >= tightest.area)) {
         continue;
       }
       if (entry.prepared().contains(point)) {
-        tightest = entry;
+        tightest = record;
       }
     }
-    return tightest == null ? 0 : tightest.scope();
+    return tightest == null ? null : tightest.names.get("default");
   }
 
   /** The containers that enclose the given coordinate, in no particular order. */
-  List<ContainerRecord> containing(double lat, double lng) {
+  private List<ContainerRecord> containing(double lat, double lng) {
     if (loadedCount == 0) {
       return List.of();
     }
