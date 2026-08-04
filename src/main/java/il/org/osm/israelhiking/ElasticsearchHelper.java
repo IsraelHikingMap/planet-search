@@ -242,7 +242,8 @@ public class ElasticsearchHelper {
    * that were built for the live index.
    */
   public static void finalizeRun(ElasticRunContext context) throws Exception {
-    context.streetHelper().flush(context.bulkListener()::add, context.pointsIndexTarget());
+    context.streetHelper().flush(context.bulkListener()::add, context.pointsIndexTarget(),
+        pointDocument -> context.containerIndex().enrich(pointDocument, false));
 
     context.bulkListener().close();
 

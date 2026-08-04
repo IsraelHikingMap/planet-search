@@ -152,16 +152,22 @@ final class ContainerIndex {
     }
   }
 
-  private record Entry(ContainerRecord record, PreparedGeometry prepared) {
+  /**
+   * @param scope a handle unique within this index, so a caller can tell two
+   *              containers apart without relying on the OSM id — a way and a
+   *              relation can share one.
+   */
+  private record Entry(long scope, ContainerRecord record, PreparedGeometry prepared) {
   }
 
   private final STRtree tree = new STRtree();
   private final int loadedCount;
 
   ContainerIndex(Collection<ContainerRecord> records) {
+    long scope = 0;
     for (ContainerRecord record : records) {
       tree.insert(record.geometry.getEnvelopeInternal(),
-          new Entry(record, PreparedGeometryFactory.prepare(record.geometry)));
+          new Entry(++scope, record, PreparedGeometryFactory.prepare(record.geometry)));
     }
     tree.build();
     this.loadedCount = records.size();
@@ -213,6 +219,31 @@ final class ContainerIndex {
       }
     }
     return false;
+  }
+
+  /**
+   * A handle for the tightest enclosing container that is not a country, or 0
+   * when the coordinate falls in none. Same choice {@link #enrich} makes for a
+   * non-place point, without its cost: no names are collected and nothing is
+   * allocated per match, and a candidate wider than the tightest one found so
+   * far is dropped before its polygon is tested at all.
+   */
+  long tightestContainerScope(double lat, double lng) {
+    if (loadedCount == 0) {
+      return 0;
+    }
+    Point point = GEOMETRY_FACTORY.createPoint(new Coordinate(lng, lat));
+    Entry tightest = null;
+    for (Object candidate : tree.query(point.getEnvelopeInternal())) {
+      Entry entry = (Entry) candidate;
+      if (entry.record().isCountry() || (tightest != null && entry.record().area >= tightest.record().area)) {
+        continue;
+      }
+      if (entry.prepared().contains(point)) {
+        tightest = entry;
+      }
+    }
+    return tightest == null ? 0 : tightest.scope();
   }
 
   /** The containers that enclose the given coordinate, in no particular order. */

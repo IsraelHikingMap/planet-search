@@ -120,6 +120,16 @@ public class PlanetSearchProfile implements Profile {
   }
 
   private void convertTagsToDocument(PointDocument pointDocument, WithTags feature) {
+    convertTagsToDocument(pointDocument, feature, OsmFeatureClassifier.classify(feature));
+  }
+
+  /**
+   * The same conversion, for a caller that has already classified the feature
+   * and wants that category to be the one the prominence is computed from —
+   * without paying for a second classification and prominence on top of it.
+   */
+  private void convertTagsToDocument(PointDocument pointDocument, WithTags feature,
+      OsmFeatureClassifier.Category category) {
     for (String language : this.context.supportedLanguages()) {
       CoalesceIntoMap(pointDocument.name, language, feature.getString("name:" + language));
       CoalesceIntoMap(pointDocument.description, language, feature.getString("description:" + language));
@@ -140,7 +150,7 @@ public class PlanetSearchProfile implements Profile {
     if (feature.hasTag("intermittent", "yes")) {
       pointDocument.intermittent = true;
     }
-    setProminence(pointDocument, feature, OsmFeatureClassifier.classify(feature));
+    setProminence(pointDocument, feature, category);
     PlaceHelper.estimatePopulation(feature).ifPresent(population -> pointDocument.population = population);
   }
 
@@ -593,25 +603,30 @@ public class PlanetSearchProfile implements Profile {
    * the street's segments are keyed by name and enclosing container so its many
    * ways collapse into one search document under its minimal way id. Streets are
    * search only, so this never emits a tile feature.
+   *
+   * This runs on every named road way on the planet and all but one segment per
+   * street is then thrown away, so it does the least it can: the container is
+   * looked up as a bare scope handle rather than enriched into names, and the
+   * enrichment of the segment that wins happens once, in
+   * {@link StreetIndex#flush}.
    */
   private boolean processStreetFeature(SourceFeature feature) throws GeometryException {
     if (!StreetIndex.isStreet(feature) || !feature.canBeLine()) {
       return false;
     }
-    var line = (LineString) feature.line();
-    var startPoint = GeoUtils.point(line.getCoordinate());
-    var lngLatPoint = GeoUtils.worldToLatLonCoords(startPoint).getCoordinate();
+    var startPoint = feature.line().getCoordinate();
+    double lng = GeoUtils.getWorldLon(startPoint.getX());
+    double lat = GeoUtils.getWorldLat(startPoint.getY());
     var pointDocument = new PointDocument();
     pointDocument.poiSource = "OSM";
-    pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
+    pointDocument.location = new double[] { lng, lat };
     var category = OsmFeatureClassifier.classifyNonIcon(feature);
     pointDocument.poiIcon = category.icon;
     pointDocument.poiIconColor = category.color;
     pointDocument.poiCategory = category.poiCategory;
-    convertTagsToDocument(pointDocument, feature);
-    setProminence(pointDocument, feature, category);
-    this.context.containerIndex().enrich(pointDocument, false);
-    this.context.streetHelper().add(feature.id(), pointDocument);
+    convertTagsToDocument(pointDocument, feature, category);
+    this.context.streetHelper().add(feature.id(), pointDocument,
+        this.context.containerIndex().tightestContainerScope(lat, lng));
     return true;
   }
 

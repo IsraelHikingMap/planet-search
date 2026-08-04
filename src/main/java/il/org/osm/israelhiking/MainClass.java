@@ -95,6 +95,7 @@ public class MainClass {
             planetiler.overwriteOutput(Path.of("data", "target", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"));
             planetiler.run();
 
+            LOGGER.info("Finalizing the run: writing remaining docs, registerting templates and switching indexes");
             ElasticsearchHelper.finalizeRun(context);
         }
     }
