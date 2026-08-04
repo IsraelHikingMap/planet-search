@@ -215,8 +215,39 @@ final class ContainerIndex {
     return false;
   }
 
+  /**
+   * The name of the tightest enclosing container that is not a country, or null
+   * when the coordinate falls in none — the container {@link #enrich} picks for
+   * a non-place point, and the name it puts in {@code poiContainer}, but
+   * without enrichment's cost: no names are collected into per-language maps,
+   * nothing is allocated per match, and a candidate wider than the tightest one
+   * found so far is dropped before its polygon is tested at all.
+   *
+   * This exists for the street merge, which runs on every named road way and
+   * needs a street's settlement only to tell same-named streets in different
+   * towns apart.
+   */
+  String tightestContainerName(double lat, double lng) {
+    if (loadedCount == 0) {
+      return null;
+    }
+    Point point = GEOMETRY_FACTORY.createPoint(new Coordinate(lng, lat));
+    ContainerRecord tightest = null;
+    for (Object candidate : tree.query(point.getEnvelopeInternal())) {
+      Entry entry = (Entry) candidate;
+      ContainerRecord record = entry.record();
+      if (record.isCountry() || (tightest != null && record.area >= tightest.area)) {
+        continue;
+      }
+      if (entry.prepared().contains(point)) {
+        tightest = record;
+      }
+    }
+    return tightest == null ? null : tightest.names.get("default");
+  }
+
   /** The containers that enclose the given coordinate, in no particular order. */
-  List<ContainerRecord> containing(double lat, double lng) {
+  private List<ContainerRecord> containing(double lat, double lng) {
     if (loadedCount == 0) {
       return List.of();
     }

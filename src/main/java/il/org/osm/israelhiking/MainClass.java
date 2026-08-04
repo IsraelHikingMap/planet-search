@@ -78,23 +78,28 @@ public class MainClass {
                     "Path to qrank.csv.gz for the prominence signal (empty = run without it)", "");
             var qrankLookup = QRankLookup.load(qrankPath.isBlank() ? null : Path.of(qrankPath));
             String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
+            // override this default with osm_path="path/to/data.osm.pbf"
+            var defaultOsmPath = Path.of("data", "sources", area + ".osm.pbf");
+            // Resolved the way addOsmSource resolves it below, since the street
+            // merge reads this file again at the end to build its documents.
+            var osmPath = Path.of(args.getString("osm_path", "osm OSM input file path", defaultOsmPath.toString()));
             var containerIndex = ContainerIndex.load(esClient, bboxIndexAlias);
             var context = ElasticsearchHelper.initRun(esClient, bulkListener, pointsIndexAlias, bboxIndexAlias,
-                    supportedLanguages, qrankLookup, containerIndex);
+                    supportedLanguages, qrankLookup, containerIndex, osmPath, planetiler.config().threads());
             var profile = new PlanetSearchProfile(planetiler.config(), context);
 
             planetiler.setProfile(profile);
-            // override this default with osm_path="path/to/data.osm.pbf"
             // Geofabrik has no whole-planet file, so area=planet uses the aws:latest
             // s3://osm-pds mirror.
             String osmSourceUrl = "planet".equals(area) ? "aws:latest" : "geofabrik:" + area;
-            planetiler.addOsmSource("osm", Path.of("data", "sources", area + ".osm.pbf"), osmSourceUrl);
+            planetiler.addOsmSource("osm", defaultOsmPath, osmSourceUrl);
             if ("" != externalFilePath) {
                 planetiler.addGeoJsonSource("external", Path.of(externalFilePath));
             }
             planetiler.overwriteOutput(Path.of("data", "target", PlanetSearchProfile.POINTS_LAYER_NAME + ".pmtiles"));
             planetiler.run();
 
+            LOGGER.info("Finalizing the run: writing remaining docs, registerting templates and switching indexes");
             ElasticsearchHelper.finalizeRun(context);
         }
     }

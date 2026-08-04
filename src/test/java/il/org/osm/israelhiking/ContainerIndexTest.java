@@ -1,6 +1,9 @@
 package il.org.osm.israelhiking;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -115,6 +118,58 @@ public class ContainerIndexTest {
                 "the lower-id container wins the tie");
         assertFalse(index.coveredByBetterPlace(0.05, 0.05, Set.of("X"), "Q1", PlaceRank.PLAIN, 50),
                 "a higher-id container does not suppress the lower-id feature");
+    }
+
+    private static ContainerRecord country(long id, Map<String, String> names, Geometry geom) {
+        double[] c = centerOf(geom);
+        return new ContainerRecord(names, ContainerRecord.COUNTRY_ADMIN_LEVEL, geom.getArea(), geom, null,
+                PlaceRank.NONE, id, c[0], c[1]);
+    }
+
+    @Test
+    public void tightestContainerNameIsTheSmallestEnclosingContainer() {
+        var city = nonPlace(1, Map.of("default", "חיפה"), square(0, 0, 0.1, 0.1));
+        var district = nonPlace(2, Map.of("default", "מחוז חיפה"), square(-1, -1, 1, 1));
+        var index = indexOf(city, district);
+
+        assertEquals("חיפה", index.tightestContainerName(0.05, 0.05), "both enclose the point; the city is tighter");
+        assertEquals("מחוז חיפה", index.tightestContainerName(0.5, 0.5), "only the district encloses this one");
+    }
+
+    @Test
+    public void tightestContainerNameIsNullOutsideEveryContainer() {
+        var index = indexOf(nonPlace(1, Map.of("default", "חיפה"), square(0, 0, 0.1, 0.1)));
+        assertNull(index.tightestContainerName(50, 50), "the point is in no container");
+    }
+
+    @Test
+    public void tightestContainerNameIgnoresCountries() {
+        var index = indexOf(country(1, Map.of("default", "ישראל"), square(-1, -1, 1, 1)));
+        assertNull(index.tightestContainerName(0.05, 0.05),
+                "a country is not a scope a street name is kept apart by");
+    }
+
+    @Test
+    public void tightestContainerNameIsNullWhenTheContainerHasNoDefaultName() {
+        var index = indexOf(nonPlace(1, Map.of("he", "חיפה"), square(0, 0, 0.1, 0.1)));
+        assertNull(index.tightestContainerName(0.05, 0.05),
+                "there is no name to scope by, so the caller falls back to the grid");
+    }
+
+    // The name a street is keyed by while the input streams past has to be the
+    // same one the document ends up carrying, or a street would be scoped by
+    // one place and displayed in another.
+    @Test
+    public void tightestContainerNameIsTheOneEnrichmentPicks() {
+        var city = nonPlace(1, Map.of("default", "חיפה"), square(0, 0, 0.1, 0.1));
+        var district = nonPlace(2, Map.of("default", "מחוז חיפה"), square(-1, -1, 1, 1));
+        var index = indexOf(city, district, country(3, Map.of("default", "ישראל"), square(-2, -2, 2, 2)));
+
+        var pointDocument = new PointDocument();
+        pointDocument.location = new double[] { 0.05, 0.05 };
+        index.enrich(pointDocument, false);
+
+        assertEquals(pointDocument.poiContainer.get("default"), index.tightestContainerName(0.05, 0.05));
     }
 
     @Test

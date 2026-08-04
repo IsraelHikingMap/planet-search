@@ -1,11 +1,11 @@
 package il.org.osm.israelhiking;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.nio.file.Path;
 import java.util.Map;
 
 import org.junit.jupiter.api.Tag;
@@ -16,8 +16,6 @@ import org.locationtech.jts.geom.GeometryFactory;
 
 import com.onthegomap.planetiler.reader.SimpleFeature;
 
-import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
-
 @Tag("unit")
 public class StreetIndexTest {
 
@@ -27,20 +25,14 @@ public class StreetIndexTest {
         return SimpleFeature.create(line, tags, "OSM", "Lines", id);
     }
 
-    // An enriched street document: a name, a point, and the city it was tagged
-    // with (a null city falls back to the point's grid cell for scoping).
-    private PointDocument document(String name, String city, double lat, double lng) {
-        var pointDocument = new PointDocument();
-        pointDocument.name = Map.of("default", name);
-        pointDocument.location = new double[] { lng, lat };
-        pointDocument.poiContainer = city == null ? null : Map.of("default", city);
-        return pointDocument;
-    }
+    /** No point in this test falls in a container. */
+    private static final String NO_CONTAINER = null;
 
-    private List<String> indexedIds(StreetIndex helper) {
-        var operations = new ArrayList<BulkOperation>();
-        helper.flush(operations::add, "points");
-        return operations.stream().map(op -> op.index().id()).toList();
+    // These tests only exercise the merge, which touches none of what the flush
+    // needs to read the OSM input and index what it finds, so none of it is
+    // wired up here.
+    private StreetIndex mergeOnly() {
+        return new StreetIndex(null, "points", Path.of("never-read.osm.pbf"), 1, null);
     }
 
     @Test
@@ -53,30 +45,50 @@ public class StreetIndexTest {
 
     @Test
     public void mergesSameNameAndCityIntoOneStreetAtMinId() {
-        var helper = new StreetIndex();
-        helper.add(7L, document("הרצל", "חיפה", 32.0, 34.0));
-        helper.add(3L, document("הרצל", "חיפה", 32.0, 34.0));
-        helper.add(9L, document("הרצל", "חיפה", 32.0, 34.0));
+        var helper = mergeOnly();
+        helper.add(7L, "הרצל", "חיפה", 34.0, 32.0);
+        helper.add(3L, "הרצל", "חיפה", 34.01, 32.01);
+        helper.add(9L, "הרצל", "חיפה", 34.02, 32.02);
 
-        assertEquals(List.of("OSM_way_3"), indexedIds(helper));
+        assertArrayEquals(new long[] { 3L }, helper.winningWayIds());
     }
 
     @Test
     public void keepsSameNameInDifferentCitiesApart() {
-        var helper = new StreetIndex();
-        helper.add(7L, document("הרצל", "חיפה", 32.0, 34.0));
-        helper.add(5L, document("הרצל", "נתניה", 32.3, 34.85));
+        var helper = mergeOnly();
+        helper.add(7L, "הרצל", "חיפה", 34.0, 32.0);
+        helper.add(5L, "הרצל", "נתניה", 34.85, 32.3);
 
-        assertEquals(2, indexedIds(helper).size());
+        assertArrayEquals(new long[] { 5L, 7L }, helper.winningWayIds());
+    }
+
+    // A street keeps its own identity across the whole city, however far its
+    // segments are from each other — the city, not distance, is the scope.
+    @Test
+    public void mergesSegmentsFarApartWithinTheSameCity() {
+        var helper = mergeOnly();
+        helper.add(7L, "הרצל", "חיפה", 34.0, 32.0);
+        helper.add(3L, "הרצל", "חיפה", 34.4, 32.4);
+
+        assertArrayEquals(new long[] { 3L }, helper.winningWayIds());
     }
 
     @Test
     public void scopesByGridCellWhenThereIsNoCity() {
-        var helper = new StreetIndex();
-        helper.add(7L, document("דרך", null, 30.0, 34.0));
-        helper.add(3L, document("דרך", null, 30.0, 34.0));
-        helper.add(5L, document("דרך", null, 31.0, 35.0));
+        var helper = mergeOnly();
+        helper.add(7L, "דרך", NO_CONTAINER, 34.0, 30.0);
+        helper.add(3L, "דרך", NO_CONTAINER, 34.0, 30.0);
+        helper.add(5L, "דרך", NO_CONTAINER, 35.0, 31.0);
 
-        assertEquals(2, indexedIds(helper).size());
+        assertArrayEquals(new long[] { 3L, 5L }, helper.winningWayIds());
+    }
+
+    @Test
+    public void keepsDifferentNamesInOneCityApart() {
+        var helper = mergeOnly();
+        helper.add(7L, "הרצל", "חיפה", 34.0, 32.0);
+        helper.add(3L, "ביאליק", "חיפה", 34.0, 32.0);
+
+        assertEquals(2, helper.winningWayIds().length);
     }
 }
