@@ -41,9 +41,22 @@ public class PlanetSearchProfile implements Profile {
 
   /**
    * Containment near a border is fuzzy anyway; ~0.0005° ≈ 50 m trims the polygons
-   * hard.
+   * hard. This is the ceiling — it is what the big admin boundaries, which hold
+   * the bulk of the vertices, are actually simplified by.
    */
   private static final double CONTAINER_SIMPLIFY_DEGREES = 0.0005;
+
+  /**
+   * The share of a container's own extent the simplification may move its
+   * outline by, capped at {@link #CONTAINER_SIMPLIFY_DEGREES}. A flat 50 m is a
+   * rounding error on a country and more than a tenth of the radius of a village
+   * — enough to cut a whole lobe off a small settlement, leaving the streets in
+   * it attributed to the regional council instead. Tying the tolerance to the
+   * polygon keeps the error proportional, and costs little: the polygons this
+   * gives a finer tolerance to are two thirds of the containers but a sixth of
+   * the stored vertices.
+   */
+  private static final double CONTAINER_SIMPLIFY_RELATIVE = 0.01;
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
@@ -606,11 +619,19 @@ public class PlanetSearchProfile implements Profile {
 
   /**
    * Containment near a border is fuzzy anyway; simplifying keeps geometry cheap
-   * to read and write.
+   * to read and write. The tolerance scales with the polygon, so a village's
+   * outline is not moved as far as a country's — see
+   * {@link #CONTAINER_SIMPLIFY_RELATIVE}. It only ever moves inwards or along
+   * the border, never deliberately outwards: adjacent towns share a border and
+   * the tightest container wins, so a polygon grown past its border would take
+   * the strip along it from its neighbour.
    */
   private static Geometry simplifyContainer(Geometry polygon) {
+    var envelope = polygon.getEnvelopeInternal();
+    double extent = Math.sqrt(envelope.getWidth() * envelope.getHeight());
+    double tolerance = Math.min(CONTAINER_SIMPLIFY_DEGREES, extent * CONTAINER_SIMPLIFY_RELATIVE);
     try {
-      return TopologyPreservingSimplifier.simplify(polygon, CONTAINER_SIMPLIFY_DEGREES);
+      return TopologyPreservingSimplifier.simplify(polygon, tolerance);
     } catch (RuntimeException e) {
       return polygon;
     }
