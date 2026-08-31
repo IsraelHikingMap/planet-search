@@ -23,6 +23,7 @@ class PointDocument {
   public String wikidata;
   public String image;
   public String wikimedia_commons;
+  public String panoramax;
   public String poiCategory;
   public String poiIcon;
   public String poiIconColor;

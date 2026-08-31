@@ -517,6 +517,7 @@ public class PlanetSearchProfile implements Profile {
     if (!OsmNames.hasSearchableName(feature, this.context.supportedLanguages()) &&
         !feature.hasTag("wikidata") &&
         !feature.hasTag("image") &&
+        !feature.hasTag("panoramax") &&
         !feature.hasTag("description") &&
         !feature.hasTag("ref:IL:inature")) {
       return false;
@@ -732,13 +733,15 @@ public class PlanetSearchProfile implements Profile {
 
   private boolean isInterestingPoint(PointDocument pointDocument) {
     return !pointDocument.description.isEmpty() ||
-        pointDocument.image != null;
+        pointDocument.image != null ||
+        pointDocument.panoramax != null;
   }
 
   private void setFeaturePropertiesFromPointDocument(Feature tileFeature, PointDocument pointDocument) {
     tileFeature.setAttr("wikidata", pointDocument.wikidata)
         .setAttr("wikimedia_commons", pointDocument.wikimedia_commons)
         .setAttr("image", pointDocument.image)
+        .setAttr("panoramax", pointDocument.panoramax)
         .setAttr("website", pointDocument.website)
         .setAttr("poiIcon", pointDocument.poiIcon)
         .setAttr("poiIconColor", pointDocument.poiIconColor)

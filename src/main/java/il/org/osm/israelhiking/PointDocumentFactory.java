@@ -87,6 +87,7 @@ final class PointDocumentFactory {
     pointDocument.wikidata = feature.getString("wikidata");
     pointDocument.image = feature.getString("image");
     pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
+    pointDocument.panoramax = feature.getString("panoramax");
     pointDocument.website = feature.getString("website");
     if (feature.hasTag("intermittent", "yes")) {
       pointDocument.intermittent = true;
@@ -99,7 +100,8 @@ final class PointDocumentFactory {
       OsmFeatureClassifier.Category category) {
     long qrankRaw = this.qrankLookup.qrankFor(pointDocument.wikidata);
     double ele = OsmNumberParser.parseElevation(feature.getString("ele")).orElse(Double.NaN);
-    boolean hasImage = pointDocument.image != null || pointDocument.wikimedia_commons != null;
+    boolean hasImage = pointDocument.image != null || pointDocument.wikimedia_commons != null
+        || pointDocument.panoramax != null;
     boolean hasWebsite = pointDocument.website != null;
     boolean hasWikidata = pointDocument.wikidata != null;
 
