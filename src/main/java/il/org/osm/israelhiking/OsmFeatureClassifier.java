@@ -175,21 +175,7 @@ final class OsmFeatureClassifier {
 
     String place = f.getString("place");
     if (place != null) {
-      if (place.isBlank()) {
-        return Category.PLACE_BLANK;
-      }
-      switch (place) {
-        case "city":
-          return Category.PLACE_CITY;
-        case "town":
-          return Category.PLACE_TOWN;
-        case "village":
-          return Category.PLACE_VILLAGE;
-        case "hamlet":
-          return Category.PLACE_HAMLET;
-        default:
-          return Category.PLACE_OTHER;
-      }
+      return getPlaceCategory(place);
     }
 
     String tourism = f.getString("tourism");
@@ -247,6 +233,29 @@ final class OsmFeatureClassifier {
       return Category.FALLBACK_WATER;
     }
     return Category.FALLBACK;
+  }
+
+  /**
+   * The category of a place document. A feature that says what kind of place it
+   * is classifies on all of its tags, so a locality on a ruin stays a ruin; a
+   * boundary has only the kind its label node lends it to go on.
+   */
+  static Category classifyPlace(WithTags f, String placeKind) {
+    return f.hasTag("place") ? classify(f) : getPlaceCategory(placeKind);
+  }
+
+  /** The category of a place of the given kind. */
+  private static Category getPlaceCategory(String placeKind) {
+    if (placeKind.isBlank()) {
+      return Category.PLACE_BLANK;
+    }
+    return switch (placeKind) {
+      case "city" -> Category.PLACE_CITY;
+      case "town" -> Category.PLACE_TOWN;
+      case "village" -> Category.PLACE_VILLAGE;
+      case "hamlet" -> Category.PLACE_HAMLET;
+      default -> Category.PLACE_OTHER;
+    };
   }
 
   static Category classifyNonIcon(WithTags f) {

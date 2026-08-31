@@ -17,7 +17,7 @@ import com.onthegomap.planetiler.reader.osm.OsmSourceFeature;
  * its place ({@link PlaceRank}, from tags and element type), its searchable
  * names, its estimated population, and — for a relation anchored by a
  * settlement
- * node — that node's location.
+ * node — that node's location and place kind.
  *
  * Dedup itself is geometric and lives in {@link ContainerIndex}: a place
  * feature
@@ -26,6 +26,9 @@ import com.onthegomap.planetiler.reader.osm.OsmSourceFeature;
  * names and anchor that decision needs.
  */
 final class PlaceHelper {
+
+  /** The finest administrative level that can stand for a settlement. */
+  private static final int MAX_SETTLEMENT_ADMIN_LEVEL = 8;
 
   /**
    * How strongly an OSM element represents its place, ordered weakest to
@@ -55,14 +58,16 @@ final class PlaceHelper {
   /** Nodes that are members of a place relation (their location anchors it). */
   private final Set<Long> memberNodeIds = ConcurrentHashMap.newKeySet();
   /** Captured world coordinate {x, y} of each recorded member node. */
-  private final Map<Long, double[]> memberNodeLocations = new ConcurrentHashMap<>();
+  private final Map<Long, double[]> memberNodeToLocation = new ConcurrentHashMap<>();
+  /** Captured {@code place} value of each recorded member node. */
+  private final Map<Long, String> memberNodeToPlaceKind = new ConcurrentHashMap<>();
 
   /**
-   * Remembers a place relation's settlement node members so their location can
-   * anchor it.
+   * Remembers a relation's settlement node members, so their location and place
+   * kind can be read back when the relation itself comes past.
    */
   void recordRelationIfNeeded(OsmElement.Relation relation) {
-    if (!isPlace(relation)) {
+    if (!isPlace(relation) && !isSettlementBoundary(relation)) {
       return;
     }
     for (var member : relation.members()) {
@@ -82,11 +87,28 @@ final class PlaceHelper {
   }
 
   /**
-   * Remember a node's world location if some place relation is anchored by it.
+   * An administrative area down to municipality level, which may stand for a
+   * settlement — {@link #placeKind} decides whether it does.
    */
-  void captureMemberNode(long nodeId, double worldX, double worldY) {
-    if (memberNodeIds.contains(nodeId)) {
-      memberNodeLocations.put(nodeId, new double[] { worldX, worldY });
+  private static boolean isSettlementBoundary(WithTags feature) {
+    return feature.hasTag("boundary", "administrative")
+        && feature.hasTag("admin_level")
+        && feature.getLong("admin_level") > 0
+        && feature.getLong("admin_level") <= MAX_SETTLEMENT_ADMIN_LEVEL;
+  }
+
+  /**
+   * Remembers where an anchor node is and what kind of place it is. The second
+   * pass hands over nodes before the relations that name them, so both are in
+   * hand by the time a relation is built.
+   */
+  void captureMemberNode(long nodeId, double worldX, double worldY, String placeKind) {
+    if (!memberNodeIds.contains(nodeId)) {
+      return;
+    }
+    memberNodeToLocation.put(nodeId, new double[] { worldX, worldY });
+    if (placeKind != null && !placeKind.isBlank()) {
+      memberNodeToPlaceKind.put(nodeId, placeKind);
     }
   }
 
@@ -102,7 +124,7 @@ final class PlaceHelper {
     }
     for (var member : relation.members()) {
       if (isLabelNodeMember(member)) {
-        double[] location = memberNodeLocations.get(member.ref());
+        double[] location = memberNodeToLocation.get(member.ref());
         if (location != null) {
           return location;
         }
@@ -111,9 +133,50 @@ final class PlaceHelper {
     return null;
   }
 
+  /**
+   * The kind of place this relation's label node is, or null when it names none
+   * or that node was never seen. Only the label node counts: admin_centre names
+   * the seat of government, which for a regional council is a settlement inside
+   * it rather than the council itself.
+   */
+  String getLabelNodePlaceKind(OsmElement.Relation relation) {
+    if (!isSettlementBoundary(relation)) {
+      return null;
+    }
+    for (var member : relation.members()) {
+      if (member.type() == OsmElement.Type.NODE && "label".equals(member.role())) {
+        String placeKind = memberNodeToPlaceKind.get(member.ref());
+        if (placeKind != null) {
+          return placeKind;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The kind of place this feature is: its own {@code place} tag, or, for an
+   * administrative boundary, the kind its label node is. Null for a non-place.
+   *
+   * Reading a boundary through its label node is how OSM says "this area is that
+   * settlement" without tagging the boundary as a place, which it is not: a
+   * municipality takes in fields the settlement does not.
+   */
+  String getPlaceKind(SourceFeature feature) {
+    String own = feature.getString("place");
+    if (own != null && !own.isBlank()) {
+      return own;
+    }
+    return feature instanceof OsmSourceFeature osm
+        && osm.originalElement() instanceof OsmElement.Relation relation
+            ? getLabelNodePlaceKind(relation)
+            : null;
+  }
+
   /** How strongly this feature represents its place (see the class javadoc). */
-  static PlaceRank calculatePlaceRank(SourceFeature feature) {
-    if (!isPlace(feature)) {
+  PlaceRank calculatePlaceRank(SourceFeature feature) {
+    String place = getPlaceKind(feature);
+    if (place == null || place.isBlank()) {
       return PlaceRank.NONE;
     }
     if (feature.isPoint()) {
@@ -144,16 +207,15 @@ final class PlaceHelper {
    * present, otherwise a rough default from the place kind. Empty for a feature
    * with no {@code place} tag, so callers leave non-places untouched.
    */
-  static OptionalInt estimatePopulation(WithTags feature) {
-    String place = feature.getString("place");
-    if (place == null || place.isBlank()) {
+  static OptionalInt estimatePopulation(WithTags feature, String placeKind) {
+    if (placeKind == null || placeKind.isBlank()) {
       return OptionalInt.empty();
     }
     var parsed = OsmNumberParser.parsePopulation(feature.getString("population"));
     if (parsed.isPresent()) {
       return parsed;
     }
-    return OptionalInt.of(switch (place) {
+    return OptionalInt.of(switch (placeKind) {
       case "city" -> 1_000_000;
       case "town" -> 50_000;
       case "village" -> 2_000;

@@ -93,7 +93,6 @@ final class PointDocumentFactory {
       pointDocument.intermittent = true;
     }
     setProminence(pointDocument, feature, category);
-    PlaceHelper.estimatePopulation(feature).ifPresent(population -> pointDocument.population = population);
   }
 
   private void setProminence(PointDocument pointDocument, WithTags feature,
@@ -294,18 +293,23 @@ final class PointDocumentFactory {
 
   /**
    * The document for a settlement, park or other place. Enriched as a place, so
-   * a place is not given itself as its own container.
+   * a place is not given itself as its own container, and given the population
+   * of the kind of place it is — which for a boundary is not one of its tags.
    *
+   * @param placeKind  the kind of place it is, which for a boundary is the kind
+   *                   its label node is rather than one of its own tags
    * @param areaMeters the polygon's area, or null when the place is a node
    */
-  PointDocument buildPlaceDocument(WithTags feature, double lng, double lat, Double areaMeters) {
+  PointDocument buildPlaceDocument(WithTags feature, String placeKind, double lng, double lat, Double areaMeters) {
     var pointDocument = new PointDocument();
     setAreaNormalized(pointDocument, areaMeters);
     pointDocument.poiSource = "OSM";
     pointDocument.location = new double[] { lng, lat };
-    var category = OsmFeatureClassifier.classify(feature);
+    var category = OsmFeatureClassifier.classifyPlace(feature, placeKind);
     setIconColorCategory(pointDocument, category);
     convertTagsToDocument(pointDocument, feature, category);
+    PlaceHelper.estimatePopulation(feature, placeKind)
+        .ifPresent(population -> pointDocument.population = population);
     this.containerIndex.enrich(pointDocument, true);
     return pointDocument;
   }

@@ -466,17 +466,21 @@ public class PlanetSearchProfile implements Profile {
    * polygon encloses that point or its centre sits within a few km of it, per the
    * container index. Whatever is skipped here still serves as a bbox container,
    * indexed separately by {@link #insertBboxToElasticsearch}.
+   *
+   * An administrative boundary is a place here when its label node says which
+   * place it bounds; the node is then dropped as a weaker copy of it. Every
+   * place node is remembered on the way past, because a relation still to come
+   * may be anchored by it.
    */
   private boolean processPlaceFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
-    String place = feature.getString("place");
-    if (place == null || place.isBlank()) {
-      return false;
-    }
     if (feature.isPoint()) {
-      // A place node may be a relation's anchor; remember where it is for that
-      // relation.
       var worldCoordinate = feature.worldGeometry().getCoordinate();
-      placeHelper.captureMemberNode(feature.id(), worldCoordinate.getX(), worldCoordinate.getY());
+      placeHelper.captureMemberNode(feature.id(), worldCoordinate.getX(), worldCoordinate.getY(),
+          feature.getString("place"));
+    }
+    String placeKind = placeHelper.getPlaceKind(feature);
+    if (placeKind == null || placeKind.isBlank()) {
+      return false;
     }
     if (!OsmNames.hasSearchableName(feature, this.context.supportedLanguages())) {
       // Nothing to search on; leave nameless places to the generic flow.
@@ -496,14 +500,14 @@ public class PlanetSearchProfile implements Profile {
         lngLatPoint.getY(),
         lngLatPoint.getX(),
         PlaceHelper.getPlaceNames(feature, this.context.supportedLanguages()), feature.getString("wikidata"),
-        PlaceHelper.calculatePlaceRank(feature), feature.id());
+        placeHelper.calculatePlaceRank(feature), feature.id());
 
     if (isCoveredByBetterPlace) {
       // A stronger representation of this same place already carries this point.
       return true;
     }
 
-    var pointDocument = this.context.documentFactory().buildPlaceDocument(feature,
+    var pointDocument = this.context.documentFactory().buildPlaceDocument(feature, placeKind,
         lngLatPoint.getX(), lngLatPoint.getY(), feature.canBePolygon() ? feature.areaMeters() : null);
     insertPointToElasticsearch(pointDocument, sourceFeatureToDocumentId(feature));
 
@@ -596,7 +600,7 @@ public class PlanetSearchProfile implements Profile {
       bbox.area = feature.areaMeters();
       bbox.adminLevel = feature.hasTag("admin_level") ? (int) feature.getLong("admin_level") : 0;
       bbox.wikidata = feature.getString("wikidata");
-      bbox.placeRank = PlaceHelper.calculatePlaceRank(feature).ordinal();
+      bbox.placeRank = placeHelper.calculatePlaceRank(feature).ordinal();
       bbox.id = feature.id();
       var lngLatCenterPoint = GeoUtils.worldToLatLonCoords(feature.centroid()).getCoordinate();
       bbox.center = new double[] { lngLatCenterPoint.getX(), lngLatCenterPoint.getY() };

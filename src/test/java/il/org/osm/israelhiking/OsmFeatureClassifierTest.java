@@ -218,6 +218,34 @@ public class OsmFeatureClassifierTest {
                 Arguments.of((Object) new String[] { "amenity", "restaurant" }));
     }
 
+    // A boundary carries no place tag of its own, so the kind its label node
+    // lends it is all there is to classify on.
+    @Test
+    public void classifyPlace_usesTheLentKindForAFeatureWithNoPlaceTag() {
+        WithTags boundary = tags("boundary", "administrative", "admin_level", "8", "name", "נצרת");
+
+        assertEquals(OsmFeatureClassifier.Category.PLACE_TOWN,
+                OsmFeatureClassifier.classifyPlace(boundary, "town"));
+    }
+
+    // OSM puts place=locality on ruins and springs; those keep the icon their
+    // own tags earn, which classify picks before it ever looks at place.
+    @Test
+    public void classifyPlace_letsAFeaturesOwnTagsWinOverTheKind() {
+        WithTags ruin = tags("place", "locality", "historic", "archaeological_site", "name", "חורבה");
+
+        assertEquals(OsmFeatureClassifier.Category.HISTORIC_ARCHAEOLOGICAL,
+                OsmFeatureClassifier.classifyPlace(ruin, "locality"));
+    }
+
+    @Test
+    public void classifyPlace_readsTheKindOfAnOrdinaryPlaceNode() {
+        WithTags town = tags("place", "town", "name", "נצרת");
+
+        assertEquals(OsmFeatureClassifier.Category.PLACE_TOWN,
+                OsmFeatureClassifier.classifyPlace(town, "town"));
+    }
+
     @Test
     public void historicNonIconFeatureScoresViaHistoricFallbackNotItsDisplayCategory() {
         WithTags historicBuilding = tags("building", "yes", "historic", "manor", "name", "Old Manor");
