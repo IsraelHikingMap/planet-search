@@ -58,6 +58,7 @@ final class OsmFeatureClassifier {
     NONICON_FOREST("icon-tree", "#008000", "Other", DEFAULT_BASE_SCORE, 0.0),
     NONICON_WIKIPEDIA("icon-wikipedia-w", "black", "Other", DEFAULT_BASE_SCORE, 0.0),
     NONICON_BED("icon-bed", "#734a08", "Other", DEFAULT_BASE_SCORE, 0.0),
+    NONICON_CAFE("icon-cafe", "#734a08", "Other", DEFAULT_BASE_SCORE, 0.0),
     NONICON_STREET("icon-map-signs", "black", "Other", 0.05, 0.0);
 
     final String icon;
@@ -271,6 +272,9 @@ final class OsmFeatureClassifier {
     }
     if (f.hasTag("building") && !f.hasTag("building", "no", "none", "No")) {
       c = Category.NONICON_GENERIC;
+    }
+    if (f.hasTag("amenity", "cafe")) {
+      c = Category.NONICON_CAFE;
     }
     if (f.hasTag("railway", "station") || f.hasTag("aerialway", "station")) {
       c = Category.NONICON_STATION;
