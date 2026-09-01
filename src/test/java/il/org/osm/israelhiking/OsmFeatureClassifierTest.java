@@ -181,6 +181,9 @@ public class OsmFeatureClassifierTest {
                 Arguments.of("icon-bed", "#734a08", "Other", new String[] { "tourism", "dormitory" }),
                 Arguments.of("icon-cafe", "#734a08", "Other", new String[] { "amenity", "cafe" }),
                 Arguments.of("icon-cafe", "#734a08", "Other", new String[] { "building", "yes", "amenity", "cafe" }),
+                Arguments.of("icon-food", "#734a08", "Other", new String[] { "amenity", "restaurant" }),
+                Arguments.of("icon-food", "#734a08", "Other",
+                        new String[] { "building", "yes", "amenity", "restaurant" }),
                 Arguments.of("icon-bike", "green", "Bicycle",
                         new String[] { "landuse", "recreation_ground", "sport", "mtb" }),
                 Arguments.of("icon-tree", "#008000", "Other", new String[] { "landuse", "forest" }),
@@ -217,7 +220,7 @@ public class OsmFeatureClassifierTest {
         return Stream.of(
                 Arguments.of((Object) new String[0]),
                 Arguments.of((Object) new String[] { "building", "no" }),
-                Arguments.of((Object) new String[] { "amenity", "restaurant" }));
+                Arguments.of((Object) new String[] { "amenity", "pharmacy" }));
     }
 
     // A boundary carries no place tag of its own, so the kind its label node
