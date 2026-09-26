@@ -520,7 +520,7 @@ public class PlanetSearchProfile implements Profile {
   private boolean processOtherSourceFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
     if (!OsmNames.hasSearchableName(feature, this.context.supportedLanguages()) &&
         !feature.hasTag("wikidata") &&
-        !feature.hasTag("image") &&
+        PointDocumentFactory.getImageUrl(feature) == null &&
         !feature.hasTag("panoramax") &&
         !feature.hasTag("description") &&
         !feature.hasTag("ref:IL:inature")) {
