@@ -1,6 +1,7 @@
 package il.org.osm.israelhiking;
 
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -85,7 +86,7 @@ final class PointDocumentFactory {
     AddAlternativeNames(pointDocument, feature, "default");
     setDifficulty(pointDocument, feature);
     pointDocument.wikidata = feature.getString("wikidata");
-    pointDocument.image = feature.getString("image");
+    pointDocument.image = getImageUrl(feature);
     pointDocument.wikimedia_commons = feature.getString("wikimedia_commons");
     pointDocument.panoramax = feature.getString("panoramax");
     pointDocument.website = feature.getString("website");
@@ -93,6 +94,21 @@ final class PointDocumentFactory {
       pointDocument.intermittent = true;
     }
     setProminence(pointDocument, feature, category);
+  }
+
+  /**
+   * The element's image: its image tag, or, when it only has numbered ones
+   * (image1, image2, ...), the lowest numbered of them.
+   */
+  static String getImageUrl(WithTags feature) {
+    if (feature.hasTag("image")) {
+      return feature.getString("image");
+    }
+    return feature.tags().entrySet().stream()
+        .filter(tag -> tag.getKey().matches("image\\d{1,9}") && tag.getValue() != null)
+        .min(Comparator.comparingInt(tag -> Integer.parseInt(tag.getKey().substring("image".length()))))
+        .map(tag -> tag.getValue().toString())
+        .orElse(null);
   }
 
   private void setProminence(PointDocument pointDocument, WithTags feature,
