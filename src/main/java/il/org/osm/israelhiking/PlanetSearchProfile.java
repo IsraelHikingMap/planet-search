@@ -26,6 +26,7 @@ import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.geo.GeoUtils;
 import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.reader.SourceFeature;
+import com.onthegomap.planetiler.reader.WithTags;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
@@ -192,7 +193,7 @@ public class PlanetSearchProfile implements Profile {
       return;
     }
 
-    if (way.hasTag("highway", "track", "path", "footway", "cycleway") && way.hasTag("name")) {
+    if (isNamedTrail(way)) {
       String highwayName = way.getString("name");
       synchronized (highwayName.intern()) {
         if (!NamedHighways.containsKey(highwayName)) {
@@ -337,8 +338,18 @@ public class PlanetSearchProfile implements Profile {
     return true;
   }
 
+  /**
+   * Merges the named waterway ways the first pass grouped by name into one point
+   * per connected stretch, once every way of that name has come past.
+   *
+   * Points are left alone: a group is keyed by name alone, so a waterfall node
+   * that happens to share the name of a waterway way anywhere in the world is
+   * not one of its members, and would otherwise be swallowed here without ever
+   * being indexed — every waterfall node named "Rainbow Falls" went missing once
+   * rapids of that name were mapped in Manitoba.
+   */
   private boolean processWaterwayFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
-    if (!feature.hasTag("waterway")) {
+    if (!feature.hasTag("waterway") || feature.isPoint()) {
       return false;
     }
     if (!feature.hasTag("name")) {
@@ -389,6 +400,18 @@ public class PlanetSearchProfile implements Profile {
     }
   }
 
+  /**
+   * Whether a way is a named track, path, footway or cycleway, which is searched
+   * for as a trail. One tagged construction is not: that is a street still being
+   * built, mapped as a footway until it opens, and it would otherwise be
+   * searched for as a hiking trail under the street's name.
+   */
+  private static boolean isNamedTrail(WithTags element) {
+    return element.hasTag("highway", "track", "path", "footway", "cycleway")
+        && element.hasTag("name")
+        && !element.hasTag("construction");
+  }
+
   private boolean processHighwayFeautre(SourceFeature feature, FeatureCollector features) throws GeometryException {
     if (!feature.hasTag("highway")) {
       return false;
@@ -401,7 +424,7 @@ public class PlanetSearchProfile implements Profile {
       // We don't want to process highway nodes (bus stops, etc.) here.
       return false;
     }
-    if (!feature.hasTag("highway", "track", "path", "footway", "cycleway")) {
+    if (!isNamedTrail(feature)) {
       return true;
     }
 
