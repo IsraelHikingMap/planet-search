@@ -29,6 +29,8 @@ import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
+import com.carrotsearch.hppc.LongHashSet;
+
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 
 import il.org.osm.israelhiking.ElasticsearchHelper.ElasticRunContext;
@@ -71,6 +73,14 @@ public class PlanetSearchProfile implements Profile {
   private static final Map<String, MinWayIdFinder> NamedHighways = new ConcurrentHashMap<>();
   private static final Map<String, MinWayIdFinder> Waterways = new ConcurrentHashMap<>();
   private final PlaceHelper placeHelper = new PlaceHelper();
+  /**
+   * The relations the first pass kept, which the second pass needs to tell a
+   * member relation that is still incomplete from one that will never complete.
+   * Primitive longs, since on the planet there is one for every route. The first
+   * pass adds from several threads, so it adds under the set's lock; the second
+   * pass only reads it, after the first pass has ended.
+   */
+  private final LongHashSet trackedRelationIds = new LongHashSet();
 
   public PlanetSearchProfile(PlanetilerConfig config, ElasticRunContext context) {
     this.config = config;
@@ -147,6 +157,9 @@ public class PlanetSearchProfile implements Profile {
     info.waysMemberIds = Collections.synchronizedList(waysMemberIds);
     info.RelationMemberIds = Collections.synchronizedList(relationMemberIds);
     info.isSuperRelation = info.RelationMemberIds.size() > 0;
+    synchronized (trackedRelationIds) {
+      trackedRelationIds.add(relation.id());
+    }
     return List.of(info);
   }
 
@@ -246,6 +259,7 @@ public class PlanetSearchProfile implements Profile {
     for (var routeInfo : feature.relationInfo(RelationInfo.class, true)) {
       RelationInfo relation = routeInfo.relation();
       synchronized (relation) {
+        dropUntrackedRelationMembers(relation);
         if (relation.firstMemberId == feature.id()) {
           relation.firstMemberFeature = feature;
         }
@@ -658,6 +672,37 @@ public class PlanetSearchProfile implements Profile {
       return null;
     }
     return fixed;
+  }
+
+  /**
+   * Drops the member relations that were not tracked in the first pass, such as
+   * the node-only bus routes a national park puts in its hiking routes, since no
+   * way will ever complete them and the relation would wait for them forever.
+   *
+   * It runs once per relation, on the first way of the second pass, when the
+   * first pass has recorded every tracked relation. A relation made only of
+   * member relations takes its first point from its first two, so when either
+   * of them is dropped the choice moves on to the members that are left. The
+   * first and second members are relations only when the relation has no ways
+   * — which still holds here, before any way was removed — and they are checked
+   * for that first, since a way can share its id with a dropped relation.
+   */
+  private void dropUntrackedRelationMembers(RelationInfo relation) {
+    if (relation.untrackedMembersDropped) {
+      return;
+    }
+    relation.untrackedMembersDropped = true;
+    var droppedIds = relation.RelationMemberIds.stream()
+        .filter(id -> !trackedRelationIds.contains(id))
+        .toList();
+    relation.RelationMemberIds.removeAll(droppedIds);
+    boolean startsAtMemberRelation = relation.waysMemberIds.isEmpty();
+    boolean startMemberDropped = droppedIds.contains(relation.firstMemberId)
+        || droppedIds.contains(relation.secondMemberId);
+    if (startsAtMemberRelation && startMemberDropped && !relation.RelationMemberIds.isEmpty()) {
+      relation.firstMemberId = relation.RelationMemberIds.getFirst();
+      relation.secondMemberId = relation.RelationMemberIds.size() > 1 ? relation.RelationMemberIds.get(1) : -1;
+    }
   }
 
   /**

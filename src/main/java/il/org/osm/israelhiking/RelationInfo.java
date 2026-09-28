@@ -31,5 +31,6 @@ public class RelationInfo implements OsmRelationInfo {
     SourceFeature firstMemberFeature;
     SourceFeature secondMemberFeature;
     double length;
+    boolean untrackedMembersDropped;
 
 }
