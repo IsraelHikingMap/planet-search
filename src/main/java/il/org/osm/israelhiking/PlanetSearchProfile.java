@@ -26,6 +26,7 @@ import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.geo.GeoUtils;
 import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.reader.SourceFeature;
+import com.onthegomap.planetiler.reader.WithTags;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
@@ -192,7 +193,7 @@ public class PlanetSearchProfile implements Profile {
       return;
     }
 
-    if (way.hasTag("highway", "track", "path", "footway", "cycleway") && way.hasTag("name")) {
+    if (isNamedTrail(way)) {
       String highwayName = way.getString("name");
       synchronized (highwayName.intern()) {
         if (!NamedHighways.containsKey(highwayName)) {
@@ -389,6 +390,18 @@ public class PlanetSearchProfile implements Profile {
     }
   }
 
+  /**
+   * Whether a way is a named track, path, footway or cycleway, which is searched
+   * for as a trail. One tagged construction is not: that is a street still being
+   * built, mapped as a footway until it opens, and it would otherwise be
+   * searched for as a hiking trail under the street's name.
+   */
+  private static boolean isNamedTrail(WithTags element) {
+    return element.hasTag("highway", "track", "path", "footway", "cycleway")
+        && element.hasTag("name")
+        && !element.hasTag("construction");
+  }
+
   private boolean processHighwayFeautre(SourceFeature feature, FeatureCollector features) throws GeometryException {
     if (!feature.hasTag("highway")) {
       return false;
@@ -401,7 +414,7 @@ public class PlanetSearchProfile implements Profile {
       // We don't want to process highway nodes (bus stops, etc.) here.
       return false;
     }
-    if (!feature.hasTag("highway", "track", "path", "footway", "cycleway")) {
+    if (!isNamedTrail(feature)) {
       return true;
     }
 
