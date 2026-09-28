@@ -338,8 +338,18 @@ public class PlanetSearchProfile implements Profile {
     return true;
   }
 
+  /**
+   * Merges the named waterway ways the first pass grouped by name into one point
+   * per connected stretch, once every way of that name has come past.
+   *
+   * Points are left alone: a group is keyed by name alone, so a waterfall node
+   * that happens to share the name of a waterway way anywhere in the world is
+   * not one of its members, and would otherwise be swallowed here without ever
+   * being indexed — every waterfall node named "Rainbow Falls" went missing once
+   * rapids of that name were mapped in Manitoba.
+   */
   private boolean processWaterwayFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
-    if (!feature.hasTag("waterway")) {
+    if (!feature.hasTag("waterway") || feature.isPoint()) {
       return false;
     }
     if (!feature.hasTag("name")) {

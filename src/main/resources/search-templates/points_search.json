@@ -127,6 +127,17 @@
                   }
                 },
                 "weight": 0.8
+              },
+              {
+                "filter": {
+                  "bool": {
+                    "minimum_should_match": 1,
+                    "should": [[[#languages]]
+                      { "match": { "name.[[lang]]": { "query": "{{searchTerm}}", "operator": "and", "fuzziness": "AUTO:6,9" } } }[[/languages]]
+                    ]
+                  }
+                },
+                "weight": 0.5
               }
               {{^prefix}}
               ,{
