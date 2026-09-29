@@ -137,7 +137,12 @@
                     ]
                   }
                 },
-                "weight": 0.5
+                "script_score": {
+                  "script": {
+                    "source": "params.term.trim().indexOf(' ') > 0 ? params.w_all_words : 0.0",
+                    "params": { "term": "{{searchTerm}}", "w_all_words": 0.5 }
+                  }
+                }
               }
               {{^prefix}}
               ,{
