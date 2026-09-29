@@ -76,6 +76,7 @@ public class E2ETest {
         }
 
         MainClass.main(arguments.toArray(String[]::new));
+        arguments.remove("--download");
         MainClass.main(arguments.toArray(String[]::new));
 
         try (var esClient = ElasticsearchHelper.createElasticsearchClient(ES_ADDRESS)) {
