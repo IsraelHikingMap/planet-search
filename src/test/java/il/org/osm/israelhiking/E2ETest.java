@@ -14,9 +14,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Logger;
+import java.util.stream.Stream;
 
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestFactory;
+import org.junit.jupiter.api.TestInstance;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -32,8 +38,12 @@ import il.org.osm.israelhiking.SearchCases.Hit;
  * Builds a real index out of a real OSM extract, and then searches it with the
  * search templates, to make sure that what the profile indexed can actually be
  * found by the queries the query side runs.
+ *
+ * The index is built once for the whole class, and every search and container
+ * case is a test of its own, so that a run reports each case that failed.
  */
 @Tag("e2e")
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class E2ETest {
 
     private static final Logger LOGGER = Logger.getLogger(E2ETest.class.getName());
@@ -62,8 +72,10 @@ public class E2ETest {
     private static final Path QRANK_FILE = Path.of("data", "sources", "qrank.csv.gz");
     private static final String QRANK_URL = "https://qrank.toolforge.org/download/qrank.csv.gz";
 
-    @Test
-    public void test() throws Exception {
+    private ElasticsearchClient esClient;
+
+    @BeforeAll
+    void buildIndex() throws Exception {
         var arguments = new ArrayList<String>(List.of("--download",
                 "--area", AREA,
                 "--external-file-path", EXTERNAL_FILE,
@@ -78,15 +90,13 @@ public class E2ETest {
         MainClass.main(arguments.toArray(String[]::new));
         arguments.remove("--download");
         MainClass.main(arguments.toArray(String[]::new));
+        esClient = ElasticsearchHelper.createElasticsearchClient(ES_ADDRESS);
+    }
 
-        try (var esClient = ElasticsearchHelper.createElasticsearchClient(ES_ADDRESS)) {
-            assertEveryCaseIsFound(esClient, SEARCH_CASES);
-            if (!CONTAINER_CASES.isBlank()) {
-                assertEveryPointHasAContainer(esClient, CONTAINER_CASES);
-            }
-            assertPointsAreEnrichedWithContainers(esClient);
-            assertPlaceFilterScopesToContainers(esClient);
-            assertPlacesAreNotDuplicated(esClient);
+    @AfterAll
+    void closeClient() throws Exception {
+        if (esClient != null) {
+            esClient.close();
         }
     }
 
@@ -98,11 +108,12 @@ public class E2ETest {
      * multipolygon, both {@code Q1218}). Running the real search query and finding
      * more than one place with the exact name means the dedup regressed.
      */
-    private void assertPlacesAreNotDuplicated(ElasticsearchClient esClient) throws Exception {
+    @Test
+    void placesAreNotDuplicated() throws Exception {
         var cities = List.of("עפולה", "נס ציונה", "גן יבנה", "נצרת", "ירושלים");
         var failures = new ArrayList<String>();
         for (var city : cities) {
-            var exactPlaces = searchPoints(esClient, Map.of("searchTerm", JsonData.of(city))).stream()
+            var exactPlaces = searchPoints(Map.of("searchTerm", JsonData.of(city))).stream()
                     .filter(point -> "icon-home".equals(point.poiIcon))
                     .filter(point -> point.name.containsValue(city))
                     .count();
@@ -123,11 +134,12 @@ public class E2ETest {
      * for cities deep inside the country must come back with their containers,
      * which proves the enrichment ran and did not break indexing.
      */
-    private void assertPointsAreEnrichedWithContainers(ElasticsearchClient esClient) throws Exception {
+    @Test
+    void pointsAreEnrichedWithContainers() throws Exception {
         var terms = List.of("חיפה", "תל אביב", "ירושלים");
         var failures = new ArrayList<String>();
         for (var term : terms) {
-            var point = topPoint(esClient, term);
+            var point = topPoint(term);
             if (point == null) {
                 failures.add("  " + term + ": no hit at all");
             } else if (point.poiParentNames == null || point.poiParentNames.isEmpty()) {
@@ -147,9 +159,10 @@ public class E2ETest {
      * point must survive a filter on one of its own containers and be dropped by
      * a filter on a place that contains nothing.
      */
-    private void assertPlaceFilterScopesToContainers(ElasticsearchClient esClient) throws Exception {
+    @Test
+    void placeFilterScopesToContainers() throws Exception {
         var term = "חיפה";
-        var unscoped = searchPoints(esClient, Map.of("searchTerm", JsonData.of(term)));
+        var unscoped = searchPoints(Map.of("searchTerm", JsonData.of(term)));
         if (unscoped.isEmpty() || unscoped.get(0).poiParentNames == null
                 || unscoped.get(0).poiParentNames.isEmpty()) {
             fail("cannot check the place filter: \"" + term + "\" returned no enriched point");
@@ -157,9 +170,9 @@ public class E2ETest {
         var container = unscoped.get(0).poiParentNames.values().stream()
                 .flatMap(List::stream).findFirst().orElseThrow();
 
-        var scopedToContainer = searchPoints(esClient,
+        var scopedToContainer = searchPoints(
                 Map.of("searchTerm", JsonData.of(term), "place", JsonData.of(container)));
-        var scopedToNowhere = searchPoints(esClient,
+        var scopedToNowhere = searchPoints(
                 Map.of("searchTerm", JsonData.of(term), "place", JsonData.of("לא-מקום-שקיים")));
 
         var failures = new ArrayList<String>();
@@ -175,13 +188,12 @@ public class E2ETest {
         }
     }
 
-    private PointDocument topPoint(ElasticsearchClient esClient, String term) throws Exception {
-        var hits = searchPoints(esClient, Map.of("searchTerm", JsonData.of(term)));
+    private PointDocument topPoint(String term) throws Exception {
+        var hits = searchPoints(Map.of("searchTerm", JsonData.of(term)));
         return hits.isEmpty() ? null : hits.get(0);
     }
 
-    private List<PointDocument> searchPoints(ElasticsearchClient esClient, Map<String, JsonData> params)
-            throws Exception {
+    private List<PointDocument> searchPoints(Map<String, JsonData> params) throws Exception {
         var response = esClient.searchTemplate(s -> s
                 .index(POINTS_ALIAS)
                 .id(SearchTemplates.POINTS_SEARCH)
@@ -223,13 +235,16 @@ public class E2ETest {
      * that place is a self intersecting one, which Elasticsearch refuses to
      * index as is.
      */
-    private void assertEveryPointHasAContainer(ElasticsearchClient esClient, String casesResource) throws Exception {
+    @TestFactory
+    Stream<DynamicTest> everyPointHasAContainer() throws Exception {
+        if (CONTAINER_CASES.isBlank()) {
+            return Stream.empty();
+        }
         var mapper = new ObjectMapper();
         List<ContainerCase> cases = mapper.readValue(
-                getClass().getResourceAsStream(casesResource),
+                getClass().getResourceAsStream(CONTAINER_CASES),
                 mapper.getTypeFactory().constructCollectionType(List.class, ContainerCase.class));
-        var failures = new ArrayList<String>();
-        for (var containerCase : cases) {
+        return cases.stream().map(containerCase -> DynamicTest.dynamicTest(containerCase.id(), () -> {
             var response = esClient.searchTemplate(s -> s
                     .index(BBOX_ALIAS)
                     .id(SearchTemplates.BBOX_CONTAINS)
@@ -241,41 +256,31 @@ public class E2ETest {
                     .map(hit -> hit.source().path("name").path("he").asText())
                     .toList();
             if (!containers.contains(containerCase.expectedContainer())) {
-                failures.add(String.format("  %s: expected the container \"%s\", got %s",
+                fail(String.format("%s: expected the container \"%s\", got %s",
                         containerCase.id(), containerCase.expectedContainer(),
                         containers.isEmpty() ? "no container at all" : containers));
             }
-        }
-        if (!failures.isEmpty()) {
-            fail(failures.size() + " of " + cases.size() + " container cases failed:\n"
-                    + String.join("\n", failures));
-        }
+        }));
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     private record ContainerCase(String id, double lat, double lng, String expectedContainer) {
     }
 
-    /**
-     * Searches the index that was just built, and fails with all the cases that
-     * did not find what they were looking for, not only the first one.
-     */
-    private void assertEveryCaseIsFound(ElasticsearchClient esClient, String casesResource) throws Exception {
-        var cases = SearchCases.load(casesResource);
-        var failures = new ArrayList<String>();
-        for (var searchCase : cases) {
-            var failure = SearchCases.failure(searchCase, search(esClient, searchCase));
-            if (failure != null) {
-                failures.add("  " + failure);
-            }
-        }
-        if (!failures.isEmpty()) {
-            fail(failures.size() + " of " + cases.size() + " search cases failed:\n"
-                    + String.join("\n", failures));
-        }
+    /** Searches the index that was just built, one test per search case. */
+    @TestFactory
+    Stream<DynamicTest> everyCaseIsFound() throws Exception {
+        return SearchCases.load(SEARCH_CASES).stream().map(searchCase -> DynamicTest.dynamicTest(
+                searchCase.id() + " · " + searchCase.searchTerm() + " (" + searchCase.uiLanguage() + ")",
+                () -> {
+                    var failure = SearchCases.failure(searchCase, search(searchCase));
+                    if (failure != null) {
+                        fail(failure);
+                    }
+                }));
     }
 
-    private List<Hit> search(ElasticsearchClient esClient, Case searchCase) throws Exception {
+    private List<Hit> search(Case searchCase) throws Exception {
         var parameters = new HashMap<String, JsonData>();
         parameters.put("searchTerm", JsonData.of(searchCase.searchTerm()));
         if (searchCase.isPrefix()) {
