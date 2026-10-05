@@ -41,7 +41,7 @@ public class MainClass {
                 "points");
         var bboxIndexAlias = args.getString("es-bbox-index-alias", "Elasticsearch index to populate bounding boxes",
                 "bbox");
-        var supportedLanguages = args.getString("languages", "Languages to support", "en,he,ru,ar,es").split(",");
+        var supportedLanguages = args.getString("languages", "Languages to support", "en,he,ru,ar,es,de").split(",");
         var esAddress = args.getString("es-address", "Elasticsearch address", "http://localhost:9200");
         boolean templatesOnly = args.getBoolean("update-templates-only",
                 "Store the search templates of this build in Elasticsearch and exit, without building anything. "
