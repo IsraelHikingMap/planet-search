@@ -3,7 +3,9 @@ package il.org.osm.israelhiking;
 import static com.onthegomap.planetiler.reader.osm.OsmElement.Type.RELATION;
 import static com.onthegomap.planetiler.reader.osm.OsmElement.Type.WAY;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -20,6 +22,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.onthegomap.planetiler.FeatureCollector;
+import com.onthegomap.planetiler.FeatureMerge;
+import com.onthegomap.planetiler.VectorTile;
 import com.onthegomap.planetiler.FeatureCollector.Feature;
 import com.onthegomap.planetiler.Profile;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
@@ -30,6 +34,7 @@ import com.onthegomap.planetiler.reader.WithTags;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 
+import com.carrotsearch.hppc.LongDoubleHashMap;
 import com.carrotsearch.hppc.LongHashSet;
 
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
@@ -63,6 +68,15 @@ public class PlanetSearchProfile implements Profile {
 
   public static final String POINTS_LAYER_NAME = "global_points";
 
+  /** The prefix of a route relation's search document id. */
+  private static final String RELATION_DOC_ID_PREFIX = "OSM_relation_";
+  /**
+   * The lines of the routes whose trail heads are on {@link #POINTS_LAYER_NAME},
+   * so a route is found by any part of it that crosses the viewport. Each line
+   * has its trail head's id and attributes, a {@code poiId} and a {@code color}.
+   */
+  public static final String ROUTES_LAYER_NAME = "global_routes";
+
   /**
    * Values that must never become a container
    */
@@ -82,6 +96,13 @@ public class PlanetSearchProfile implements Profile {
    * pass only reads it, after the first pass has ended.
    */
   private final LongHashSet trackedRelationIds = new LongHashSet();
+  /**
+   * The length of every completed route relation, the one attribute of its
+   * lines not known when its member ways are drawn. Primitives, as there is one
+   * for every route on the planet. Written under its lock in the second pass,
+   * only read when the tiles are written.
+   */
+  private final LongDoubleHashMap routeRelationLengths = new LongDoubleHashMap();
 
   public PlanetSearchProfile(PlanetilerConfig config, ElasticRunContext context) {
     this.config = config;
@@ -147,6 +168,7 @@ public class PlanetSearchProfile implements Profile {
     var info = new RelationInfo(relation.id());
 
     info.pointDocument = this.context.documentFactory().buildRouteRelationDocument(relation, category);
+    info.color = RouteColor.of(relation, info.pointDocument.name, relation.id());
     if (waysMemberIds.size() > 0) {
       info.firstMemberId = waysMemberIds.getFirst();
       info.secondMemberId = waysMemberIds.size() > 1 ? waysMemberIds.get(1) : -1;
@@ -254,11 +276,24 @@ public class PlanetSearchProfile implements Profile {
     setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
   }
 
+  /**
+   * Counts a way towards the route relations it is a member of, super relations
+   * included, and emits a relation's trail head once its last member came past.
+   *
+   * The way is also drawn on the routes layer once per relation, so each route
+   * is found and filtered on its own. Rivers are not routes, and an unnamed
+   * relation has no trail head. Its length is added when the tile is written,
+   * see {@link #postProcessLayerFeatures}.
+   */
   private void processOsmRelationFeature(SourceFeature feature, FeatureCollector features) throws GeometryException {
-    // get all the RouteRelationInfo instances we returned from
-    // preprocessOsmRelation that this way belongs to, including super relations.
     for (var routeInfo : feature.relationInfo(RelationInfo.class, true)) {
       RelationInfo relation = routeInfo.relation();
+      if (feature.canBeLine() && relation.pointDocument.poiIcon != "icon-river"
+          && !relation.pointDocument.name.isEmpty()) {
+        var routeFeature = features.line(ROUTES_LAYER_NAME)
+            .setId(relation.vectorTileFeatureId(config.featureSourceIdMultiplier()));
+        setRouteProperties(routeFeature, relation.pointDocument, RELATION_DOC_ID_PREFIX + relation.id(), relation.color);
+      }
       synchronized (relation) {
         dropUntrackedRelationMembers(relation);
         if (relation.firstMemberId == feature.id()) {
@@ -290,7 +325,10 @@ public class PlanetSearchProfile implements Profile {
       relation.pointDocument.location = new double[] { lngLatPoint.getX(), lngLatPoint.getY() };
       relation.pointDocument.poiLength = relation.length;
       this.context.containerIndex().enrich(relation.pointDocument, false);
-      insertPointToElasticsearch(relation.pointDocument, "OSM_relation_" + relation.id());
+      insertPointToElasticsearch(relation.pointDocument, RELATION_DOC_ID_PREFIX + relation.id());
+      synchronized (routeRelationLengths) {
+        routeRelationLengths.put(relation.id(), relation.length);
+      }
 
       var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
           .setId(relation.vectorTileFeatureId(config.featureSourceIdMultiplier()));
@@ -325,14 +363,20 @@ public class PlanetSearchProfile implements Profile {
         var lngLatPoint = GeoUtils.worldToLatLonCoords(point).getCoordinate();
         var pointDocument = this.context.documentFactory().buildMtbDocument(minIdFeature,
             lngLatPoint.getX(), lngLatPoint.getY(), mergedFeature.length);
-        insertPointToElasticsearch(pointDocument, "OSM_way_" + mergedFeature.minId);
+        var docId = "OSM_way_" + mergedFeature.minId;
+        var tileId = minIdFeature.vectorTileFeatureId(config.featureSourceIdMultiplier());
+        insertPointToElasticsearch(pointDocument, docId);
         // This was the last way with the same mtb:name, so we can merge the lines and
         // add the feature
         // Add a POI element for a SingleTrack
         var tileFeature = features.geometry(POINTS_LAYER_NAME, point)
             // Override the feature id with the minimal id of the group
-            .setId(minIdFeature.vectorTileFeatureId(config.featureSourceIdMultiplier()));
+            .setId(tileId);
         setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
+
+        var routeFeature = features.geometry(ROUTES_LAYER_NAME, mergedFeature.geometry).setId(tileId);
+        setRouteProperties(routeFeature, pointDocument, docId,
+            RouteColor.of(minIdFeature, pointDocument.name, mergedFeature.minId));
       }
     }
     return true;
@@ -833,6 +877,49 @@ public class PlanetSearchProfile implements Profile {
     if (pointDocument.description.containsKey("default")) {
       tileFeature.setAttr("description", pointDocument.description.get("default"));
     }
+  }
+
+  /**
+   * A route line has its trail head's attributes, the id of its search document
+   * — which also keeps two routes otherwise alike from being merged into one
+   * line — and its color. It is kept however short, as it is what a route
+   * crossing the viewport is found by.
+   */
+  private void setRouteProperties(Feature routeFeature, PointDocument pointDocument, String poiId, String color) {
+    setFeaturePropertiesFromPointDocument(routeFeature, pointDocument);
+    routeFeature.setAttr("poiId", poiId)
+        .setAttr("color", color)
+        .setMinPixelSize(0)
+        .setBufferPixels(4);
+  }
+
+  /**
+   * Merges each route's lines in a tile, and gives a route relation's lines its
+   * length. A relation cut by the edge of the extract never completes, and is
+   * drawn without a length.
+   */
+  @Override
+  public List<VectorTile.Feature> postProcessLayerFeatures(String layer, int zoom, List<VectorTile.Feature> items)
+      throws GeometryException {
+    if (!ROUTES_LAYER_NAME.equals(layer)) {
+      return items;
+    }
+    var result = new ArrayList<VectorTile.Feature>();
+    for (var feature : FeatureMerge.mergeLineStrings(items, 0, 0.1, 4)) {
+      var poiId = feature.getString("poiId");
+      if (!poiId.startsWith(RELATION_DOC_ID_PREFIX)) {
+        result.add(feature);
+        continue;
+      }
+      long relationId = Long.parseLong(poiId.substring(RELATION_DOC_ID_PREFIX.length()));
+      var tags = new HashMap<>(feature.tags());
+      tags.remove("poiLength");
+      if (routeRelationLengths.containsKey(relationId)) {
+        tags.put("poiLength", routeRelationLengths.get(relationId));
+      }
+      result.add(new VectorTile.Feature(layer, feature.id(), feature.geometry(), tags, feature.group()));
+    }
+    return result;
   }
 
   private boolean isBBoxFeature(SourceFeature feature, String[] supportedLanguages) {

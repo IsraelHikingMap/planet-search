@@ -16,6 +16,8 @@ public class RelationInfo implements OsmRelationInfo {
     }
 
     PointDocument pointDocument;
+    /** The color of the route on the routes layer, see {@link RouteColor}. */
+    String color;
 
     // OSM ID of the relation (required):
     @Override
