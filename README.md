@@ -100,7 +100,7 @@ The merge cannot finish until the last segment has streamed by, and there are te
 
 ## External features file format
 
-The file pointed at by `external-file-path` is a GeoJSON `FeatureCollection`. Every feature is reduced to a single point (a `Point` is used as is, a `LineString` uses the first coordinate, a polygon uses its centroid) and is added both to the search index and to the POIs tiles.
+The file pointed at by `external-file-path` is a GeoJSON `FeatureCollection`. Every feature is reduced to a single point (a `Point` is used as is, a `LineString` uses the first coordinate, a polygon uses its centroid) and is added both to the search index and to the POIs tiles. A `LineString` or `MultiLineString` is also drawn whole on the `global_routes` layer, with the same attributes and a `color` (its `colour` property, or one hashed from its name).
 
 The document id in Elasticsearch is `poiSource` + `_` + `identifier`, so both must be present and the pair must be unique across the file. The `name`, `description` and `alt_name` properties follow the OSM tagging convention, i.e. a `:<language>` suffix per language plus an unsuffixed fallback, and `alt_name` accepts several values separated by `;`.
 

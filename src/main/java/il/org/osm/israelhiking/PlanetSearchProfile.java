@@ -259,6 +259,11 @@ public class PlanetSearchProfile implements Profile {
     }
   }
 
+  /**
+   * Indexes a feature of the external file and adds its point to the external
+   * layer. A line is a route, so it is drawn on the routes layer as well, to be
+   * found wherever it crosses the viewport like an OSM route is.
+   */
   private void processExternalFeautre(SourceFeature feature, FeatureCollector features) throws GeometryException {
     var point = feature.canBePolygon() ? (Point) feature.centroidIfConvex()
         : GeoUtils.point(feature.worldGeometry().getCoordinate());
@@ -274,6 +279,14 @@ public class PlanetSearchProfile implements Profile {
         .setAttr("poiUserId", feature.getString("poiUserId"))
         .setId(feature.id());
     setFeaturePropertiesFromPointDocument(tileFeature, pointDocument);
+
+    if (feature.canBeLine() && !feature.canBePolygon()) {
+      var routeFeature = features.line(ROUTES_LAYER_NAME)
+          .setAttr("identifier", feature.getString("identifier"))
+          .setAttr("poiUserId", feature.getString("poiUserId"))
+          .setId(feature.id());
+      setRouteProperties(routeFeature, pointDocument, docId, RouteColor.of(feature, pointDocument.name, feature.id()));
+    }
   }
 
   /**
