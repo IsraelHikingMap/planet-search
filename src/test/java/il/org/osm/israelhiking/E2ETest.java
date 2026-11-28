@@ -2,13 +2,6 @@ package il.org.osm.israelhiking;
 
 import static org.junit.jupiter.api.Assertions.fail;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -59,18 +52,11 @@ public class E2ETest {
     // -DargLine="-Xmx24g", and takes a couple of hours
     // SEARCH_CASES = "/search-relevance-cases.json" - the 305 relevance cases
     // CONTAINER_CASES = "" - the container cases are Israeli, so skip them
-    // USE_QRANK = true - prominence is only realistic with QRank, the file is
-    // downloaded once into data/sources and reused
     private static final String AREA = "israel-and-palestine";
     private static final String POINTS_ALIAS = "points";
     private static final String BBOX_ALIAS = "bbox";
-    private static final boolean USE_QRANK = true;
     private static final String SEARCH_CASES = "/search-sanity-cases.json";
     private static final String CONTAINER_CASES = "/search-container-cases.json";
-
-    /** Downloaded on demand, next to the OSM extract planetiler downloads. */
-    private static final Path QRANK_FILE = Path.of("data", "sources", "qrank.csv.gz");
-    private static final String QRANK_URL = "https://qrank.toolforge.org/download/qrank.csv.gz";
 
     private ElasticsearchClient esClient;
 
@@ -82,10 +68,6 @@ public class E2ETest {
                 "--es-address", ES_ADDRESS,
                 "--es-points-index-alias", POINTS_ALIAS,
                 "--es-bbox-index-alias", BBOX_ALIAS));
-        if (USE_QRANK) {
-            arguments.add("--qrank-path");
-            arguments.add(downloadQrankIfMissing().toString());
-        }
 
         MainClass.main(arguments.toArray(String[]::new));
         arguments.remove("--download");
@@ -202,33 +184,6 @@ public class E2ETest {
         return response.hits().hits().stream().map(hit -> hit.source()).toList();
     }
 
-    /**
-     * The prominence of a point depends on QRank, so scoring the queries against
-     * an index that was built without it is scoring against a different world.
-     * The file is ~360 MB, so it is downloaded once, next to the OSM extract, and
-     * reused by every later run.
-     */
-    private Path downloadQrankIfMissing() throws Exception {
-        if (Files.exists(QRANK_FILE) && Files.size(QRANK_FILE) > 0) {
-            LOGGER.info("Using the QRank file that is already there: " + QRANK_FILE);
-            return QRANK_FILE;
-        }
-        LOGGER.info("Downloading QRank from " + QRANK_URL + ", this takes a while");
-        Files.createDirectories(QRANK_FILE.getParent());
-        var partial = QRANK_FILE.resolveSibling("qrank.csv.gz.partial");
-        try (var http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build()) {
-            var request = HttpRequest.newBuilder(URI.create(QRANK_URL)).GET().build();
-            var response = http.send(request, HttpResponse.BodyHandlers.ofFile(partial));
-            if (response.statusCode() != 200) {
-                Files.deleteIfExists(partial);
-                throw new IllegalStateException("Failed to download QRank, got HTTP " + response.statusCode());
-            }
-        }
-        // Only name it once it is whole, so that a broken download is not reused.
-        Files.move(partial, QRANK_FILE, StandardCopyOption.REPLACE_EXISTING);
-        LOGGER.info("Downloaded QRank to " + QRANK_FILE + " (" + Files.size(QRANK_FILE) / 1024 / 1024 + " MB)");
-        return QRANK_FILE;
-    }
 
     /**
      * A point should find the place that contains it, also when the polygon of

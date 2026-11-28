@@ -38,7 +38,6 @@ public class ElasticsearchHelper {
       String pointsIndexTarget,
       String bboxIndexTarget,
       String[] supportedLanguages,
-      QRankLookup qrankLookup,
       BulkIndexer bulkListener,
       ContainerIndex containerIndex,
       StreetIndex streetIndex,
@@ -244,17 +243,16 @@ public class ElasticsearchHelper {
       String pointsIndexAlias,
       String bboxIndexAlias,
       String[] supportedLanguages,
-      QRankLookup qrankLookup,
       ContainerIndex containerIndex,
       Path osmPath,
       int threads) throws Exception {
     var targetPointsIndex = ElasticsearchHelper.createPointsIndex(esClient, pointsIndexAlias,
         supportedLanguages);
     var targetBBoxIndex = ElasticsearchHelper.createBBoxIndex(esClient, bboxIndexAlias, supportedLanguages);
-    var documentFactory = new PointDocumentFactory(supportedLanguages, qrankLookup, containerIndex);
+    var documentFactory = new PointDocumentFactory(supportedLanguages, containerIndex);
     var streetIndex = new StreetIndex(bulkIndexer, targetPointsIndex, osmPath, threads, documentFactory);
     return new ElasticRunContext(esClient, pointsIndexAlias, bboxIndexAlias, targetPointsIndex, targetBBoxIndex,
-        supportedLanguages, qrankLookup, bulkIndexer, containerIndex, streetIndex, documentFactory);
+        supportedLanguages, bulkIndexer, containerIndex, streetIndex, documentFactory);
   }
 
   /**

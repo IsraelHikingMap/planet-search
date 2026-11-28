@@ -74,9 +74,6 @@ public class MainClass {
         try (var esClient = ElasticsearchHelper.createElasticsearchClient(esAddress);
                 var bulkListener = new BulkIndexer(esClient)) {
             var externalFilePath = args.getString("external-file-path", "External file path", "");
-            var qrankPath = args.getString("qrank-path",
-                    "Path to qrank.csv.gz for the prominence signal (empty = run without it)", "");
-            var qrankLookup = QRankLookup.load(qrankPath.isBlank() ? null : Path.of(qrankPath));
             String area = args.getString("area", "geofabrik area to download", "israel-and-palestine");
             // override this default with osm_path="path/to/data.osm.pbf"
             var defaultOsmPath = Path.of("data", "sources", area + ".osm.pbf");
@@ -85,7 +82,7 @@ public class MainClass {
             var osmPath = Path.of(args.getString("osm_path", "osm OSM input file path", defaultOsmPath.toString()));
             var containerIndex = ContainerIndex.load(esClient, bboxIndexAlias);
             var context = ElasticsearchHelper.initRun(esClient, bulkListener, pointsIndexAlias, bboxIndexAlias,
-                    supportedLanguages, qrankLookup, containerIndex, osmPath, planetiler.config().threads());
+                    supportedLanguages, containerIndex, osmPath, planetiler.config().threads());
             var profile = new PlanetSearchProfile(planetiler.config(), context);
 
             planetiler.setProfile(profile);
