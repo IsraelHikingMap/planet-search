@@ -26,12 +26,10 @@ import com.onthegomap.planetiler.reader.WithTags;
 final class PointDocumentFactory {
 
   private final String[] supportedLanguages;
-  private final QRankLookup qrankLookup;
   private final ContainerIndex containerIndex;
 
-  PointDocumentFactory(String[] supportedLanguages, QRankLookup qrankLookup, ContainerIndex containerIndex) {
+  PointDocumentFactory(String[] supportedLanguages, ContainerIndex containerIndex) {
     this.supportedLanguages = supportedLanguages;
-    this.qrankLookup = qrankLookup;
     this.containerIndex = containerIndex;
   }
 
@@ -113,7 +111,6 @@ final class PointDocumentFactory {
 
   private void setProminence(PointDocument pointDocument, WithTags feature,
       OsmFeatureClassifier.Category category) {
-    long qrankRaw = this.qrankLookup.qrankFor(pointDocument.wikidata);
     double ele = OsmNumberParser.parseElevation(feature.getString("ele")).orElse(Double.NaN);
     boolean hasImage = pointDocument.image != null || pointDocument.wikimedia_commons != null
         || pointDocument.panoramax != null;
@@ -121,7 +118,7 @@ final class PointDocumentFactory {
     boolean hasWikidata = pointDocument.wikidata != null;
 
     pointDocument.poiProminence = ProminenceCalculator.compute(
-        category, ele, hasImage, hasWebsite, hasWikidata, qrankRaw);
+        category, ele, hasImage, hasWebsite, hasWikidata, feature.hasTag("wikipedia"));
   }
 
   private void setDifficulty(PointDocument pointDocument, WithTags feature) {

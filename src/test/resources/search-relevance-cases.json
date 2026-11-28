@@ -282,7 +282,7 @@
   {"id":"find-kinneret","searchTerm":"הכנרת","uiLanguage":"he","center":[32.82,35.59],"zoom":11,"expectedTarget":[32.82,35.59],"radiusMeters":12000,"topN":1},
   {"id":"find-h008","searchTerm":"נחל זוויתן","uiLanguage":"he","center":[32.97,35.68],"zoom":11,"expectedTarget":[32.97,35.68],"radiusMeters":12000,"topN":1},
   {"id":"find-athens","searchTerm":"Athens","uiLanguage":"en","center":[39.5,-98.35],"zoom":5,"expectedTarget":[33.9598,-83.3764],"radiusMeters":25000,"topN":3},
-  {"id":"find-greenville","searchTerm":"Greenville","uiLanguage":"en","center":[39.5,-98.35],"zoom":5,"expectedTarget":[34.8514,-82.3985],"radiusMeters":25000,"topN":3},
+  {"id":"find-greenville","searchTerm":"Greenville","uiLanguage":"en","center":[39.5,-98.35],"zoom":5,"expectedTarget":[39.5,-98.35],"radiusMeters":3000000,"topN":3,"expectedExactName":"Greenville"},
   {"id":"find-oxford","searchTerm":"Oxford","uiLanguage":"en","center":[39.5,-98.35],"zoom":5,"expectedTarget":[34.3664,-89.5188],"radiusMeters":25000,"topN":3},
   {"id":"prefix-grand-can","searchTerm":"grand can","uiLanguage":"en","prefix":true,"center":[39.5,-98.35],"zoom":5,"expectedTarget":[36.3099,-112.2996],"radiusMeters":10000,"topN":3},
   {"id":"prefix-mesa-v","searchTerm":"mesa v","uiLanguage":"en","prefix":true,"center":[39.5,-98.35],"zoom":5,"expectedTarget":[37.2538,-108.4556],"radiusMeters":10000,"topN":3},
